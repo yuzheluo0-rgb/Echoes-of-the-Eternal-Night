@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Lock, BookOpen, Gem, Droplets, Skull, Zap, ArrowLeft, ArrowRight, Check, ChevronRight, Compass, Crown, Flag, Flame, Footprints, HelpCircle, Home, LocateFixed, MapPin, Maximize, Minus, Mountain, Plus, RotateCcw, RotateCw, Snowflake, Sparkles, Sun, Trees, Volume2, VolumeX, Waves, Wind, X } from 'lucide-react';
 import { footstep, setWorldAudio, setAudioVolume, sound } from '../audio';
-import { advanceJourney, travelByBeacon, MAIN_SITES, BIOMES, DIRECTIONS, LANDMARKS, SAVE_KEY, TILE_MAP, TILES, findPath, parseSave, tileId, navigationTarget, SITE_SIZE, siteFootprint, type Biome, type Landmark, type WorldSave } from './worldData';
+import { advanceJourney, travelByBeacon, MAIN_SITES, BIOMES, DIRECTIONS, LANDMARKS, SAVE_KEY, TILE_MAP, TILES, findPath, parseSave, tileId, navigationTarget, SITE_SIZE, siteFootprint, discoverFauna, type Biome, type Landmark, type WorldSave } from './worldData';
+import { SPECIES_BY_ID, HABITAT_LABEL, TEMPERAMENT_LABEL } from './faunaSpecies';
 import { WorldScene } from './WorldScene';
 import { parseQuality, QUALITY_KEY, type WorldQuality } from './WorldQuality';
 import './world.css';
@@ -34,6 +35,7 @@ export default function WorldMap() {
   const [walking, setWalking] = useState(false), walkingRef = useRef(false);
   const [ready, setReady] = useState(false), [error, setError] = useState(''), [attempt, setAttempt] = useState(0);
   const [panel, setPanel] = useState<'help' | 'atlas' | 'journal' | 'beacons' | 'route' | null>(null), [site, setSite] = useState<Landmark | null>(null);
+  const [creature, setCreature] = useState<string | null>(null);
   const [sealed,setSealed]=useState<Biome|null>(null);
   const [missionIndex, setMissionIndex] = useState(0), [toast, setToast] = useState('');
   const [audioOn, setAudioOn] = useState(false), audioRef = useRef(false);
@@ -77,6 +79,17 @@ export default function WorldMap() {
     try {
       const engine = new WorldScene(host.current, saveRef.current.position, {
         onSelect: chooseTile,
+        // Clicking an animal logs it rather than moving there; clicking the ground beside it still
+        // walks, which is why the scene only reports a creature when the ray actually struck one.
+        onCreature: (species) => {
+          if (disposed) return;
+          const known = SPECIES_BY_ID.get(species); if (!known) return;
+          if (!saveRef.current.fauna.includes(species)) {
+            const next = discoverFauna(saveRef.current, species); saveRef.current = next; setSave(next);
+            setToast('发现了「' + known.name + '」，已录入生物图鉴。');
+          }
+          setCreature(species); sound('bell', audioRef.current);
+        },
         onStep: id => {
           if(disposed)return;
           const old=saveRef.current,next=advanceJourney(old,id);saveRef.current=next;setSave(next);
@@ -173,6 +186,17 @@ export default function WorldMap() {
     {panel==='beacons'&&<Dialog title="循光信标" subtitle="WHERE THE LIGHT REMEMBERS YOU" close={()=>setPanel(null)}><p className="dialog-intro">亲自抵达主要据点后，信标会记住你的灯火。传送消耗 1 点烬火，返回余烬营地免费。</p><div className="beacon-grid">{MAIN_SITES.map(beacon=>{const unlocked=isRegionOpen(save.regions,beacon.biome)&&save.visited.includes(beacon.id),current=save.position===tileId(beacon.q,beacon.r),Icon=ICONS[beacon.biome];return <button key={beacon.id} disabled={!unlocked||current||(beacon.id!=='camp'&&!(beacon.id==='ocean'&&save.harbor.stage===3)&&save.embers<1)} onClick={()=>useBeacon(beacon.id)}><Icon size={20}/><span><strong>{beacon.name}</strong><small>{current?'你在这里':!isRegionOpen(save.regions,beacon.biome)?'区域封印中':!unlocked?'尚未点亮':beacon.id==='camp'||beacon.id==='ocean'&&save.harbor.stage===3?'免费返回':'烬火 ×1'}</small></span>{unlocked?<Check size={14}/>:<span className="locked-beacon">·</span>}</button>;})}</div></Dialog>}
     {panel==='route'&&<Dialog title="开拓之路" subtitle="ONE LIGHT, TWELVE LANDS" close={()=>setPanel(null)}><WorldRoute save={save} inspect={openSeal} locate={locateSite}/></Dialog>}
     {sealed&&<Dialog title={BIOMES[sealed].name+' · 区域封印'} subtitle="THE LIGHT HAS NOT REACHED HERE" close={()=>setSealed(null)}><RegionGate key={sealed} chapter={CHAPTERS.find(c=>c.biome===sealed)!} save={save} clock={clock} locate={locateSite} unlock={claimRegion}/></Dialog>}
+    {creature && (() => { const species = SPECIES_BY_ID.get(creature)!; return <Dialog title={species.name} subtitle={species.latin.toUpperCase()} close={()=>setCreature(null)}>
+      <div className="fauna-entry">
+        <div className="fauna-tags">
+          <span className={`fauna-temperament fauna-${species.temperament}`}>{TEMPERAMENT_LABEL[species.temperament]}</span>
+          <span>{BIOMES[species.biome].name}</span>
+          <span>{HABITAT_LABEL[species.habitat]}</span>
+        </div>
+        <p className="fauna-lore">{species.lore}</p>
+        <p className="dialog-footnote">生物会在自己的风土内自由活动。已收录 {save.fauna.length} 种，共 {SPECIES_BY_ID.size} 种。</p>
+      </div>
+    </Dialog>; })()}
     {site && <Dialog title={site.name} subtitle={site.subtitle} close={()=>setSite(null)}>{chapter&&chapter.gate===site.id&&<RegionGate key={chapter.biome} chapter={chapter} save={save} clock={clock} locate={locateSite} unlock={claimRegion}/>}<WorldLocation key={site.id} site={site} save={save} update={commitSave} close={()=>setSite(null)} notify={setToast} audioOn={audioOn} locate={locateSite}/></Dialog>}
   </main>;
 }

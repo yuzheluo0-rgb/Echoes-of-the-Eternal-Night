@@ -9,6 +9,8 @@ import { buildWorldArchitecture } from './WorldArchitecture';
 import { WorldWeather, flowingLava, addWind } from './WorldWeather';
 import { isRegionOpen, type RegionProgress } from './worldRegions';
 import { buildWorldBridges } from './WorldBridges';
+import { WorldCreatures } from './WorldCreatures';
+import { placeFauna } from './worldFauna.ts';
 import {WorldLighting} from './WorldLighting';
 import {WorldTime} from './WorldTime';
 
@@ -20,6 +22,8 @@ export interface SceneCallbacks {
   onError: (message: string) => void;
   onCamera: (zoom: number, angle: number) => void;
   onFollow?: (following: boolean) => void;
+  /** A creature was clicked rather than the ground it stands on. */
+  onCreature?: (species: string, tileId: string) => void;
 }
 const WATER = new Set<Biome>(['ocean', 'blood', 'fog']);
 /** Canopy blob. A plain icosahedron reads as a faceted ball, so each vertex is pushed in or out by
@@ -70,6 +74,10 @@ export class WorldScene {
   private harbor:ReturnType<typeof buildWorldArchitecture>['harbor'];
   private buckets = new Map<string, { geometry: THREE.BufferGeometry; material: THREE.Material; matrices: THREE.Matrix4[] }>();
   private picking: THREE.Mesh[] = [];
+  private creatures: WorldCreatures | null = null;
+  /** Async work the map is not considered loaded without. The creature meshes are fetched. */
+  private pendingLoads = 1;
+  private settle() { if (this.pendingLoads > 0 || this.disposed || this.loaded) return; this.loaded = true; this.renderDirty = true; this.callbacks.onReady(false); }
   private raycaster = new THREE.Raycaster();
   private pointerDown: { x: number; y: number; time: number } | null = null;
   private activePointers = new Set<number>();
@@ -187,6 +195,12 @@ export class WorldScene {
     this.controls.target.copy(this.knight.position).add(new THREE.Vector3(0,.5,0));
     this.camera.position.copy(this.controls.target).add(new THREE.Vector3(14,26,24));
     this.controls.update();
+    // Built before WorldLighting, which traverses the scene once to collect night-glow and
+    // emissive materials — anything created after that pass is never registered.
+    this.creatures=new WorldCreatures(placeFauna());this.scene.add(this.creatures.group);
+    // The creature meshes are fetched, so the map is not ready until they land. A failure just
+    // means a world without animals — never a world that refuses to open.
+    this.creatures.load().catch(()=>{}).finally(()=>{this.pendingLoads--;this.settle();this.renderDirty=true;});
     this.lighting=new WorldLighting(this.scene,this.renderer,architecture.emitters);
     this.lighting.update(clock.totalMinutes,0,0,this.controls.target,40);
     this.stopClockSubscription=clock.subscribe(()=>{this.renderDirty=true;});
@@ -213,7 +227,7 @@ export class WorldScene {
       const water=cartoonWater(color);this.materials.set('water-'+name,water.material);this.waterTimes.push(water.time);
     }
     for(const [name,color] of [['architecture','#e5d9b8'],['foundation','#b8b895'],['roof','#427778'],['timber','#ba915c'],['gold','#c9a566'],['bark','#776147']]) this.mat(name,color);
-    queueMicrotask(()=>{if(!this.disposed){this.loaded=true;this.renderDirty=true;this.callbacks.onReady(false);}});
+    queueMicrotask(()=>this.settle());
   }
   private instance(shape: string, material: THREE.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number, ry = 0, rx = 0, rz = 0) {
     const geometry = this.geometry.get(shape)!; const key = `${geometry.uuid}-${material.uuid}`;
@@ -480,13 +494,23 @@ export class WorldScene {
     if (Math.abs(ratio - this.renderer.getPixelRatio()) > .001) { this.renderer.setPixelRatio(ratio); }
     this.renderer.setSize(width, height); this.uiDirty = true; this.renderDirty = true;
   }
+  /** Resolves one pointer position into the tile under it, plus the creature if the ray actually
+   *  struck an animal. Both come back rather than the creature winning outright: an animal standing
+   *  on the hex you want to walk to must not swallow the click, so the caller prefers the creature
+   *  only when the ray reached it before the ground. */
   private pick(event: PointerEvent) {
     const bounds = this.renderer.domElement.getBoundingClientRect(); const pointer = new THREE.Vector2((event.clientX - bounds.left) / bounds.width * 2 - 1, -(event.clientY - bounds.top) / bounds.height * 2 + 1);
-    this.raycaster.setFromCamera(pointer, this.camera); const id=this.raycaster.intersectObjects(this.picking,false)[0]?.object.userData.tileId as string|undefined;return id?navigationTarget(id):undefined;
+    this.raycaster.setFromCamera(pointer, this.camera);
+    const tileHit = this.raycaster.intersectObjects(this.picking, false)[0];
+    const id = tileHit?.object.userData.tileId as string | undefined;
+    const creature = this.creatures?.hit(this.raycaster);
+    // A little slack, so an animal is not beaten by the very ground it is standing on.
+    if (creature && (!tileHit || creature.distance <= tileHit.distance + .35)) return { creature, tileId: creature.tileId };
+    return id ? { tileId: navigationTarget(id) } : {};
   }
   private onPointerDown = (event: PointerEvent) => { this.activePointers.add(event.pointerId); if (this.activePointers.size > 1) this.multitouch = true; if (this.activePointers.size === 1) { this.multitouch = false; this.pointerDown = { x: event.clientX, y: event.clientY, time: performance.now() }; } };
-  private onPointerUp = (event: PointerEvent) => { this.activePointers.delete(event.pointerId); const down = this.pointerDown; this.pointerDown = null; if (this.paused || this.multitouch || event.button !== 0 || !down || Math.hypot(event.clientX - down.x, event.clientY - down.y) > 6 || performance.now() - down.time > 650) return; const id = this.pick(event); if (id) this.callbacks.onSelect(id); };
-  private onPointerMove = (event: PointerEvent) => { if(this.paused)return;if(this.activePointers.size){if(this.pointerDown&&Math.hypot(event.clientX-this.pointerDown.x,event.clientY-this.pointerDown.y)>6)this.setFollowing(false);return;}if(event.timeStamp-this.hoverTime<33)return; this.hoverTime = event.timeStamp; const id = this.pick(event); this.hover.visible = !!id; this.renderDirty = true; this.renderer.domElement.style.cursor = id ? 'pointer' : 'grab'; if (id) { const tile = TILE_MAP.get(id)!; this.hover.position.set(tile.x, Math.max(walkHeight(tile),landHeightAt(tile.x,tile.z)) + .04, tile.z); } };
+  private onPointerUp = (event: PointerEvent) => { this.activePointers.delete(event.pointerId); const down = this.pointerDown; this.pointerDown = null; if (this.paused || this.multitouch || event.button !== 0 || !down || Math.hypot(event.clientX - down.x, event.clientY - down.y) > 6 || performance.now() - down.time > 650) return; const result = this.pick(event); if (result.creature) this.callbacks.onCreature?.(result.creature.species, result.creature.tileId); else if (result.tileId) this.callbacks.onSelect(result.tileId); };
+  private onPointerMove = (event: PointerEvent) => { if(this.paused)return;if(this.activePointers.size){if(this.pointerDown&&Math.hypot(event.clientX-this.pointerDown.x,event.clientY-this.pointerDown.y)>6)this.setFollowing(false);return;}if(event.timeStamp-this.hoverTime<33)return; this.hoverTime = event.timeStamp; const result = this.pick(event), id = result.tileId; this.hover.visible = !!id; this.renderDirty = true; this.renderer.domElement.style.cursor = id || result.creature ? 'pointer' : 'grab'; if (id) { const tile = TILE_MAP.get(id)!; this.hover.position.set(tile.x, Math.max(walkHeight(tile),landHeightAt(tile.x,tile.z)) + .04, tile.z); } };
   private onPointerCancel = (event: PointerEvent) => { this.activePointers.delete(event.pointerId); this.pointerDown = null; };
   private onPointerLeave = () => { this.hover.visible = false; this.renderDirty = true; this.pointerDown = null; this.activePointers.clear(); };
   private onContextLost = (event: Event) => { event.preventDefault(); this.paused = true; this.callbacks.onError('三维画面已中断，请重新载入地图。'); };
@@ -508,6 +532,7 @@ export class WorldScene {
       this.windTime.value=t;this.weather.update(t,this.camera.zoom,this.renderer.getPixelRatio());
       this.fog.forEach((cloud, i) => { (cloud.material as THREE.ShaderMaterial).uniforms.uTime.value = t; cloud.position.x = cloud.userData.originX + Math.sin(t * .12 + i) * .35; cloud.position.z = cloud.userData.originZ + Math.cos(t * .08 + i) * .17; });
       this.beacons.forEach((beacon, i) => { beacon.rotation.y = t * .5; beacon.position.y = beacon.userData.baseY + Math.sin(t * 1.6 + i) * .075; });
+      this.creatures?.update(t, dt, this.reduced);
       this.fireflies.rotation.y = Math.sin(t * .03) * .06; this.fireflies.position.y = Math.sin(t * .35) * .12;
       if (this.fire) this.fire.scale.set(1 + Math.sin(t * 9) * .13, 1 + Math.sin(t * 13) * .22, 1);
       this.lantern.intensity = .055+this.lighting.night.value*1.35+Math.sin(t*5)*.008;
@@ -562,6 +587,7 @@ export class WorldScene {
     canvas.removeEventListener('pointerdown', this.onPointerDown); canvas.removeEventListener('pointerup', this.onPointerUp); canvas.removeEventListener('pointermove', this.onPointerMove); canvas.removeEventListener('pointercancel', this.onPointerCancel); canvas.removeEventListener('pointerleave', this.onPointerLeave); canvas.removeEventListener('webglcontextlost', this.onContextLost); canvas.removeEventListener('webglcontextrestored', this.onContextRestored);
     const geometries = new Set<THREE.BufferGeometry>(this.geometry.values()), materials = new Set<THREE.Material>(this.materials.values());
     this.picking.forEach(mesh => geometries.add(mesh.geometry));
+    this.creatures?.dispose();
     this.scene.traverse(object => { const mesh = object as THREE.Mesh; if (mesh.geometry) geometries.add(mesh.geometry); if (mesh.material) (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach(mat => materials.add(mat)); });
     geometries.forEach(geo => geo.dispose()); materials.forEach(mat => mat.dispose()); this.lighting.dispose(); this.renderer.dispose(); canvas.remove();
   }

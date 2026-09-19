@@ -151,3 +151,10 @@
 @keyframes nocturne-ink { from { background-position:100% 50%; } to { background-position:0% 50%; } }
 .world-reduced .clock-face::before,.world-reduced .clock-orbit::after { animation:none; }
 .world-page:has(.world-dialog[open]) .clock-face::before,.world-page:has(.world-dialog[open]) .clock-orbit::after,.world-page:has(.world-dialog[open]) .clock-hour { animation-play-state:paused; }
+.world-dialog .journal-fauna strong { color:#e2d6b5; }
+.world-dialog .journal-fauna article > div span { color:#b7bba8; }
+.world-dialog .journal-fauna p { color:#c8cab9; }
+.world-dialog .journal-fauna article { border-color:#b6a06b2a; }
+.world-dialog .journal-fauna .fauna-unknown strong,
+.world-dialog .journal-fauna .fauna-unknown p { color:#8e9a8b; }
+.world-dialog .fauna-lore { color:#cdd4c2; }

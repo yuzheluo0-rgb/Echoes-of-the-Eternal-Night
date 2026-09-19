@@ -1,6 +1,7 @@
 import { ENCOUNTERS, STORIES } from './worldStories.ts';
 import {REGION_ORDER,canEnterTile,freshRegions,isRegionOpen,parseRegions,type RegionProgress} from './worldRegions.ts';
 import {MinCostQueue} from './priorityQueue.ts';
+import {SPECIES_BY_ID} from './faunaSpecies.ts';
 export type Biome = 'grass' | 'forest' | 'desert' | 'cliff' | 'snow' | 'ocean' | 'blood' | 'fog' | 'swamp' | 'volcano' | 'crystal' | 'waste';
 export interface Tile { id: string; q: number; r: number; x: number; z: number; biome: Biome; height: number; walkable: boolean; bridge: boolean; seed: number; landmark?: string; structure?: string; transit?:Biome; caldera?:boolean }
 export interface Landmark { id: string; q: number; r: number; biome: Biome; name: string; subtitle: string; lore: string; levels: string[]; difficulty: string; kind?: 'main' | 'hidden' | 'side' | 'event'; quest?: { title: string; npc: string; reward: string; targets: string[] } }
@@ -302,7 +303,7 @@ export function findPath(startId: string, endId: string,regions?:RegionProgress)
   }
   return [];
 }
-export interface WorldSave { position: string; visited: string[]; mission: string | null; discovered:string[]; acceptedQuests:string[]; completedQuests:string[]; embers:number; echoes:number; encounters:Record<string,number>; harbor:{accepted:boolean;stage:number};regions:RegionProgress }
+export interface WorldSave { position: string; visited: string[]; mission: string | null; discovered:string[]; fauna:string[]; acceptedQuests:string[]; completedQuests:string[]; embers:number; echoes:number; encounters:Record<string,number>; harbor:{accepted:boolean;stage:number};regions:RegionProgress }
 export const SAVE_KEY = 'eternal-night-world-v1';
 const secretSite=(site:Landmark)=>site.kind==='hidden'||site.kind==='event';
 export function advanceJourney(save:WorldSave,position:string):WorldSave {
@@ -317,6 +318,12 @@ export function acceptSideQuest(save:WorldSave,id:string):WorldSave {
   const site=LANDMARKS.find(s=>s.id===id);if(!site?.quest||!isRegionOpen(save.regions,site.biome)||save.position!==tileId(site.q,site.r)||save.acceptedQuests.includes(id))return save;
   return advanceJourney({...save,acceptedQuests:[...save.acceptedQuests,id]},save.position);
 }
+/** Records a sighting in the bestiary. Refuses unknown species and repeats by returning the very
+ *  same object, so callers can test identity the way `resolveEncounter` already allows. */
+export function discoverFauna(save:WorldSave,id:string):WorldSave {
+  if(!SPECIES_BY_ID.has(id)||save.fauna.includes(id))return save;
+  return {...save,fauna:[...save.fauna,id]};
+}
 export function resolveEncounter(save:WorldSave,id:string,choice:number):WorldSave {
   const site=LANDMARKS.find(s=>s.id===id);if(site?.kind!=='event'||!isRegionOpen(save.regions,site.biome)||save.position!==tileId(site.q,site.r)||save.encounters[id]!==undefined||(choice!==0&&choice!==1))return save;
   const result=ENCOUNTERS[site.biome].choices[choice];if(save.embers+result.embers<0)return save;
@@ -328,11 +335,14 @@ export function travelByBeacon(save:WorldSave,id:string):WorldSave {
   return advanceJourney({...save,embers:save.embers-cost},tileId(site.q,site.r));
 }
 export function parseSave(raw: string | null): WorldSave {
-  const defaults:WorldSave = { position: START_ID, visited: ['camp'], mission: null, discovered:[],acceptedQuests:[],completedQuests:[],embers:3,echoes:0,encounters:{},harbor:{accepted:false,stage:0},regions:freshRegions() };
+  const defaults:WorldSave = { position: START_ID, visited: ['camp'], mission: null, discovered:[],fauna:[],acceptedQuests:[],completedQuests:[],embers:3,echoes:0,encounters:{},harbor:{accepted:false,stage:0},regions:freshRegions() };
   try {
     const value = JSON.parse(raw || '{}');
     const validMissions = LANDMARKS.flatMap(site => site.levels);
     const validIds=(list:unknown,predicate:(site:Landmark)=>boolean)=>[...new Set((Array.isArray(list)?list:[]).filter((id:unknown)=>typeof id==='string'&&LANDMARKS.some(s=>s.id===id&&predicate(s))))] as string[];
+    // Species ids live in their own module so this file can validate against them without importing
+    // the placement layer, which imports this one back.
+    const validSpecies=(list:unknown)=>[...new Set((Array.isArray(list)?list:[]).filter((id:unknown):id is string=>typeof id==='string'&&SPECIES_BY_ID.has(id)))];
     const visited=[...new Set(['camp',...validIds(value?.visited,()=>true)])],acceptedQuests=validIds(value?.acceptedQuests,s=>!!s.quest);
     const completedQuests=validIds(value?.completedQuests,s=>!!s.quest&&acceptedQuests.includes(s.id)&&s.quest.targets.every(id=>visited.includes(id)));
     const amount=(n:unknown,fallback:number)=>typeof n==='number'&&Number.isFinite(n)?Math.min(99999,Math.max(0,Math.floor(n))):fallback;
@@ -340,6 +350,6 @@ export function parseSave(raw: string | null): WorldSave {
     const harborAccepted=value?.harbor?.accepted===true&&visited.includes('ocean');
     const harborStage=harborAccepted&&Number.isInteger(value?.harbor?.stage)&&value.harbor.stage>=0&&value.harbor.stage<=3?value.harbor.stage:0;
     const regions=parseRegions(value?.regions);regions.snowTrail=regions.snowTrail.filter(id=>{const t=TILE_MAP.get(id);return t?.biome==='snow'&&t.walkable;});
-    const position=navigationTarget(value?.position);return { position: canEnterTile(regions,TILE_MAP.get(position)) ? position : START_ID, visited, mission: validMissions.includes(value?.mission) ? value.mission : null,discovered:validIds(value?.discovered,secretSite),acceptedQuests,completedQuests,embers:amount(value?.embers,3),echoes:amount(value?.echoes,0),encounters,harbor:{accepted:harborAccepted,stage:harborStage},regions };
+    const position=navigationTarget(value?.position);return { position: canEnterTile(regions,TILE_MAP.get(position)) ? position : START_ID, visited, mission: validMissions.includes(value?.mission) ? value.mission : null,discovered:validIds(value?.discovered,secretSite),fauna:validSpecies(value?.fauna),acceptedQuests,completedQuests,embers:amount(value?.embers,3),echoes:amount(value?.echoes,0),encounters,harbor:{accepted:harborAccepted,stage:harborStage},regions };
   } catch { return defaults; }
 }

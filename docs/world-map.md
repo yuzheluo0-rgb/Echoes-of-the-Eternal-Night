@@ -71,3 +71,19 @@
 截图：[日常探索](previews/world-storybook-default.png)、[冰冠建筑](previews/world-storybook-snow.png)、[火山熔炉](previews/world-storybook-volcano.png)、[晶原](previews/world-storybook-crystal.png)、[手机跟随](previews/world-storybook-mobile.png)。
 
 [性能记录](world-performance.md) · [生成原画与配乐](world-storybook-art.md) · [第二版历史说明](world-map-v2.md)
+
+## 生物
+
+十二片风土各有 **2~3 种只属于当地的动物**在自由活动，共 29 种、29 只，全部会走动：
+陆地动物沿真实可行走图巡行并绕开建筑，水生动物在其海域内直线游弋，
+食草种低头进食、猎食种四下张望。它们**永远不会离开自己的地貌** ——
+生成格按物种所属地貌过滤，草原上不可能出现海里的东西。
+
+模型是 **Quaternius 的 17 个 CC0 低模动物**（狼、狗、狐、猫、鹰、鸟、鱼、鲸、水虎鱼、
+牛、马、羊、猪、巴哥、羊驼、斑马、小鸡），按地貌改色、改尺寸、改比例复用，
+所以 17 个模型铺满了 12 片风土。原模型每只只有**一个平涂材质**，颜色是按几何程序化补的
+（最低段染腿、朝下的面染腹、其余用外套色），朝向也由几何推断。
+出于可追溯性记录在 `public/assets/world/fauna/CREDITS.md`；CC0 本身不要求署名。
+
+走近或**直接点击动物**即可录入旅途手记的「生物图鉴」，首次发现会提示并写入存档
+（`fauna` 字段）。点动物脚下的地面仍然可以走过去。

@@ -104,3 +104,21 @@
 @media(max-width:850px) { .world-atlas { display:none; } .world-wallet { gap:9px; margin-right:8px; } .world-minimap { right:18px; top:83px; width:140px; } .world-minimap p { font-size:6px; } }
 @media(max-width:520px) { .world-brand { font-size:13px; letter-spacing:1px; gap:6px; } .world-brand small { font-size:5px; letter-spacing:1px; }.world-wallet { font-size:9px; gap:6px; margin-right:6px; }.world-wallet svg { width:11px; height:11px; }.world-top-actions .world-icon { width:27px; }.world-minimap { top:78px; right:13px; width:112px; padding:7px; border-radius:10px; }.world-minimap > div { font-size:8px; padding-bottom:5px; }.world-minimap small,.world-minimap p { display:none; }.quest-objectives > div { font-size:11px; }.quest-reward { font-size:10px; }.journal-stats { gap:4px; }.journal-stats strong { font-size:20px; }.journal-quests article { padding:13px; }.beacon-grid { gap:7px; }.beacon-grid button { gap:8px; padding:12px 9px; }.beacon-grid button > svg { width:16px; }.beacon-grid strong { font-size:11px; }.world-dialog .atlas-tabs { padding-left:0; padding-right:0; } }
 @media(max-height:560px) and (min-width:600px) { .world-minimap { display:none; }.world-wallet { font-size:10px; }.world-top-actions .world-icon { width:30px; } }
+
+/* Bestiary: the same card rhythm as the encounter list, with a temperament chip as the only
+   colour, so a hostile animal is legible at a glance and an unrecorded one stays grey. */
+.journal-fauna { display:grid; gap:9px; margin-top:4px; }
+.journal-fauna article { display:grid; grid-template-columns:58px 1fr; gap:4px 11px; padding:11px 0; border-bottom:1px solid #a7bda421; }
+.journal-fauna article > div { display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+.journal-fauna strong { font-weight:400; color:#c9d3bb; font-size:12px; }
+.journal-fauna article > div span { color:#92b0a7; font-size:9px; letter-spacing:0; white-space:nowrap; }
+.journal-fauna p { grid-column:2; font-size:11px; line-height:1.8; margin:0; color:#98b4a9; }
+.journal-fauna .fauna-unknown strong { color:#7f948c; }
+.journal-fauna .fauna-unknown p { color:#75908a; }
+.fauna-temperament { align-self:start; text-align:center; font-size:9px; letter-spacing:0; padding:3px 0; border-radius:2px; border:1px solid #a7bda433; color:#b9c6b4; }
+.fauna-friendly { color:#a8d3a0; border-color:#a8d3a04d; }
+.fauna-neutral { color:#cfc48f; border-color:#cfc48f4d; }
+.fauna-hostile { color:#d99a94; border-color:#d99a944d; }
+.fauna-entry .fauna-tags { display:flex; gap:8px; margin-bottom:14px; }
+.fauna-entry .fauna-tags > span { font-size:10px; letter-spacing:1px; padding:4px 9px; border-radius:2px; border:1px solid #a7bda433; color:#b9c6b4; }
+.fauna-lore { font-size:12px; line-height:2; color:#a9c0b3; margin:0 0 16px; }

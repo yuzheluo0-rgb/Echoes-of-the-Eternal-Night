@@ -19,6 +19,8 @@ npm run build    # tsc -b && vite build
 是「前庭 + 两间偏屋」的小建筑群（偏屋造型随地貌而变）；12 个路边奇遇保持单格。
 测试全绿，构建干净。
 
+每个地貌另有 **2~3 只自由活动的动物**（共 29 种，模型来自 CC0 素材，见下）。
+
 ### 待办
 
 1. **更多隐秘据点与路边奇遇**。`worldStories.ts` 的 `STORIES`/`ENCOUNTERS` 是
@@ -27,6 +29,12 @@ npm run build    # tsc -b && vite build
    `WorldLocation.tsx` / `WorldJournal.tsx` 里 `ENCOUNTERS[site.biome]` 的取法。
 2. **主世界河流没有实体**。`WorldWeather.ts` 只画河面缎带，河不参与寻路也不挡路，
    建筑可以压在河上。若要"真正的河"，得让河格不可走并重划桥。
+3. **敌对生物目前只是气氛**。它们不会靠近、不会挡路、不触发遭遇，只有图鉴里的
+   `temperament` 标签与配色区分。要做"会追人的狼"得接 `WorldCreatures` 的 wander
+   状态机与 `canEnterTile`，工程量另算。
+4. **给敌对种加发光眼睛**。现在整只生物是**一个**顶点着色的 mesh（1 draw call），
+   加眼睛要么再起一个自发光子 mesh（每种 +1 draw call），要么在片元着色器里按
+   `aGlow` 顶点属性加自发光。
 
 ## 动手前必读的坑
 
@@ -45,9 +53,27 @@ npm run build    # tsc -b && vite build
   缩放档位、天气范围全部乘以它，不要写回字面量。
 - **建筑改尺寸要同步三处**：`WorldScene.ts` 的拾取盒高度表（否则点屋顶穿透）、
   信标浮空高度、以及 `WorldLighting.ts` 找灯塔光束的 `dy` 阈值。
+- **生物三个文件分工，缺一不可，且名字不能只差大小写**：
+  `faunaSpecies.ts`（纯物种表，只有一个 type-only import）、`worldFauna.ts`（摆放，
+  只依赖 worldData）、`WorldCreatures.ts`（渲染，OBJ 加载 + 实例化 + 游荡）。
+  拆开是为了让 `worldData.parseSave` 能校验 `fauna` 存档字段而不 import 摆放层
+  （摆放层 import 了 worldData，会成环）。
+  **这个坑已经真踩过**：一开始渲染层叫 `WorldFauna.ts`，与 `worldFauna.ts` 只差大小写，
+  Write 时在 Windows 上**直接静默覆盖**了数据文件，代码整个消失。别再用这种名字。
 - **`WorldLocation.tsx` / `WorldJournal.tsx` 用 `ENCOUNTERS[site.biome]` 取奇遇内容**，
   加第二个奇遇就会撞车，需改为按地点 id 取。
 - **熔岩池用 `tile.caldera` 标记**，地形塑形与渲染共用该判据。
+- **生物模型是异步加载的，`onReady` 被它挡住了**。`WorldScene.settle()` 要等
+  `pendingLoads` 归零才回调 `onReady`，否则加载遮罩撤掉时动物还没出现，会看到一段
+  "先没动物、再突然冒出来"。加载失败只记录并跳过（世界照常打开），
+  但**每个物种的模型文件是否存在有测试兜底**——否则打错文件名会静默少一只动物。
+- **导入的生物是单色平涂，颜色是按几何算出来的**。`WorldCreatures.tint()` 按高度分三段
+  （最低段=腿、朝下的面=腹、其余=外套色）。头部朝向也是推断的：四足动物头颈更高，
+  取长轴较高的一端；鱼、鲸、鸟不适用，由物种表 `model.yaw` 显式指定。
+- **水生与飞行种按"体长"归一化，不是身高**（`sizeAxis: 'length'`），否则鲸鱼按身高
+  缩放会有两个半格长。游动生物的入水深度必须用**模型高度**算，不能用 `size`——
+  这两个量对鲸鱼毫无关系，用 `size` 会把整条鲸沉到海面下一整个单位。
+- **生物不进 `Tile`，所以布局摘要不受影响**。加生物不需要重算 `LAYOUT_DIGEST`。
 - **`tileRegion` 依赖地点 id 的命名契约**。`worldRegions.ts` 从 `structure` 里取章节：
   主建筑 id 恰好等于地貌名（`camp` 归 `grass`），派生据点则是 `<kind>-<biome>` 取后缀。
   **给主建筑加带连字符的 id 会踩坑。** 这条不能靠 import LANDMARKS 解决——
