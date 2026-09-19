@@ -78,12 +78,21 @@ export class WorldWeather{
     const points=coordinates.map(([x,z])=>new THREE.Vector3(x*WORLD_SCALE,0,z*WORLD_SCALE));
     // The authored control points stop well inland. Walk on in the same direction until the sea so
     // the river ends in an estuary instead of breaking off in the middle of the continent.
-    const last=points[points.length-1],back=new THREE.Vector3().subVectors(last,points[points.length-2]).normalize();
-    for(let step=1;step<=400;step++){
-      const probe=last.clone().addScaledVector(back,step*.30),tile=nearestTile(probe.x,probe.z);
-      if(!tile)break;
-      if(isWater(tile.biome)){points.push(probe);break;}
+    const last=points[points.length-1];
+    // Scan a full fan of directions and take the shortest one that finds open water. Marching
+    // straight on along the authored heading often points back into the continent, never reaches
+    // the sea, and silently leaves the river stopping in a swamp.
+    let best:THREE.Vector3|null=null,bestSteps=Infinity;
+    for(let d=0;d<32;d++){
+      const a=d/32*Math.PI*2;
+      for(let step=1;step<=140;step++){
+        const probe=new THREE.Vector3(last.x+Math.sin(a)*step*.35,0,last.z+Math.cos(a)*step*.35);
+        const tile=nearestTile(probe.x,probe.z);
+        if(!tile)break;
+        if(isWater(tile.biome)){if(step<bestSteps){bestSteps=step;best=probe;}break;}
+      }
     }
+    if(best)points.push(best);
     const curve=new THREE.CatmullRomCurve3(points),positions:number[]=[],uvs:number[]=[],indices:number[]=[];
     const smooth=(a:number,b:number,v:number)=>{const s=Math.min(1,Math.max(0,(v-a)/(b-a)));return s*s*(3-2*s);};
     for(let i=0;i<=160;i++){
