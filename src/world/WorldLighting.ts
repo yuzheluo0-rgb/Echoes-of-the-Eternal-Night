@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import {LANDMARKS,TILE_MAP,TILES,isWater,random,walkHeight} from './worldData';
+import {LANDMARKS,TILE_MAP,TILES,WORLD_SCALE,isWater,random,walkHeight} from './worldData';
 import {landHeightAt,nearestTile} from './storybookLandscape';
 import {minuteOfDay} from './WorldTime';
 
@@ -58,7 +58,7 @@ export class WorldLighting{
 
   constructor(private scene:THREE.Scene,private renderer:THREE.WebGLRenderer,sources:WorldLightSource[]){
     this.sky.name='daylight-sky';this.key.name='sun-and-moon';this.key.castShadow=true;this.key.shadow.mapSize.set(2048,2048);
-    Object.assign(this.key.shadow.camera,{left:-43,right:43,top:38,bottom:-38,near:1,far:160});this.key.shadow.bias=-.00035;this.key.shadow.normalBias=.038;scene.add(this.sky,this.key);
+    Object.assign(this.key.shadow.camera,{left:-43*WORLD_SCALE,right:43*WORLD_SCALE,top:38*WORLD_SCALE,bottom:-38*WORLD_SCALE,near:1,far:160*WORLD_SCALE});this.key.shadow.bias=-.00035;this.key.shadow.normalBias=.038;scene.add(this.sky,this.key);
     this.sources=[...sources];
     for(const tile of TILES){
       if(tile.biome==='volcano'&&!tile.structure&&!tile.landmark&&random(tile.seed)>.4)this.sources.push({x:tile.x+.5,y:landHeightAt(tile.x+.5,tile.z-.35)+.65,z:tile.z-.35,color:'#ff8146',radius:1.42,power:1.9,kind:'fire'});

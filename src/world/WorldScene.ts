@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { BIOMES, DIRECTIONS, LANDMARKS, TILE_MAP, TILES, random, walkHeight, navigationTarget, siteFootprint, type Biome } from './worldData';
+import { BIOMES, DIRECTIONS, LANDMARKS, TILE_MAP, TILES, WORLD_SCALE, random, walkHeight, navigationTarget, siteFootprint, type Biome } from './worldData';
 import { tileSurface, cartoonWater, cloakGeometry, landHeightAt, pathClearance } from './storybookLandscape';
 import { WorldRenderBudget, type WorldQuality } from './WorldQuality';
 import { buildWorldArchitecture } from './WorldArchitecture';
@@ -41,7 +41,7 @@ function mountainGeometry() {
 export class WorldScene {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
-  readonly camera = new THREE.OrthographicCamera(-16, 16, 11, -11, .1, 150);
+  readonly camera = new THREE.OrthographicCamera(-16, 16, 11, -11, .1, 150 * WORLD_SCALE);
   readonly controls: OrbitControls;
   private callbacks: SceneCallbacks;
   private host: HTMLDivElement;
@@ -116,7 +116,7 @@ export class WorldScene {
     this.renderer.domElement.setAttribute('role', 'img');
     host.appendChild(this.renderer.domElement);
     this.scene.background = new THREE.Color('#19262d');
-    this.scene.fog = new THREE.Fog('#19262d',48,115);
+    this.scene.fog = new THREE.Fog('#19262d',48*WORLD_SCALE,115*WORLD_SCALE);
     this.camera.position.set(14,26,24); this.camera.zoom=1.08; this.camera.lookAt(0,.8,0);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true; this.controls.dampingFactor = .1;
@@ -126,7 +126,7 @@ export class WorldScene {
     this.controls.touches.ONE = THREE.TOUCH.PAN;
     this.controls.touches.TWO = THREE.TOUCH.DOLLY_PAN;
     this.controls.minPolarAngle = Math.PI / 7; this.controls.maxPolarAngle = Math.PI / 2.7;
-    this.controls.minZoom = .24; this.controls.maxZoom = 3.4;
+    this.controls.minZoom = .24 / WORLD_SCALE; this.controls.maxZoom = 3.4;
     this.controls.rotateSpeed = .65; this.controls.zoomSpeed = .8; this.controls.panSpeed = .8;
     this.controls.screenSpacePanning = false; this.controls.target.set(0, 1.5, .3);
     this.controls.addEventListener('start', this.cancelCameraFocus);
@@ -214,7 +214,7 @@ export class WorldScene {
   private buildTerrain() {
     const batches=new Map<string,THREE.BufferGeometry[]>(),edges:number[]=[],coasts:number[]=[],walls:number[]=[],wallColors:number[]=[],shoals:number[]=[];
     const collect=(name:string,g:THREE.BufferGeometry)=>{if(!batches.has(name))batches.set(name,[]);batches.get(name)!.push(g);};
-    const ocean=new THREE.Mesh(new THREE.PlaneGeometry(220,220),this.materials.get('water-ocean'));ocean.rotation.x=-Math.PI/2;ocean.position.y=.115;this.scene.add(ocean);
+    const ocean=new THREE.Mesh(new THREE.PlaneGeometry(220*WORLD_SCALE,220*WORLD_SCALE),this.materials.get('water-ocean'));ocean.rotation.x=-Math.PI/2;ocean.position.y=.115;this.scene.add(ocean);
     for(const tile of TILES) {
       const liquid=WATER.has(tile.biome),g=tileSurface(tile,liquid);
       const pick=new THREE.Mesh(g,this.materials.get('terrain'));pick.userData.tileId=tile.id;pick.matrixAutoUpdate=false;this.picking.push(pick);
@@ -309,7 +309,8 @@ export class WorldScene {
     const geometry = new THREE.PlaneGeometry(4.6, 2.8);
     const material = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide, uniforms: { uTime: { value: 0 },uLightTint:{value:new THREE.Color(1,1,1)} }, vertexShader: 'varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}', fragmentShader: 'varying vec2 vUv; uniform float uTime;uniform vec3 uLightTint; float noise(vec2 p){return sin(p.x*6.0+sin(p.y*4.0))*cos(p.y*7.0+sin(p.x*3.0));} void main(){vec2 p=vUv*2.0-1.0;float edge=pow(max(0.0,1.0-dot(p,p)),1.8);float cloud=0.48+noise(vUv*2.4+vec2(uTime*0.045,uTime*0.023))*0.25;gl_FragColor=vec4(vec3(0.71,0.8,0.85)*uLightTint,edge*cloud*0.3);}' });
     const fogTiles = TILES.filter(t => t.biome === 'fog');
-    for (let i = 0; i < 7; i++) { const tile = fogTiles[(i * 3) % fogTiles.length]; const plane = new THREE.Mesh(geometry, material); plane.rotation.x = -Math.PI / 2; plane.position.set(tile.x, .42 + (i % 3) * .24, tile.z); plane.userData.originX = tile.x; plane.userData.originZ = tile.z; plane.renderOrder = 2; this.fog.push(plane); this.scene.add(plane); }
+    const fogPlaneCount = Math.max(7, Math.round(fogTiles.length / 3.4));
+    for (let i = 0; i < fogPlaneCount; i++) { const tile = fogTiles[(i * 3) % fogTiles.length]; const plane = new THREE.Mesh(geometry, material); plane.rotation.x = -Math.PI / 2; plane.position.set(tile.x, .42 + (i % 3) * .24, tile.z); plane.userData.originX = tile.x; plane.userData.originZ = tile.z; plane.renderOrder = 2; this.fog.push(plane); this.scene.add(plane); }
   }
   private buildLandmarks() {
     for(const site of LANDMARKS){
@@ -404,7 +405,7 @@ export class WorldScene {
   walk(path: string[]) { if (path.length < 2 || this.route.length || path[0] !== this.positionId) return false; this.route = path.slice(1); this.stepTime = 0; this.setFollowing(true); this.targetCamera=null; return true; }
   private setFollowing(value:boolean){if(this.following===value)return;this.following=value;this.callbacks.onFollow?.(value);}
   focus(id?:string){if(!id){this.setFollowing(true);this.targetCamera=null;return;}this.setFollowing(false);const tile=TILE_MAP.get(id)!;this.targetCamera=new THREE.Vector3(tile.x,tile.height+.5,tile.z);}
-  private overviewZoom(){return this.host.clientWidth<600?.27:this.host.clientHeight<790?.37:.43;}
+  private overviewZoom(){return (this.host.clientWidth<600?.27:this.host.clientHeight<790?.37:.43)/WORLD_SCALE;}
   home(){this.setFollowing(false);this.controls.target.set(0,.8,0);this.camera.position.copy(this.controls.target).add(new THREE.Vector3(14,26,24));this.camera.zoom=this.overviewZoom();this.camera.updateProjectionMatrix();this.targetCamera=null;this.controls.update();this.uiDirty=true;this.renderDirty=true;this.cameraChangeTime=performance.now();}
   travelTo(id:string){const tile=TILE_MAP.get(id);if(!tile?.walkable||this.route.length)return false;this.positionId=id;this.knight.position.set(tile.x,tile.bridge?walkHeight(tile):landHeightAt(tile.x,tile.z)+.045,tile.z);this.clearRoute();this.setFollowing(true);this.targetCamera=null;this.controls.target.copy(this.knight.position).add(new THREE.Vector3(0,.5,0));this.camera.position.copy(this.controls.target).add(new THREE.Vector3(14,26,24));this.renderer.shadowMap.needsUpdate=true;this.uiDirty=true;this.renderDirty=true;this.callbacks.onStep(id);this.callbacks.onArrive(id);return true;}
   zoom(factor: number) { this.camera.zoom = THREE.MathUtils.clamp(this.camera.zoom * factor, this.controls.minZoom, this.controls.maxZoom); this.camera.updateProjectionMatrix(); this.uiDirty = true; this.renderDirty = true; this.cameraChangeTime = performance.now(); }
@@ -465,7 +466,7 @@ export class WorldScene {
       if(this.following){const desired=this.knight.position.clone().add(new THREE.Vector3(0,.5,0));const delta=desired.sub(this.controls.target).multiplyScalar(this.reduced?1:1-Math.exp(-dt*5));this.controls.target.add(delta);this.camera.position.add(delta);}
       if (this.targetCamera) { const delta = this.targetCamera.clone().sub(this.controls.target).multiplyScalar(this.reduced ? 1 : 1 - Math.exp(-dt * 5)); this.controls.target.add(delta); this.camera.position.add(delta); if (delta.length() < .001) this.targetCamera = null; }
       // Keep the fixed-angle camera close to the islands while panning.
-      const clamped = this.controls.target.clone(); clamped.x = THREE.MathUtils.clamp(clamped.x, -32, 32); clamped.z = THREE.MathUtils.clamp(clamped.z, -24, 24); const correction = clamped.sub(this.controls.target); this.controls.target.add(correction); this.camera.position.add(correction);
+      const clamped = this.controls.target.clone(); clamped.x = THREE.MathUtils.clamp(clamped.x, -32*WORLD_SCALE, 32*WORLD_SCALE); clamped.z = THREE.MathUtils.clamp(clamped.z, -24*WORLD_SCALE, 24*WORLD_SCALE); const correction = clamped.sub(this.controls.target); this.controls.target.add(correction); this.camera.position.add(correction);
     }
     this.controls.update(dt);
     if(!this.paused){const pixels=this.host.clientHeight*this.camera.zoom/(this.camera.top-this.camera.bottom)*this.renderer.getPixelRatio();if(this.lighting.update(this.clock.totalMinutes,dt,this.elapsed,this.controls.target,pixels,this.reduced))this.renderDirty=true;}

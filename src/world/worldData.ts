@@ -181,6 +181,21 @@ export const LANDMARKS: Landmark[] = [...MAIN_SITES,...TILES.filter(t=>t.landmar
   return {id:tile.landmark!,q:tile.q,r:tile.r,biome:tile.biome,name:hidden?story.hidden:story.side,kind:hidden?'hidden' as const:'side' as const,subtitle:hidden?'A SECRET IN THE WILD':'TALES ALONG THE WAY',lore:hidden?story.secret:story.story,difficulty:hidden?'隐秘据点':'区域支线',levels:[hidden?'秘境寻踪':story.title,hidden?'旧物回声':'旅人的线索',hidden?'守藏者的试炼':'归途的赠礼'] as [string,string,string],quest:hidden?undefined:{title:story.title,npc:story.npc,reward:story.reward,targets:[main.id,'hidden-'+tile.biome]}};
 })];
 export const TILE_MAP = new Map(TILES.map(tile => [tile.id, tile]));
+/** The 776-tile world spans 63.2 x 45.0 world units; this is its half-diagonal. Every absolute
+ *  view distance — fog, camera clamp and far plane, ocean backdrop, zoom limits, the shadow box
+ *  and the weather fields — is a multiple of it, so growing the coastline scales them in lockstep
+ *  instead of leaving the outer islands unlit, unshadowed, or beyond the fog. */
+const BASELINE_HALF_DIAGONAL = 38.79996778349178;
+export const WORLD_BOUNDS = (() => {
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const tile of TILES) {
+    if (tile.x < minX) minX = tile.x; if (tile.x > maxX) maxX = tile.x;
+    if (tile.z < minZ) minZ = tile.z; if (tile.z > maxZ) maxZ = tile.z;
+  }
+  return { minX, maxX, minZ, maxZ, halfX: (maxX - minX) / 2, halfZ: (maxZ - minZ) / 2, centerX: (minX + maxX) / 2, centerZ: (minZ + maxZ) / 2 };
+})();
+/** Exactly 1 for today's map; grows with the coastline, and everything derived follows. */
+export const WORLD_SCALE = Math.hypot(WORLD_BOUNDS.halfX, WORLD_BOUNDS.halfZ) / BASELINE_HALF_DIAGONAL;
 export function siteFootprint(id:string){const site=MAIN_SITES.find(s=>s.id===id);if(!site)return[];const entry=TILE_MAP.get(tileId(site.q,site.r))!;return[entry,...TILES.filter(t=>t.structure===id&&t!==entry).sort((a,b)=>hexDistance(a,entry)-hexDistance(b,entry)||(a.x-entry.x)*.36+(a.z-entry.z)*.8-((b.x-entry.x)*.36+(b.z-entry.z)*.8))];}
 export function navigationTarget(id:string){const tile=TILE_MAP.get(id),site=MAIN_SITES.find(s=>s.id===tile?.structure);return site?tileId(site.q,site.r):id;}
 export const walkHeight = (tile: Tile) => tile.bridge ? .62 : tile.height + .045;

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { TILES, random, isWater } from './worldData';
+import { TILES, WORLD_SCALE, random, isWater } from './worldData';
 import { landHeightAt, nearestTile } from './storybookLandscape';
 
 export function flowingLava(){
@@ -52,13 +52,13 @@ export class WorldWeather{
     const embers=new THREE.Points(emberGeo,new THREE.ShaderMaterial({transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,uniforms:{uTime:this.time,uScale:this.emberScale},vertexShader:`attribute vec2 aPhase;uniform float uTime;uniform float uScale;varying float vFade;void main(){float life=fract(aPhase.x+uTime*(.19+aPhase.y*.1));vec3 p=position;p.x+=sin(aPhase.x*32.+life*3.)*.18+life*.37;p.z+=cos(aPhase.x*29.+life*2.)*.15;p.y+=life*(.9+aPhase.y*.9);vFade=sin(life*3.14159);gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);gl_PointSize=clamp((2.+aPhase.y*2.)*uScale,1.,9.);}`,fragmentShader:`varying float vFade;void main(){float a=1.-smoothstep(.10,.5,length(gl_PointCoord-.5));gl_FragColor=vec4(1.,.54,.13,a*vFade*.8);}`}));embers.name='volcanic-embers';embers.frustumCulled=false;this.group.add(embers);
     this.river([[-9,-12],[-7,-9],[-4,-7],[-5,-4],[-2,-2],[-3,1],[-1,3],[-2,5],[-4,7],[-4,9]],.13);
     this.river([[-17,-4],[-15,-2],[-17,0],[-14,2],[-14,4]],.105);
-    const gustPositions:number[]=[];for(let i=0;i<9;i++)for(let n=0;n<6;n++){for(const step of [n,n+1])gustPositions.push((i%3-1)*9+step*.16,.95+random(i)*.20,Math.floor(i/3)*7-7+Math.sin(step*.48)*.10);}
+    const gustPositions:number[]=[];for(let i=0;i<9;i++)for(let n=0;n<6;n++){for(const step of [n,n+1])gustPositions.push(((i%3-1)*9+step*.16)*WORLD_SCALE,.95+random(i)*.20,(Math.floor(i/3)*7-7+Math.sin(step*.48)*.10)*WORLD_SCALE);}
     const gustGeo=new THREE.BufferGeometry();gustGeo.setAttribute('position',new THREE.Float32BufferAttribute(gustPositions,3));
     const gusts=new THREE.LineSegments(gustGeo,new THREE.ShaderMaterial({transparent:true,depthWrite:false,uniforms:{uTime:this.time},vertexShader:'uniform float uTime;varying float vAlpha;void main(){vec3 p=position;float phase=p.z*.72;p.x+=mod(uTime*.47+phase+10.,9.)-4.5;vAlpha=pow(max(0.,sin(uTime*.34+phase)),5.);gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);}',fragmentShader:'varying float vAlpha;void main(){gl_FragColor=vec4(.76,.88,.78,vAlpha*.24);}'}));gusts.name='wind-streaks';gusts.frustumCulled=false;this.group.add(gusts);
     this.update(0,1,1);
   }
   private river(coordinates:number[][],width:number){
-    const curve=new THREE.CatmullRomCurve3(coordinates.map(([x,z])=>new THREE.Vector3(x,0,z))),positions:number[]=[],uvs:number[]=[],indices:number[]=[];
+    const curve=new THREE.CatmullRomCurve3(coordinates.map(([x,z])=>new THREE.Vector3(x*WORLD_SCALE,0,z*WORLD_SCALE))),positions:number[]=[],uvs:number[]=[],indices:number[]=[];
     for(let i=0;i<=160;i++){
       const t=i/160,p=curve.getPoint(t),direction=curve.getTangent(t),tile=nearestTile(p.x,p.z);
       for(const side of [-1,1]){const x=p.x-direction.z*width*side,z=p.z+direction.x*width*side;positions.push(x,landHeightAt(x,z)+.04,z);uvs.push(side*.5+.5,t*18);}
@@ -72,12 +72,12 @@ export class WorldWeather{
   update(time:number,zoom:number,pixelRatio:number){
     this.time.value=time;this.emberScale.value=Math.sqrt(zoom)*pixelRatio;
     for(let i=0;i<10;i++){
-      const x=((i*11.3+time*(.14+random(i)*.075)+37)%74)-37,z=(i%5)*9-17+Math.sin(time*.025+i)*1.1;
+      const x=(((i*11.3+time*(.14+random(i)*.075)+37)%74)-37)*WORLD_SCALE,z=((i%5)*9-17)*WORLD_SCALE+Math.sin(time*.025+i)*1.1;
       this.position.set(x,4.2+(i%3)*.7,z);const s=1.15+random(i*5)*.6;this.scale.set(s,1,s);this.rotation.setFromAxisAngle(THREE.Object3D.DEFAULT_UP,.2);this.matrix.compose(this.position,this.rotation,this.scale);this.clouds.setMatrixAt(i,this.matrix);
     }
     for(let i=0;i<15;i++){
       const flock=Math.floor(i/5),n=i%5,t=time*.50+flock*17;
-      this.position.set(((t+n*.4+50)%70)-35,3.1+flock*.40+Math.sin(time*.6+i)*.09,flock*11-10+Math.abs(n-2)*.43+Math.sin(t*.035)*3);
+      this.position.set((((t+n*.4+50)%70)-35)*WORLD_SCALE,3.1+flock*.40+Math.sin(time*.6+i)*.09,(flock*11-10+Math.abs(n-2)*.43+Math.sin(t*.035)*3)*WORLD_SCALE);
       this.rotation.setFromAxisAngle(THREE.Object3D.DEFAULT_UP,-Math.PI/2+.06*Math.sin(time*.3));this.scale.setScalar(.65+random(i)*.23);this.matrix.compose(this.position,this.rotation,this.scale);this.birds.setMatrixAt(i,this.matrix);
     }
     this.clouds.instanceMatrix.needsUpdate=true;this.birds.instanceMatrix.needsUpdate=true;
