@@ -361,12 +361,12 @@ export class WorldScene {
     for(const site of LANDMARKS){
       const tile=TILE_MAP.get(`${site.q},${site.r}`)!;
       if(site.kind==='main')for(const cell of siteFootprint(site.id).slice(1)){
-        const height=({ocean:3.65,fog:3.35,snow:3.2,forest:2.9,volcano:2.8,crystal:2.6} as Record<string,number>)[site.id]||2;
+        const height=({ocean:5.48,fog:5.03,snow:4.8,forest:4.35,volcano:4.2,crystal:3.9} as Record<string,number>)[site.id]||3;
         const geo=new THREE.BoxGeometry(1.45,height,1.45).translate(cell.x,Math.max(cell.height,.62)+height/2,cell.z),pick=new THREE.Mesh(geo,this.materials.get('terrain'));pick.userData.tileId=tile.id;pick.matrixAutoUpdate=false;this.picking.push(pick);
       }
       const beaconMaterial=new THREE.MeshBasicMaterial({color:BIOMES[site.biome].color});beaconMaterial.userData.nightGlow=true;
       const beacon=new THREE.Mesh(new THREE.OctahedronGeometry(site.kind==='main'?.085:.055),beaconMaterial);
-      beacon.position.set(tile.x,walkHeight(tile)+(site.kind==='main'?1.75:1.45),tile.z);beacon.userData.baseY=beacon.position.y;beacon.userData.siteId=site.id;beacon.visible=site.kind!=='hidden'&&site.kind!=='event';this.scene.add(beacon);this.beacons.push(beacon);
+      beacon.position.set(tile.x,walkHeight(tile)+(site.kind==='main'?2.63:2.18),tile.z);beacon.userData.baseY=beacon.position.y;beacon.userData.siteId=site.id;beacon.visible=site.kind!=='hidden'&&site.kind!=='event';this.scene.add(beacon);this.beacons.push(beacon);
     }
     const camp=TILE_MAP.get('0,1')!,fire=new THREE.Mesh(new THREE.ConeGeometry(.14,.35,7),new THREE.MeshBasicMaterial({color:'#ffc86d'}));fire.position.set(camp.x+.46,walkHeight(camp)+.17,camp.z-.38);this.scene.add(fire);this.fire=fire;
   }

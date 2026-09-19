@@ -14,15 +14,22 @@ export function buildWorldArchitecture(scene:THREE.Scene,kit:Kit,lava:THREE.Mate
   mats.get('glow')!.userData.nightGlow=true;
   for(const [key,color,power]of [['quartz','#aaa0d4',.55],['quartz-ice','#b8e1ee',.43],['rune-red','#c96086',.78]] as const){const material=new THREE.MeshLambertMaterial({color,emissive:color,emissiveIntensity:0});material.userData.nightEmission=power;mats.set(key,material);}
   const emitters:WorldLightSource[]=[];let activeSite:Landmark;
+  // Buildings were authored small against a camera that spans 23-38 world units, so they read as
+  // scenery rather than landmarks. Everything below still uses its original dimensions.
+  const BUILDING_SCALE=1.5;
   const batches=new Map<THREE.Material,THREE.BufferGeometry[]>();
-  const add=(shape:string,color:string,p:Point,dx:number,dy:number,dz:number,sx:number,sy:number,sz:number,ry=0,rx=0,rz=0)=>{
+  const add=(shape:string,color:string,p:Point,dx:number,dy:number,dz:number,sx:number,sy:number,sz:number,ry=0,rx=0,rz=0,fixed=false)=>{
     if(activeSite?.biome==='blood'&&color==='red'&&(shape==='torus'||shape==='rock'))color='rune-red';
     const material=mats.get(color)!;
     if(!batches.has(material))batches.set(material,[]);
-    const matrix=new THREE.Matrix4().compose(new THREE.Vector3(p.x+dx,p.y+dy,p.z+dz),new THREE.Quaternion().setFromEuler(new THREE.Euler(rx,ry,rz)),new THREE.Vector3(sx,sy,sz));
+    // Every building is authored at the size it was designed at; one factor here grows all of them
+    // together, offsets included, so nothing has to be retouched branch by branch. Plinths opt out:
+    // they already fill a hex and would spill into their neighbours at 1.5x.
+    const k=fixed?1:BUILDING_SCALE;
+    const matrix=new THREE.Matrix4().compose(new THREE.Vector3(p.x+dx*k,p.y+dy*k,p.z+dz*k),new THREE.Quaternion().setFromEuler(new THREE.Euler(rx,ry,rz)),new THREE.Vector3(sx*k,sy*k,sz*k));
     batches.get(material)!.push(kit.get(shape)!.clone().applyMatrix4(matrix));
-    if(color==='glow')emitters.push({x:p.x+dx,y:p.y+dy,z:p.z+dz+.02,color:'#ffd091',radius:activeSite.id==='fog'&&dy>2?3.0:1.22,power:activeSite.id==='fog'&&dy>2?3.1:.90,siteId:activeSite.id,kind:shape==='box'?'window':'lamp'});
-    if(color==='rune-red'&&shape==='rock')emitters.push({x:p.x+dx,y:p.y+dy,z:p.z+dz,color:'#eb6c97',radius:1.7,power:1.5,siteId:activeSite.id,kind:'crystal'});
+    if(color==='glow')emitters.push({x:p.x+dx*k,y:p.y+dy*k,z:p.z+dz*k+.02,color:'#ffd091',radius:activeSite.id==='fog'&&dy>1.35?3.0:1.22,power:activeSite.id==='fog'&&dy>1.35?3.1:.90,siteId:activeSite.id,kind:shape==='box'?'window':'lamp'});
+    if(color==='rune-red'&&shape==='rock')emitters.push({x:p.x+dx*k,y:p.y+dy*k,z:p.z+dz*k,color:'#eb6c97',radius:1.7,power:1.5,siteId:activeSite.id,kind:'crystal'});
   };
   const roofGeo=new THREE.BufferGeometry();roofGeo.setAttribute('position',new THREE.Float32BufferAttribute([-.5,-.5,-.5,.5,-.5,-.5,0,.5,-.5,-.5,-.5,.5,.5,-.5,.5,0,.5,.5],3));roofGeo.setIndex([0,2,1,3,4,5,0,3,5,0,5,2,2,5,4,2,4,1,0,1,4,0,4,3]);roofGeo.computeVertexNormals();kit.set('gable',roofGeo);
   const sailGeo=new THREE.PlaneGeometry(1,1,6,5),sp=sailGeo.getAttribute('position');for(let i=0;i<sp.count;i++)sp.setZ(i,Math.cos(sp.getX(i)*Math.PI)*Math.cos(sp.getY(i)*Math.PI)*.19);sailGeo.computeVertexNormals();kit.set('sail',sailGeo);
@@ -59,7 +66,7 @@ export function buildWorldArchitecture(scene:THREE.Scene,kit:Kit,lava:THREE.Mate
     for(const [i,tile]of cells.entries()){
       const f=point(tile),color=site.biome==='desert'?'sand':site.biome==='volcano'||site.biome==='blood'?'dark':site.biome==='waste'?'bone':site.biome==='snow'?'ice':site.biome==='forest'||site.biome==='swamp'?'moss':'stone';
       // Forecourts stay flush with the navigation surface; only occupied cells rise.
-      if(i){add('hexrock',color,f,0,-.09,0,.94,.18,.94);add('hexrock',color,f,0,.022,0,.83,.065,.83);}
+      if(i){add('hexrock',color,f,0,-.09,0,.94,.18,.94,0,0,0,true);add('hexrock',color,f,0,.022,0,.83,.065,.83,0,0,0,true);}
       else {for(const side of [-1,1])lantern(offset(f,side*.67,0,.28));}
     }
     if(site.id==='camp'){
