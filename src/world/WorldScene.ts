@@ -309,7 +309,17 @@ export class WorldScene {
       } else if(biome==='swamp'&&!tile.landmark) {
         const tx=x+.55,tz=z-.30,y=landHeightAt(tx,tz);
         this.instance('cylinder',this.mat('bog-water','#456f6c'),tx,y+.01,tz,.32,.015,.28);
-        for(let n=0;n<3;n++){const sx=tx-.25+n*.09;this.instance('cylinder',this.mat('reeds','#b0b27a'),sx,y+.2,tz-.18,.016,.4,.016);this.instance('cylinder',this.mat('reed-head','#716746'),sx,y+.40,tz-.18,.035,.13,.035);}
+        const reeds=this.mat('reeds','#b0b27a'),heads=this.mat('reed-head','#716746');
+        // A splayed clump of tapered blades. Three evenly spaced cylinders of constant radius read
+        // as matchsticks pushed into the mud; these lean, vary in height and start from a scatter.
+        for(let n=0;n<7;n++){
+          const a=random(seed*2.3+n*17.1)*Math.PI*2,r=random(seed*3.7+n*9.3)*.27;
+          const sx=tx+Math.sin(a)*r,sz=tz+Math.cos(a)*r;
+          const h=.20+random(seed*5.1+n*3.7)*.36,lean=.30+random(seed*7.9+n*11.3)*.34;
+          const bx=Math.sin(a+Math.PI/2)*h*lean*.34,bz=Math.cos(a+Math.PI/2)*h*lean*.34;
+          this.instance('trunk',reeds,sx+bx,y+h*.5,sz+bz,.015,h,.015,a,lean*.5,lean);
+          if(random(seed*11.7+n*5.3)>.42)this.instance('cylinder',heads,sx+bx*1.8,y+h*.96,sz+bz*1.8,.027,.12,.027,a,lean*.5,lean);
+        }
         if(random(seed)>.55)this.tree(x-.52,landHeightAt(x-.52,z),z,.70,seed);
       } else if(biome==='volcano') {
         if(tile.caldera){
