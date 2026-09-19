@@ -327,6 +327,19 @@ export class WorldScene {
           // the lake reads as a single pool rather than a ring of separate cones.
           const lava=this.mat('lava','#f89a53'),rock=this.mat('volcanic-rock','#554d62');
           this.instance('hexrock',lava,x,.46,z,1.02,.05,1.02,seed);
+          // Where the pool meets the sea the melt chills into raw stone, so every side facing open
+          // water gets a cooled rim instead of ending the molten plate hard against the surf.
+          for(let side=0;side<6;side++){
+            const [dq,dr]=DIRECTIONS[(side+5)%6];
+            if(TILE_MAP.get((tile.q+dq)+','+(tile.r+dr))?.biome!=='ocean')continue;
+            const a0=side*Math.PI/3,a1=(side+1)*Math.PI/3;
+            for(let n=0;n<4;n++){
+              const t=(n+.5)/4;
+              const px=x+THREE.MathUtils.lerp(Math.sin(a0),Math.sin(a1),t)*.84,pz=z+THREE.MathUtils.lerp(Math.cos(a0),Math.cos(a1),t)*.84;
+              this.instance('rock',rock,px,.50,pz,.15+random(px*7+n)*.11,.12+random(pz*5+n)*.10,.14+random(px*3+n)*.10,px+pz+n);
+              if(random(px*11+n*3)>.5)this.instance('rock',this.mat('obsidian','#4c455f'),px+random(pz*3)*.1,.58,pz+random(px*5)*.1,.08,.07,.08,px-pz+n);
+            }
+          }
           if(random(seed*5)>.62)this.instance('hexrock',rock,x+(random(seed*3)-.5)*.55,.49,z+(random(seed*7)-.5)*.55,.34+random(seed)*.34,.05,.30+random(seed*2)*.34,seed);
           if(random(seed*11)>.78)this.instance('crystal',this.mat('ember','#ffb066'),x+(random(seed*13)-.5)*.5,.56,z+(random(seed*17)-.5)*.5,.05,.2,.05,seed);
           continue;
