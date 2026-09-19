@@ -79,17 +79,38 @@ export function cartoonWater(color: string, opacity = 1) {
     transparent: opacity < 1, depthWrite: opacity === 1,
     vertexShader: 'varying vec3 vWorld; void main(){vec4 p=modelMatrix*vec4(position,1.);vWorld=p.xyz;gl_Position=projectionMatrix*viewMatrix*p;}',
     fragmentShader: `varying vec3 vWorld; uniform float uTime; uniform vec3 uColor; uniform float uOpacity;uniform vec3 uLightTint;uniform float uNight;uniform vec3 uHighlight;uniform float uLightX;
+      // Five crossing wave trains, from long swell down to fine chop. The surface itself stays a
+      // flat plate, so the shape has to come from shading the slope of this field rather than from
+      // vertex displacement.
+      float waveHeight(vec2 p,float t){
+        float h=sin(p.x*.44+p.y*.58+t*.31)*.62;
+        h+=sin(p.x*-.33+p.y*.75+t*.26)*.44;
+        h+=sin(p.y*1.90+sin(p.x*1.25+t*.21)*.72-t*.78)*.26;
+        h+=sin(p.x*3.60-p.y*2.80+t*1.05)*.20;
+        h+=sin(p.x*7.90+p.y*6.70-t*1.62)*.095;
+        return h;
+      }
       void main(){
         vec2 p=vWorld.xz;
-        float swell=sin(p.x*.48+p.y*.62+uTime*.30)*.025;
-        float wave=sin(p.y*5.+sin(p.x*1.7+uTime*.18)*.65-uTime*.65);
-        float breaks=smoothstep(.64,.88,sin(p.x*2.1+p.y*.5));
-        float crest=smoothstep(.972-fwidth(wave),.997,wave)*breaks;
-        vec3 col=(uColor*(.97+swell)+vec3(.23,.22,.19)*crest*.034)*uLightTint;
-        float trail=exp(-pow(p.x*.84+p.y*.52-uLightX*12.,2.)*.018);
-        float glitter=pow(max(0.,sin(p.y*18.+sin(p.x*6.+uTime*.6)*1.8-uTime*1.5)),24.);
-        float glintBreaks=smoothstep(.62,.96,sin(p.x*3.7+p.y*.8+sin(p.y*1.3-uTime*.21))*.5+.5);
-        col+=uHighlight*trail*glitter*glintBreaks*(.012+uNight*.022);
+        float h=waveHeight(p,uTime);
+        // Slope of the field gives a real normal, so the water answers the sun and the lantern
+        // instead of sitting at one flat tint.
+        float e=.30;
+        float dx=waveHeight(p+vec2(e,0.),uTime)-waveHeight(p-vec2(e,0.),uTime);
+        float dz=waveHeight(p+vec2(0.,e),uTime)-waveHeight(p-vec2(0.,e),uTime);
+        // The slope exaggeration is what makes the surface read as water: at its true scale the
+        // normal barely leaves vertical and every pixel lands on the same diffuse term.
+        vec3 n=normalize(vec3(-dx*3.4,1.0,-dz*3.4));
+        vec3 lightDir=normalize(vec3(uLightX*2.-1.,2.2,-.6));
+        float diffuse=.50+.50*max(0.,dot(n,lightDir));
+        float spec=pow(max(0.,dot(reflect(-lightDir,n),normalize(vec3(0.,1.,0.)+lightDir*.15))),48.);
+        float foam=smoothstep(.90,1.34,h)*smoothstep(.45,.95,sin(p.x*1.6+p.y*1.05+uTime*.13)*.5+.5);
+        vec3 col=uColor*(.44+.86*diffuse)*uLightTint;
+        col+=uHighlight*spec*(.20+uNight*.46);
+        col+=vec3(.74,.77,.74)*foam*(.10+uNight*.16);
+        float trail=exp(-pow(p.x*.84+p.y*.52-uLightX*12.,2.)*.020);
+        float glitter=pow(max(0.,sin(p.y*17.+sin(p.x*5.6+uTime*.55)*1.7-uTime*1.45)),26.);
+        col+=uHighlight*trail*glitter*(.02+uNight*.05);
         gl_FragColor=vec4(col,uOpacity);
         #include <colorspace_fragment>
       }`,
