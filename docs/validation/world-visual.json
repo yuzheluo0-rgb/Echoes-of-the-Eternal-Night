@@ -1,0 +1,45 @@
+{
+  "pixels": {
+    "changed": 138505,
+    "max": 406
+  },
+  "layouts": [
+    {
+      "size": [
+        390,
+        844
+      ],
+      "atlas": "none",
+      "overflow": false,
+      "labels": 1
+    },
+    {
+      "size": [
+        768,
+        1024
+      ],
+      "atlas": "none",
+      "overflow": false,
+      "labels": 12
+    },
+    {
+      "size": [
+        844,
+        390
+      ],
+      "atlas": "none",
+      "overflow": false,
+      "labels": 11
+    },
+    {
+      "size": [
+        1280,
+        720
+      ],
+      "atlas": "flex",
+      "overflow": false,
+      "labels": 12
+    }
+  ],
+  "errors": []
+}

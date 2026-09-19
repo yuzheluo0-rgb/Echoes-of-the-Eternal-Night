@@ -1,0 +1,117 @@
+/* Independent camera motion preserves the existing pointer parallax and entrance zoom. */
+.opening-landscape { background-image: none; }
+.opening-scene-drift {
+  position: absolute;
+  inset: -1.8%;
+  background: #101619 url('/assets/threshold-scene.webp') no-repeat;
+  background-position: inherit;
+  background-size: inherit;
+  transform-origin: 67% 39%;
+  animation: scene-dolly 20s cubic-bezier(.37, 0, .63, 1) -6s infinite alternate;
+  will-change: transform;
+}
+.opening-lightfield {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1.8s ease;
+}
+.opening-lightfield[data-renderer="webgl"] { opacity: 1; }
+.opening-environment:has(.opening-lightfield[data-renderer="webgl"]) .opening-godray,
+.opening-environment:has(.opening-lightfield[data-renderer="webgl"]) .opening-moon-haze {
+  opacity: 0;
+  animation: none;
+}
+.opening-environment:has(.opening-lightfield[data-renderer="webgl"]) .opening-fog-far { opacity: .12; }
+.opening-fog-near { opacity: .24; animation-duration: 13s; animation-delay: -4s; }
+.opening-fog-far { animation-duration: 24s; animation-delay: -9s; }
+.opening-watchman img {
+  transform-origin: 44% 94%;
+  animation: cloak-breath 9s ease-in-out infinite;
+}
+.opening-lantern-glow {
+  left: 3.5%; top: 50.5%; width: 26%;
+  background: radial-gradient(circle, #fff5c3b0 0%, #f7c77365 8%, #f1a44725 27%, transparent 69%);
+  filter: blur(3px);
+  animation: lantern-fire 4.9s ease-in-out infinite;
+}
+.opening-lantern-spill {
+  position: absolute;
+  inset: 35% 9% 14% -15%;
+  background: radial-gradient(ellipse at 28% 50%, #f9ba6124, #d4943d0a 43%, transparent 66%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  animation: lantern-fire 4.9s ease-in-out infinite;
+}
+.opening-lantern-reflection {
+  position: absolute;
+  bottom: 0;
+  left: -20%;
+  width: 80%;
+  height: 9%;
+  background: radial-gradient(ellipse, #e9ae5633, #ba803d12 30%, transparent 69%);
+  mix-blend-mode: screen;
+  filter: blur(5px);
+  transform: rotate(-9deg);
+  animation: lantern-fire 4.9s ease-in-out infinite;
+  pointer-events: none;
+}
+.opening-background-paused .opening-environment *,
+.opening-background-paused .opening-environment *::before,
+.opening-background-paused .opening-environment *::after { animation-play-state: paused !important; }
+.opening-reduced .opening-scene-drift { animation: none; transform: none; }
+.opening-reduced .opening-watchman img { animation: none; transform: none; }
+.opening-reduced .opening-lantern-glow,
+.opening-reduced .opening-lantern-spill,
+.opening-reduced .opening-lantern-reflection { animation: none; opacity: .78; }
+@keyframes scene-dolly {
+  0% { transform: translate3d(-.7%, .3%, 0) scale(1.01); }
+  50% { transform: translate3d(.35%, -.2%, 0) scale(1.035); }
+  100% { transform: translate3d(.85%, -.45%, 0) scale(1.055); }
+}
+@keyframes cloak-breath {
+  0%, 100% { transform: skewX(-.18deg) rotate(-.08deg); }
+  50% { transform: skewX(.25deg) rotate(.10deg); }
+}
+@keyframes lantern-fire {
+  0%, 100% { opacity: .81; }
+  18% { opacity: .95; }
+  32% { opacity: .78; }
+  47% { opacity: 1; }
+  59% { opacity: .87; }
+  72% { opacity: .97; }
+  86% { opacity: .82; }
+}
+@media(max-width:700px) {
+  .opening-scene-drift { inset: -1.2%; animation-duration: 24s; }
+  .opening-lightfield { opacity: 0; }
+  .opening-lightfield[data-renderer="webgl"] { opacity: .83; }
+  .opening-lantern-spill { opacity: .5; }
+  .opening-lantern-reflection { display: none; }
+}
+
+.opening-motion-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid #a1947530;
+  color: #cfb986;
+  font-size: 10px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  transition: color .25s, border-color .25s, background .25s;
+}
+.opening-motion-toggle:hover { background: #b99b6811; border-color: #ba9f6866; color: #eddbb3; }
+.opening-motion-toggle[aria-pressed="false"] { color: #a8aa9c; border-color: #a1947550; }
+@media(max-width:700px) {
+  .opening-motion-toggle { height: 32px; padding: 0 7px; font-size: 9px; gap: 5px; letter-spacing: 0; }
+}
+@media(max-width:360px) {
+  .opening-motion-toggle { padding: 0 5px; gap: 4px; font-size: 8px; }
+  .opening-motion-toggle svg { width: 11px; }
+}

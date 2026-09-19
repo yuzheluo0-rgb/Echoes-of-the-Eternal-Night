@@ -1,0 +1,136 @@
+{
+  "loadMs": 1306,
+  "results": [
+    {
+      "mode": "overview",
+      "drawIntervals": {
+        "median": 16.699999999254942,
+        "p95": 17.09999999962747,
+        "max": 21.299999999813735
+      },
+      "renderCpu": {
+        "median": 4.800000000745058,
+        "p95": 6.7000000001862645,
+        "max": 10.900000000372529
+      },
+      "draws": {
+        "frame": 251,
+        "calls": 135,
+        "triangles": 218837,
+        "points": 220,
+        "lines": 7062
+      },
+      "samples": 180,
+      "pixels": [
+        1440,
+        960
+      ],
+      "gpu": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A788) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+    },
+    {
+      "mode": "pan",
+      "drawIntervals": {
+        "median": 16.699999999254942,
+        "p95": 20.600000000558794,
+        "max": 48.200000000186265
+      },
+      "renderCpu": {
+        "median": 4.5,
+        "p95": 5.8999999994412065,
+        "max": 8.5
+      },
+      "draws": {
+        "frame": 493,
+        "calls": 135,
+        "triangles": 218837,
+        "points": 220,
+        "lines": 7062
+      },
+      "samples": 180,
+      "pixels": [
+        1440,
+        960
+      ],
+      "gpu": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A788) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+    },
+    {
+      "mode": "zoom",
+      "drawIntervals": {
+        "median": 16.700000000186265,
+        "p95": 21,
+        "max": 29.899999999441206
+      },
+      "renderCpu": {
+        "median": 4.5,
+        "p95": 5.599999999627471,
+        "max": 10.299999999813735
+      },
+      "draws": {
+        "frame": 735,
+        "calls": 125,
+        "triangles": 218401,
+        "points": 220,
+        "lines": 7062
+      },
+      "samples": 180,
+      "pixels": [
+        1440,
+        960
+      ],
+      "gpu": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A788) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+    },
+    {
+      "mode": "walking",
+      "drawIntervals": {
+        "median": 16.700000000186265,
+        "p95": 21.09999999962747,
+        "max": 113.90000000037253
+      },
+      "renderCpu": {
+        "median": 4.7999999998137355,
+        "p95": 6.800000000745058,
+        "max": 10.700000000186265
+      },
+      "draws": {
+        "frame": 976,
+        "calls": 131,
+        "triangles": 208161,
+        "points": 220,
+        "lines": 7256
+      },
+      "samples": 180,
+      "pixels": [
+        1440,
+        960
+      ],
+      "gpu": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A788) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+    },
+    {
+      "mode": "volcano",
+      "drawIntervals": {
+        "median": 16.700000000186265,
+        "p95": 17.100000000558794,
+        "max": 107.59999999962747
+      },
+      "renderCpu": {
+        "median": 2.2000000001862645,
+        "p95": 2.7000000001862645,
+        "max": 4.7000000001862645
+      },
+      "draws": {
+        "frame": 1208,
+        "calls": 55,
+        "triangles": 170967,
+        "points": 220,
+        "lines": 7032
+      },
+      "samples": 180,
+      "pixels": [
+        1440,
+        960
+      ],
+      "gpu": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A788) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+    }
+  ],
+  "errors": []
+}

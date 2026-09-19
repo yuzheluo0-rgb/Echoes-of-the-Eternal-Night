@@ -1,0 +1,166 @@
+/* Reading surfaces share one scale across locations, quests, the journal and settings. */
+.world-dialog {
+  width: min(760px, calc(100vw - 40px));
+  max-width: none;
+  max-height: calc(100dvh - 40px);
+  overflow: hidden;
+  font-size: 16px;
+  line-height: 1.65;
+  color: #e1e9dc;
+}
+.world-dialog-inner { display: flex; flex-direction: column; max-height: calc(100dvh - 42px); padding: 0; }
+.world-dialog-header { display: flex; align-items: flex-start; gap: 20px; flex-shrink: 0; padding: 26px 32px 18px; border-bottom: 1px solid #bacbad25; background: #20464c; }
+.world-dialog-header > div { flex: 1; min-width: 0; }
+.world-dialog .world-kicker { font-size: 11px; letter-spacing: 2px; padding-right: 4px; overflow-wrap: anywhere; }
+.world-dialog h2 { font-size: 32px; line-height: 1.45; letter-spacing: 3px; margin: 7px 0 0; color: #f3e4c5; }
+.world-dialog .dialog-close { position: static; width: 44px; height: 44px; flex-shrink: 0; border: 1px solid #becba93b; border-radius: 10px; background: #122f3650; color: #e5e9d8; }
+.world-dialog-body { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 24px 32px 28px; scrollbar-width: thin; scrollbar-color: #b6bd966b transparent; }
+.world-dialog button { font-size: 16px; line-height: 1.5; }
+.world-dialog svg { flex-shrink: 0; }
+.world-dialog .dialog-intro, .world-dialog .site-dialog-banner p { font: 16px/1.9 'Segoe UI','Microsoft YaHei',sans-serif; color: #d6e2d5; letter-spacing: .3px; margin-top: 0; }
+.world-dialog .dialog-footnote { font-size: 14px; line-height: 1.8; color: #b1c7bc; }
+.world-dialog .site-dialog-banner { min-height: 0; padding: 21px 24px; margin-bottom: 25px; border-color: #bfd0b139; }
+.world-dialog .site-dialog-banner > span { font-size: 14px; letter-spacing: 1px; color: #dfdfc5; }
+.world-dialog .site-dialog-banner p { margin: 14px 0 0; text-shadow: none; }
+.world-dialog .mission-heading { gap: 8px 18px; flex-wrap: wrap; font-size: 18px; margin-bottom: 14px; }
+.world-dialog .mission-heading small { font-size: 14px; line-height: 1.7; color: #b7ccc1; letter-spacing: .3px; }
+.world-dialog .world-missions { gap: 12px; }
+.world-dialog .mission-card { padding: 16px 20px; gap: 18px; min-height: 82px; }
+.world-dialog .mission-card > span:nth-child(2) { min-width: 0; }
+.world-dialog .mission-card strong { font-size: 18px; line-height: 1.6; letter-spacing: 1px; }
+.world-dialog .mission-card small { font-size: 14px; line-height: 1.6; letter-spacing: .3px; color: #b0c6b9; margin-top: 4px; }
+.world-dialog .mission-number { font-size: 30px; flex-shrink: 0; }
+.world-dialog .mission-actions { align-items: center; flex-wrap: wrap; gap: 12px 20px; margin-top: 24px; }
+.world-dialog .world-primary, .world-dialog .world-secondary { min-height: 48px; padding: 12px 18px; font-size: 16px; letter-spacing: 1px; }
+.world-dialog .world-secondary { color: #c1d3c5; }
+.world-dialog .world-primary svg, .world-dialog .world-secondary svg { width: 18px; height: 18px; }
+.world-dialog .world-primary { min-width: 210px; }
+.world-dialog .quest-objectives { padding: 4px 18px; }
+.world-dialog .quest-objectives > div { font-size: 16px; gap: 12px; padding: 15px 0; color: #c4d4c8; }
+.world-dialog .quest-objectives small { font-size: 14px; color: #adc5b9; white-space: nowrap; }
+.world-dialog .quest-reward { flex-wrap: wrap; font-size: 16px; line-height: 1.8; gap: 8px; }
+.world-dialog .encounter-wallet { font-size: 14px; }
+.world-dialog .encounter-resolved { padding: 24px; }
+.world-dialog .encounter-resolved p { font-size: 16px; line-height: 1.9; }
+.world-dialog .encounter-resolved small { font-size: 14px; color: #b7cbbf; }
+.world-dialog .world-help { font-size: 16px; margin: 20px 0; }
+.world-dialog .world-help > div { padding: 15px 0; gap: 20px; }
+.world-dialog .world-help dd { color: #bfd1c4; line-height: 1.7; }
+.world-dialog .world-options { padding: 0 18px; }
+.world-dialog .world-options label { min-height: 58px; font-size: 16px; gap: 16px; color: #d0ddcb; }
+.world-dialog .world-options input { width: 20px; height: 20px; }
+.world-dialog .world-options select { min-height: 42px; max-width: 200px; }
+.world-dialog .atlas-tabs { gap: 8px; padding: 0 0 18px; }
+.world-dialog .atlas-tabs button { min-height: 44px; font-size: 16px; color: #c4d7c8; }
+.world-dialog .dialog-atlas { gap: 10px; }
+.world-dialog .dialog-atlas .atlas-site { min-height: 80px; padding: 14px; gap: 12px; }
+.world-dialog .dialog-atlas .atlas-site-copy > span { font-size: 17px; letter-spacing: .5px; }
+.world-dialog .dialog-atlas .atlas-site-copy small { font-size: 14px; color: #afc7b9; letter-spacing: .3px; }
+.world-dialog .atlas-site-state { font-size: 14px; color: #b4c7a2; }
+.world-dialog .atlas-empty { font-size: 16px; }
+.world-dialog .journal-stats { padding-top: 0; border-top: 0; }
+.world-dialog .journal-stats > span { font-size: 15px; color: #bed0c3; }
+.world-dialog .journal-stats strong { font-size: 30px; }
+.world-dialog .journal-section-title { font-size: 19px; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
+.world-dialog .journal-section-title > span { font-size: 14px; color: #adc6b9; }
+.world-dialog .journal-empty { font-size: 16px; color: #c0d1c5; }
+.world-dialog .journal-quests article { padding: 20px; }
+.world-dialog .journal-quests article > div { flex-wrap: wrap; font-size: 18px; }
+.world-dialog .journal-quests article > div span { font-size: 14px; color: #b6ccb8; }
+.world-dialog .journal-quests article p, .world-dialog .journal-memories p { font-size: 16px; line-height: 1.9; color: #bfd1c3; }
+.world-dialog .journal-quests li { font-size: 16px; color: #acc6b9; }
+.world-dialog .journal-quests li small { font-size: 14px; white-space: nowrap; }
+.world-dialog .journal-quests footer { font-size: 14px; line-height: 1.8; color: #d2c596; }
+.world-dialog .journal-memories article { padding: 18px 0; gap: 14px; }
+.world-dialog .journal-memories strong { font-size: 17px; }
+.world-dialog .beacon-grid { gap: 12px; }
+.world-dialog .beacon-grid button { min-height: 86px; padding: 16px; gap: 14px; }
+.world-dialog .beacon-grid strong { font-size: 17px; }
+.world-dialog .beacon-grid small { font-size: 14px; color: #c2d2bd; }
+.world-dialog .beacon-grid button:disabled { opacity: .65; }
+
+/* Keep the time control legible without covering the exploration canvas. */
+.world-header:has(.clock-open) { z-index: 9; }
+.world-clock { width: 244px; top: -5px; }
+.clock-face { min-height: 62px; }
+.clock-date { font-size: 12px; letter-spacing: .5px; }
+.clock-hour { font-size: 24px; }
+.clock-hour small { font-size: 11px; }
+.clock-popover { width: 400px; top: 72px; padding: 22px; max-height: calc(100dvh - 120px); overflow-y: auto; overscroll-behavior: contain; background: #193d47; }
+.clock-popover-heading { font-size: 21px; }
+.clock-popover-heading button { width: 38px; height: 38px; border-radius: 8px; background: #d2ddba0b; }
+.clock-popover-heading button svg { width: 20px; height: 20px; }
+.clock-popover > p { font-size: 16px; color: #c1d5c9; }
+.clock-popover .clock-speed-row button { min-height: 44px; font-size: 14px; padding-inline: 12px; }
+.clock-wait-label { font-size: 14px; }
+.clock-phases { gap: 6px; }
+.clock-phases button { padding: 14px 2px; gap: 9px; }
+.clock-phases span { font-size: 15px; }
+.clock-phases small { font-size: 12px; color: #b0c8c1; }
+.clock-popover .clock-footnote { font-size: 14px; color: #b1c7bd; }
+.world-site-label .site-label-name { font-size: 12px; letter-spacing: .5px; }
+.world-toast { font-size: 15px; max-width: min(650px, 90vw); }
+@media (min-width: 851px) {
+  .world-atlas { width: 210px; }
+  .world-atlas .atlas-heading { font-size: 14px !important; }
+  .world-atlas .atlas-site { min-height: 49px; }
+  .world-atlas .atlas-site-copy > span { font-size: 14px; }
+  .world-atlas .atlas-site-copy small, .world-atlas .atlas-progress { font-size: 11px; color: #a8c1b8; }
+  .world-atlas .atlas-tabs button { font-size: 13px; min-height: 35px; }
+  .world-travel .destination-description { font-size: 12px; line-height: 1.6; color: #aec5b8; }
+  .world-travel .destination-eyebrow, .world-travel .travel-distance, .world-travel .traveler-identity p:last-child { font-size: 12px; }
+  .world-travel .world-primary { font-size: 15px; min-height: 48px; }
+  .world-control-hint { font-size: 11px; }
+}
+@media (max-width: 1100px) and (min-width: 851px) { .world-clock { width: 228px; } .world-atlas { width: 190px; } }
+@media (max-width: 850px) {
+  .world-clock { left: 0; top: 119px; width: 212px; }
+  .clock-face { min-height: 58px; }
+  .clock-hour { font-size: 22px; }
+  .clock-popover { top: 68px; width: min(400px, calc(100vw - 40px)); max-height: calc(100dvh - 227px); }
+}
+@media (max-width: 560px) {
+  .world-dialog { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); border-radius: 14px; }
+  .world-dialog-inner { max-height: calc(100dvh - 22px); }
+  .world-dialog-header { padding: 20px 18px 16px; gap: 12px; }
+  .world-dialog h2 { font-size: 28px; letter-spacing: 2px; }
+  .world-dialog .world-kicker { font-size: 10px; letter-spacing: 1px; }
+  .world-dialog-body { padding: 20px 18px 24px; }
+  .world-dialog .site-dialog-banner { padding: 18px; }
+  .world-dialog .site-dialog-banner > span { letter-spacing: 0; }
+  .world-dialog .site-dialog-banner > svg { width: 20px; margin-right: 8px; }
+  .world-dialog .mission-card { padding: 14px; gap: 12px; }
+  .world-dialog .mission-card strong { font-size: 17px; }
+  .world-dialog .mission-actions { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  .world-dialog .mission-actions .world-primary { grid-row: 1; width: 100%; min-width: 0; }
+  .world-dialog .mission-actions .world-secondary { width: 100%; }
+  .world-dialog .mission-heading small { width: 100%; }
+  .world-dialog .quest-reward span { margin-left: 0; }
+  .world-dialog .quest-objectives { padding-inline: 12px; }
+  .world-dialog .quest-objectives > div { gap: 8px; }
+  .world-dialog .world-help > div { display: grid; gap: 5px; }
+  .world-dialog .world-help dd { max-width: none; text-align: left; }
+  .world-dialog .world-options { padding-inline: 12px; }
+  .world-dialog .world-options label { gap: 10px; }
+  .world-dialog .world-options select { max-width: 154px; padding-inline: 8px; }
+  .world-dialog .dialog-atlas, .world-dialog .beacon-grid { grid-template-columns: 1fr; }
+  .world-dialog .journal-quests article { padding: 16px; }
+  .world-dialog .journal-stats { gap: 7px; }
+  .world-dialog .journal-stats > span { gap: 6px; font-size: 14px; }
+  .world-clock { width: 206px; }
+  .clock-date { font-size: 11px; }
+  .clock-popover { width: calc(100vw - 32px); padding: 18px; }
+  .clock-popover .clock-speed-row button { padding-inline: 9px; }
+}
+@media (max-height: 560px) and (min-width: 600px) {
+  .world-clock { left: 50%; top: -6px; width: 220px; transform: translateX(-50%); }
+  .clock-face { min-height: 48px; }
+  .clock-hour { font-size: 20px; }
+  .clock-popover { top: 55px; left: 50%; transform: translateX(-50%); width: 400px; max-height: calc(100dvh - 74px); }
+  .world-dialog-header { padding-top: 15px; padding-bottom: 13px; }
+  .world-dialog h2 { font-size: 28px; }
+}
+@media (max-width: 350px) {
+  .world-clock { width: 196px; }
+  .world-minimap { width: 90px; }
+}

@@ -1,0 +1,16 @@
+.harbor-story{display:flex;gap:22px;align-items:flex-start;border:1px solid #c9ad7045;border-radius:10px;padding:25px;background:radial-gradient(ellipse at 15% 0,#d8b46c1f,transparent 70%),linear-gradient(120deg,#272b2a,#141e27);margin-bottom:24px;}
+.harbor-seal{display:grid;place-items:center;min-width:68px;height:78px;border:1px solid #d1b5754d;border-radius:35px 35px 7px 7px;color:#d8bd84;background:#a18b4610;}
+.harbor-eyebrow{display:flex;gap:8px;align-items:center;font-size:13px;color:#d0b987;letter-spacing:1px;margin:0 0 9px;}
+.harbor-story h3,.harbor-journal h3{font-family:'World Serif',serif;font-weight:400;font-size:24px;line-height:1.6;margin:0 0 13px;color:#ecd8ad;}
+.harbor-story p:last-child,.harbor-journal>p:not(.harbor-eyebrow){font-size:16px;line-height:1.9;color:#ced0bd;margin:0;}
+.harbor-stages{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;list-style:none;padding:0;margin:25px 0;}
+.harbor-stages li{display:flex;align-items:center;gap:9px;border-bottom:2px solid #b7a16925;padding:0 0 14px;color:#a6ae9b;}
+.harbor-stages li>span{font-variant-numeric:tabular-nums;color:#b8a47a;min-width:24px;display:flex;}
+.harbor-stages strong{font-size:15px;font-weight:400;}
+.harbor-stages .harbor-current{border-color:#e4c782;color:#efdaa6;}.harbor-stages .harbor-done{border-color:#b1a16480;color:#c7c68d;}
+.harbor-rewards{display:flex;gap:12px;align-items:flex-start;font-size:15px;color:#d5bf8a;padding:17px;border:1px solid #b9a16935;border-radius:9px;background:#b299590b;}
+.harbor-rewards svg{flex-shrink:0;margin-top:3px;}
+.harbor-supplies{display:grid;gap:12px;}.harbor-supplies>div{display:flex;align-items:center;gap:14px;padding:18px;border:1px solid #b9a46f39;border-radius:10px;background:#101a2166;}.harbor-supplies strong{font-size:17px;font-weight:400;color:#e2d3ad;}.harbor-supplies p{font-size:14px;line-height:1.7;color:#b4bca8;margin:5px 0 0;}.supply-check{color:#bfb185;display:flex;}.supply-ready .supply-check{color:#d8ce8e;}.harbor-supplies .supply-ready{border-color:#c5b4706b;background:#c1a5500c;}
+.world-dialog .harbor-supplies button{display:flex;align-items:center;gap:7px;margin-left:auto;min-height:44px;padding:9px 14px;background:#c2a86612;border:1px solid #b4a06c45;border-radius:8px;color:#dcca97;font-size:14px;white-space:nowrap;}
+.harbor-journal{border:1px solid #cfb57757;border-radius:10px;padding:21px;background:linear-gradient(110deg,#ab905717,#192129);margin-bottom:24px;}.world-dialog .harbor-journal .world-secondary{padding-left:0;margin-top:9px;color:#e4c789;}
+@media(max-width:560px){.harbor-story{padding:18px;gap:14px;}.harbor-seal{min-width:45px;height:58px;}.harbor-seal svg{width:29px;}.harbor-story h3{font-size:21px;}.harbor-eyebrow{font-size:12px;letter-spacing:.3px;}.harbor-stages{gap:9px;}.harbor-stages li{flex-direction:column;align-items:flex-start;gap:8px;}.harbor-stages strong{font-size:14px;}.harbor-supplies>div{gap:9px;padding:14px;flex-wrap:wrap;}.world-dialog .harbor-supplies button{padding-inline:11px;}.harbor-story{flex-wrap:wrap;}.harbor-seal{display:none;}}

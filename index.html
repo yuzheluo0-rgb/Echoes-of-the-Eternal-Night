@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#080c0e" />
+    <meta name="description" content="永夜回响：当最后一盏灯熄灭，你的选择，是黑暗中唯一的回响。走进雾海与日蚀中的哥特幻想世界。" />
+    <link rel="preload" as="font" href="/fonts/world-serif-cn.ttf" type="font/ttf" crossorigin />
+    <link rel="preload" as="font" href="/fonts/opening-roman.woff2" type="font/woff2" crossorigin />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>永夜回响 · Echoes of Eternal Night</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      if (location.protocol === 'file:') {
+        document.body.style.cssText = 'margin:0;background:#102027;color:#d8c69a;font:16px/2 "Microsoft YaHei",sans-serif;display:grid;place-items:center;min-height:100vh;text-align:center';
+        document.getElementById('root').innerHTML = '<div style="padding:32px"><h1 style="font-size:28px;letter-spacing:6px">永夜回响</h1><p>请双击项目文件夹中的 <strong>start.bat</strong> 打开游戏。</p><p style="font-size:13px;color:#91aaa0">启动器会自动打开浏览器，载入动态地图与三维场景。</p></div>';
+      }
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

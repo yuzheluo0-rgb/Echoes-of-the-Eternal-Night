@@ -1,0 +1,48 @@
+{
+  "checks": [
+    "pan keeps fixed heading and does not trigger walking",
+    "animated walking follows the character and a side quest can be accepted",
+    "proximity reveals a secret, its visit completes a quest and grants one reward",
+    "encounter choices persist and cannot be claimed again",
+    "the journal records stories and the camp beacon is free",
+    "a distant new biome is reachable; its beacon unlocks and charges exactly once",
+    "reload restores position, exploration, quest, encounter and currency",
+    "dialogs pause drawing and quality controls work",
+    "five viewport layouts and mobile atlas categories fit",
+    "audio can be enabled and stopped"
+  ],
+  "saved": {
+    "position": "-15,5",
+    "visited": [
+      "camp",
+      "side-grass",
+      "hidden-grass",
+      "event-grass",
+      "side-swamp",
+      "hidden-swamp",
+      "crystal"
+    ],
+    "mission": "秘境寻踪",
+    "discovered": [
+      "event-grass",
+      "hidden-grass",
+      "event-swamp",
+      "hidden-swamp",
+      "hidden-fog",
+      "hidden-crystal",
+      "event-crystal"
+    ],
+    "acceptedQuests": [
+      "side-grass"
+    ],
+    "completedQuests": [
+      "side-grass"
+    ],
+    "embers": 9,
+    "echoes": 0,
+    "encounters": {
+      "event-grass": 0
+    }
+  },
+  "errors": []
+}

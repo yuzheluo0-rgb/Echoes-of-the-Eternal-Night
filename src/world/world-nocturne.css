@@ -1,0 +1,153 @@
+/* Obsidian, weathered brass and lamplight echo the opening's eclipse artwork. */
+.world-page { --gold:#d9bc80; --ink:#eee3cc; --muted:#b4ad9d; --line:#c7a8682b; color:var(--ink); background:#11181e; }
+.world-atmosphere { background:radial-gradient(ellipse at 52% 43%,transparent 34%,#080c1340 100%),linear-gradient(0deg,#090c14b0,transparent 26%,transparent 75%,#090d1645); }
+.world-header { border-bottom-color:#b79b5f2e; }
+.world-brand { color:#e0c795; }
+.brand-sigil { color:#dabb7c; text-shadow:0 0 18px #d4ab4b35; }
+.world-brand small { color:#a49d8c; }
+.world-title { text-shadow:0 2px 18px #06090e; }
+.world-title h1 { color:#eadcbe; }
+.world-title .world-kicker,.world-kicker { color:#c0a777; }
+.world-subtitle { color:#bdb8a9; }
+.world-title-rule { color:#cbb98c; }
+.world-title-rule i { background:#b69a5b40; }
+.world-title-rule i:after { background:#c9a968; }
+.world-icon { color:#c6bfa9; }
+.world-icon:hover { color:#ffe3a2; background:#d7b57612; border-color:#c3a26955; }
+.world-icon:focus-visible,.world-page a:focus-visible,.world-page button:focus-visible { outline-color:#e9c777; }
+.world-wallet,.world-wallet > span:last-child { color:#d6c18f; }
+.world-atlas { background:linear-gradient(145deg,#1b2023f7,#13191df5); border-color:#b69b643d; border-radius:11px; box-shadow:0 10px 28px #04060a40,inset 0 1px 0 #ead4a00a; }
+.world-atlas .atlas-heading { background:#ceaf7108; color:#e2cda2; }
+.atlas-progress,.world-atlas .atlas-progress { color:#afa893; }
+.atlas-progress strong { color:#d5bd86; }
+.atlas-progress small { color:#a19983; }
+.world-atlas .atlas-site-copy > span,.atlas-site { color:#c9c6b4; }
+.world-atlas .atlas-site-copy small { color:#aaa995; }
+.atlas-sites { scrollbar-color:#b8995755 transparent; }
+.atlas-site:hover { background:#b7a16a0d; border-color:#c5a56635; }
+.atlas-site.active { background:linear-gradient(95deg,#b4974e24,#b4974e07); border-color:#d1b4774d; }
+.atlas-site.active .atlas-site-copy > span { color:#f0d599; }
+.atlas-site-state,.atlas-note,.atlas-empty { color:#a9a591; }
+.atlas-tabs button { color:#bab6a1; }
+.atlas-tabs button[aria-pressed=true] { background:#bda26721; border-color:#d2b47e45; color:#f1d393; }
+.world-minimap { background:linear-gradient(145deg,#1c2124f5,#11181cf5); border-color:#bfa46d42; border-radius:10px; box-shadow:0 7px 22px #03060b35; }
+.world-minimap > div { color:#d5c39c; }
+.world-minimap small,.world-minimap p { color:#aaa992; }
+.world-minimap svg { border:1px solid #c8a96a1c; }
+.world-minimap p i { background:#c0a26440; }
+.mobile-atlas { background:#171e23eb; border-color:#b89c643e; }
+.world-camera .camera-group { background:#151c21ef; border-color:#b19a673d; border-radius:9px; }
+.world-camera .camera-follow-active { color:#f0d089; background:#c5a45b24; }
+.world-compass { color:#d8be88; }
+.zoom-value { color:#bcb69d; }
+.camera-mode { color:#c0bbaa; text-shadow:0 1px 5px #05090b; }
+.world-travel { border-color:#bda26850; border-radius:12px; background:linear-gradient(105deg,#151c22f7,#1c1e1df7 55%,#171c20fa); box-shadow:0 10px 30px #03070c50,inset 0 1px 0 #e9d5a215; }
+.traveler-identity { border-color:#c3a26a2b; }
+.traveler-portrait { border-color:#bda36d75; background:#252825; border-radius:7px; }
+.traveler-portrait span { background:linear-gradient(0deg,#151b20,transparent 60%); }
+.traveler-identity h2,.travel-destination h3 { color:#ead9b2; }
+.traveler-identity .world-kicker { color:#b7a987; }
+.traveler-identity p:last-child,.world-travel .destination-description { color:#b5b5a3; }
+.traveler-dot,.status-dot { background:#dbc58a; box-shadow:0 0 7px #e4c37144; }
+.destination-eyebrow,.destination-eyebrow > span,.travel-distance { color:#b7ae96; }
+.destination-icon { border-color:#ccb07335; background:#ad986615; }
+.world-primary { color:#f1ddaf; border-color:#d0ac627d; background:linear-gradient(110deg,#75603745,#b1904238,#6e593445); box-shadow:inset 0 1px 0 #ead0991c,inset 0 0 22px #dabd6310; border-radius:8px; }
+.world-primary:hover:not(:disabled) { background:linear-gradient(110deg,#8d713762,#b89b5357,#876d395c); box-shadow:0 0 18px #d1a95715,inset 0 1px 0 #f4dcac30; }
+.world-primary:disabled { color:#c3baa0; }
+.world-control-hint,.world-footer { color:#a9ad9f; text-shadow:0 1px 5px #04080c; }
+.world-footer b { color:#c1a56a; }
+.world-control-hint > i { background:#b4996354; }
+.world-site-label { background:#161f25ed; color:#e9debc; border-color:#bba56b45; border-radius:6px; box-shadow:0 3px 12px #02070b65; }
+.world-site-label:hover,.world-site-label.site-selected { background:#332f25ed; border-color:#e0bd77a1; }
+.site-pin { background:#d3b16d0b; }
+.world-site-label > i { background:#e9c774; }
+.world-toast { background:linear-gradient(110deg,#1b2228fa,#27291ffa); color:#ecdfbc; border-color:#c3a46660; box-shadow:0 5px 25px #03070e70; }
+.world-toast svg { color:#efcc7e; }
+.world-loading { background:radial-gradient(ellipse at center,#2c3031,#11171e 70%); color:#debd7c; }
+.world-loading span { color:#aaa892; }
+
+/* Larger reading surfaces retain warm, high-contrast text. */
+.world-dialog { color:#ebe2cc; border-color:#b49a606b; border-radius:12px; background:linear-gradient(140deg,#212729,#171d23 60%,#1d2022); box-shadow:0 25px 100px #010409b3,inset 0 0 0 4px #c9a86b06; }
+.world-dialog::backdrop { background:#05090ece; }
+.world-dialog-header { background:linear-gradient(105deg,#292b28,#1d2227 65%,#252825); border-color:#c2a36335; }
+.world-dialog h2 { color:#eddbb5; }
+.world-dialog .world-kicker { color:#bba271; }
+.world-dialog .dialog-close { color:#e1d2b2; background:#11182065; border-color:#c0a26950; }
+.world-dialog .dialog-close:hover { background:#a7894f26; border-color:#dbb875a6; }
+.world-dialog-body { scrollbar-color:#b69b655c transparent; }
+.world-dialog .site-dialog-banner { background-image:radial-gradient(ellipse at 86% 15%,color-mix(in srgb,var(--biome),transparent 89%),transparent 70%),linear-gradient(130deg,#33352b,#1b2428) !important; border-color:#c3aa6d38; }
+.world-dialog .site-dialog-banner > span { color:#d6c69e; }
+.world-dialog .dialog-intro,.world-dialog .site-dialog-banner p { color:#d8d9cc; }
+.world-dialog .dialog-footnote { color:#bdb9a7; }
+.world-dialog .mission-heading { color:#e2cca0; }
+.world-dialog .mission-heading small { color:#bab8a3; }
+.world-dialog .mission-card { color:#e3d7b7; background:#121a2060; border-color:#b3a07135; }
+.world-dialog .mission-card:hover { background:#b6a26910; border-color:#d1b67b65; }
+.world-dialog .mission-card.mission-active { background:linear-gradient(110deg,#aa8d4c28,#ae93520d); border-color:#d2b47587; box-shadow:inset 2px 0 0 #d7b676; }
+.world-dialog .mission-card small { color:#b8beae; }
+.world-dialog .mission-number,.world-dialog .mission-card > svg { color:#d3b77c; }
+.world-dialog .world-secondary { color:#c6c3af; }
+.world-dialog .quest-objectives { border-color:#b4a57535; }
+.world-dialog .quest-objectives > div { color:#cfcebd; }
+.world-dialog .quest-objectives small,.world-dialog .encounter-resolved small { color:#b9baa8; }
+.world-dialog .objective-done { color:#ead398 !important; }
+.world-dialog .quest-reward,.world-dialog .encounter-wallet { color:#d7c08a; }
+.world-dialog .quest-reward span { color:#e3bd74; }
+.world-dialog .encounter-resolved { border-color:#c2a36342; background:#b29a520b; color:#e3cf9d; }
+.world-dialog .world-help dd { color:#c8c8b9; }
+.world-dialog .world-help dt { color:#dfc99a; }
+.world-dialog .world-help > div { border-color:#b6a16728; }
+.world-dialog .world-options { border-color:#b9a77536; }
+.world-dialog .world-options label { color:#d3d1bd; }
+.world-dialog .world-options label + label { border-color:#b6a16720; }
+.world-dialog .world-options select { background:#171e23; border-color:#b39c6670; color:#e6d7b5; }
+.world-dialog .world-options input { accent-color:#c7a866; }
+.world-dialog .atlas-tabs button { color:#c9c5af; }
+.world-dialog .atlas-tabs button[aria-pressed=true] { color:#efd397; }
+.world-dialog .atlas-site-copy > span { color:#dfd5b7; }
+.world-dialog .dialog-atlas .atlas-site-copy small,.world-dialog .atlas-site-state,.world-dialog .atlas-empty { color:#b7b9a6; }
+.world-dialog .journal-stats { border-color:#b2a07235; }
+.world-dialog .journal-stats > span { color:#c5c4b3; }
+.world-dialog .journal-stats strong { color:#e7d3a6; }
+.world-dialog .journal-section-title { color:#e4cfa4; }
+.world-dialog .journal-section-title > span,.world-dialog .journal-quests article > div span { color:#b7bba8; }
+.world-dialog .journal-empty,.world-dialog .journal-quests article p,.world-dialog .journal-memories p { color:#c8cab9; }
+.world-dialog .journal-quests article { background:#141c2257; border-color:#b2a27139; }
+.world-dialog .journal-quests article > div,.world-dialog .journal-memories strong { color:#e2d6b5; }
+.world-dialog .journal-quests li { color:#bfc4b1; }
+.world-dialog .journal-quests .quest-complete { border-color:#d2b47368; }
+.world-dialog .journal-memories article { border-color:#b6a06b2a; }
+.world-dialog .beacon-grid button { background:#b69b530a; border-color:#b9a36844; color:#dac697; }
+.world-dialog .beacon-grid button:hover:not(:disabled) { background:#b79a5320; }
+.world-dialog .beacon-grid small { color:#c1c5b0; }
+
+/* Only small surfaces animate: a gilded orbit and slowly flowing luminous ink. */
+.clock-face { position:relative; isolation:isolate; overflow:hidden; background:#11191d; border-color:#d1b57462; box-shadow:0 0 22px #d2b4620f,0 4px 20px #02060c50; color:#e8d29f; }
+.clock-face::before { content:''; position:absolute; width:280px; height:280px; top:calc(50% - 140px); left:calc(50% - 140px); z-index:-2; pointer-events:none; background:conic-gradient(from 0deg,transparent 0deg,#8f763641 55deg,#efcd7cad 87deg,#fff0b8 96deg,#cbad6428 126deg,transparent 157deg,transparent 240deg,#cfaf6980 279deg,#ffe4a7 290deg,transparent 325deg); animation:nocturne-orbit 18s linear infinite; }
+.clock-face::after { content:''; position:absolute; inset:1px; z-index:-1; border-radius:inherit; background:radial-gradient(ellipse at 12% 20%,#b79a5914,transparent 70%),linear-gradient(115deg,#202521,#111a20 70%,#20221f); pointer-events:none; }
+.clock-face:hover,.clock-face:focus-visible { border-color:#e1c27e; box-shadow:0 0 0 3px #d7b46314,0 0 24px #c7a35320; }
+.clock-orbit { color:#e0c487; filter:drop-shadow(0 0 5px #efcf7560); }
+.clock-orbit > svg:first-child { stroke:#d4bf803b; }
+.clock-orbit .clock-progress { stroke:#f6d890; }
+.clock-orbit::after { content:''; position:absolute; inset:1px; border:1px solid transparent; border-top-color:#ffe8aeb0; border-right-color:#bca45c45; border-radius:50%; animation:nocturne-orbit 12s linear infinite reverse; pointer-events:none; }
+.clock-date { color:#c9be9e; }
+.clock-date i { background:#dbc07d; box-shadow:0 0 5px #ffe3a56b; }
+.clock-hour { background:linear-gradient(110deg,#bcaa77 10%,#f1d99a 29%,#fff4c7 44%,#cfb774 58%,#bca571 80%); background-size:240% 100%; background-clip:text; -webkit-background-clip:text; color:transparent; text-shadow:0 0 15px #ebcd6830; animation:nocturne-ink 7s ease-in-out infinite alternate; }
+.clock-hour small { color:#c9b781; text-shadow:none; }
+.clock-chevron { color:#bda96c; }
+.clock-popover { background:radial-gradient(ellipse at 0 0,#38372a99,transparent 70%),#171f25; border-color:#c5a56669; box-shadow:0 20px 65px #03060db3,inset 0 1px 0 #dbc28515; border-radius:12px; }
+.clock-popover-heading { color:#efd7a2; }
+.clock-popover-heading button { color:#d4c4a1; background:#c9b16f0b; }
+.clock-popover > p { color:#c8caba; }
+.clock-speed-row { border-color:#c5aa6b2e; }
+.clock-popover .clock-speed-row button { color:#dbca9c; border-color:#bda36645; background:#b9a26709; }
+.clock-popover .clock-speed-row button[aria-pressed=true] { color:#f1d18f; background:#bc9a4927; border-color:#e3c07b7d; }
+.clock-wait-label { color:#bcbca8; }
+.clock-phases button { color:#e0c992; background:#d0b26a08; border-color:#b9a26936; }
+.clock-phases small { color:#b4b9a6; }
+.clock-phases button:hover,.clock-phases button:focus-visible { background:#d4b06124; border-color:#dec38480; }
+.clock-popover .clock-footnote { color:#b3b5a2; }
+@keyframes nocturne-orbit { to { transform:rotate(360deg); } }
+@keyframes nocturne-ink { from { background-position:100% 50%; } to { background-position:0% 50%; } }
+.world-reduced .clock-face::before,.world-reduced .clock-orbit::after { animation:none; }
+.world-page:has(.world-dialog[open]) .clock-face::before,.world-page:has(.world-dialog[open]) .clock-orbit::after,.world-page:has(.world-dialog[open]) .clock-hour { animation-play-state:paused; }

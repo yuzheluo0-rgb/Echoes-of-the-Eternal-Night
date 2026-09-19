@@ -1,0 +1,32 @@
+{
+  "checks": [
+    "clouds and birds move; lava, sea, rivers, embers and vegetation share active scene time",
+    "at least eight different bridge designs occur in the actual map",
+    "the upper surface of a multi-cell building selects its forecourt",
+    "reduced motion freezes environmental time and drawing; normal animation resumes",
+    "user gesture produces real non-silent audio and travelling preserves the score with regional ambience",
+    "mute releases all active sources and stops scheduling; PCM falls to silence",
+    "toggle reuses one audio context without accumulating sources"
+  ],
+  "bridgeSummary": {
+    "harbor": 12,
+    "mist": 2,
+    "prism": 2,
+    "suspension": 2,
+    "vine": 11,
+    "sandstone": 2,
+    "ice": 3,
+    "ritual": 7,
+    "forge": 1
+  },
+  "audio": {
+    "audible": 0.013905580935908301,
+    "volcanic": 0.005853850856836088,
+    "silent": 0,
+    "started": 31,
+    "active": 24,
+    "peak": 24,
+    "context": "running"
+  },
+  "errors": []
+}

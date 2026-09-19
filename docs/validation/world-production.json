@@ -1,0 +1,13 @@
+{
+  "url": "http://127.0.0.1:4173/#/world",
+  "checks": [
+    "production assets and WebGL load",
+    "twelve main locations and twelve mobile side quests",
+    "three missions open at the forecourt",
+    "audio toggle and performance quality",
+    "mobile atlas is hidden until requested",
+    "return to opening works"
+  ],
+  "errors": [],
+  "failures": []
+}
