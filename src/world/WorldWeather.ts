@@ -58,11 +58,22 @@ export class WorldWeather{
     this.update(0,1,1);
   }
   private river(coordinates:number[][],width:number){
-    const curve=new THREE.CatmullRomCurve3(coordinates.map(([x,z])=>new THREE.Vector3(x*WORLD_SCALE,0,z*WORLD_SCALE))),positions:number[]=[],uvs:number[]=[],indices:number[]=[];
+    const points=coordinates.map(([x,z])=>new THREE.Vector3(x*WORLD_SCALE,0,z*WORLD_SCALE));
+    // The authored control points stop well inland. Walk on in the same direction until the sea so
+    // the river ends in an estuary instead of breaking off in the middle of the continent.
+    const last=points[points.length-1],back=new THREE.Vector3().subVectors(last,points[points.length-2]).normalize();
+    for(let step=1;step<=400;step++){
+      const probe=last.clone().addScaledVector(back,step*.30),tile=nearestTile(probe.x,probe.z);
+      if(!tile)break;
+      if(isWater(tile.biome)){points.push(probe);break;}
+    }
+    const curve=new THREE.CatmullRomCurve3(points),positions:number[]=[],uvs:number[]=[],indices:number[]=[];
     for(let i=0;i<=160;i++){
       const t=i/160,p=curve.getPoint(t),direction=curve.getTangent(t),tile=nearestTile(p.x,p.z);
       for(const side of [-1,1]){const x=p.x-direction.z*width*side,z=p.z+direction.x*width*side;positions.push(x,landHeightAt(x,z)+.04,z);uvs.push(side*.5+.5,t*18);}
-      if(i&&tile&&!isWater(tile.biome)&&!tile.structure){const before=curve.getPoint((i-1)/160),previous=nearestTile(before.x,before.z);if(previous&&!isWater(previous.biome)&&!previous.structure){const n=i*2;indices.push(n-2,n,n-1,n-1,n,n+1);}}
+      // Only a building interrupts the ribbon now. Skipping water as well used to shatter the river
+      // into loose fragments at exactly the point where it should meet the sea.
+      if(i&&tile&&!tile.structure){const n=i*2;indices.push(n-2,n,n-1,n-1,n,n+1);}
     }
     const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));geo.setIndex(indices);
     const river=new THREE.Mesh(geo,new THREE.ShaderMaterial({side:THREE.DoubleSide,uniforms:{uTime:this.time,uLightTint:{value:new THREE.Color(1,1,1)}},vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',fragmentShader:`varying vec2 vUv;uniform float uTime;uniform vec3 uLightTint;void main(){float foam=pow(max(0.,sin(vUv.y*9.-uTime*2.7+sin(vUv.x*8.)*.45)),14.)*.38;float edge=smoothstep(.65,.99,abs(vUv.x-.5)*2.);vec3 color=mix(vec3(.070,.105,.12),vec3(.34,.36,.30),edge*.55+foam*.48)*uLightTint;gl_FragColor=vec4(color,1.);
