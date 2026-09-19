@@ -1,15 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { BIOMES, DIRECTIONS, LANDMARKS, START_ID, TILE_MAP, TILES, WORLD_GROWTH, WORLD_SEED, createWorld, findPath, hexDistance, isWater, parseSave, tileId,advanceJourney,acceptSideQuest,resolveEncounter,travelByBeacon,MAIN_SITES,SITE_SIZE,siteFootprint,navigationTarget } from './worldData.ts';
+import { BIOMES, DIRECTIONS, LANDMARKS, START_ID, TILE_MAP, TILES, WORLD_GROWTH, WORLD_SEED, createWorld, findPath, hexDistance, isWater, parseSave, tileId,advanceJourney,acceptSideQuest,resolveEncounter,travelByBeacon,MAIN_SITES,SITE_SIZE,siteFootprint,navigationTarget,type Landmark } from './worldData.ts';
 import { REGION_ORDER } from './worldRegions.ts';
 /** The chapter system seals every biome but grass, so fixtures that travel further open the map first. */
 const openAll=(extra:Record<string,unknown>={})=>parseSave(JSON.stringify({regions:{version:1,unlocked:[...REGION_ORDER]},...extra}));
 /** Regenerate only when the map is deliberately redesigned: a mismatch means the coastline or
  *  bridge carve moved, every docs/previews screenshot is stale, and old saves may point at
  *  different terrain. Structural tests cannot tell "identical" from "different but still valid".
- *  Regenerated 2026-09-19 for the WORLD_GROWTH = sqrt(3) continent (776 -> 2315 tiles). */
-const LAYOUT_DIGEST='sha256:aea17b32691649eedf5041de22ab20e6efcffc5e7a0ec5daf6de318c9b075a1b';
+ *  Regenerated 2026-09-19 for the WORLD_GROWTH = sqrt(3) continent (776 -> 2315 tiles), then
+ *  again the same day when side/hidden landmarks gained multi-cell footprints: structure cells
+ *  went 55 -> 127, which severed 39 walkable tiles and made `connect` re-carve the bridges around
+ *  them, so some causeways moved as well as the buildings appearing. */
+const LAYOUT_DIGEST='sha256:0eb89cd4c1593ba5f9b16431e34585f10012691c8fac5b4156d075407441d6c1';
 
 test('landmarks keep their distance so the continent does not feel cramped', () => {
   // The complaint this guards against: sites packed shoulder to shoulder with no wilderness
@@ -74,12 +77,25 @@ test('save validation rejects invalid positions and missions and deduplicates vi
 });
 
 test('multi-cell architecture has connected footprints, accessible forecourts and safe save migration',()=>{
-  for(const site of MAIN_SITES){
-    const cells=siteFootprint(site.id),entry=tileId(site.q,site.r);assert.equal(cells.length,SITE_SIZE[site.id]);assert.ok(site.id==='ocean'?cells.length===9:cells.length>=3&&cells.length<=5);assert.equal(cells[0].id,entry);
+  /** The contract every site owes, whatever its size: a connected blob, only the forecourt
+   *  walkable, every occupied cell navigating back to it, and a save parked on one migrating to
+   *  the forecourt rather than being reset to camp. That last line is the regression test for
+   *  `tileRegion` — a derived id cast straight to a Biome sealed the compound's own entrance. */
+  const check=(site:Landmark,size:number)=>{
+    const cells=siteFootprint(site.id),entry=tileId(site.q,site.r);
+    assert.equal(cells.length,size,`${site.id} spans ${cells.length} cells, expected ${size}`);
+    assert.equal(cells[0].id,entry);
     const reached=new Set([entry]);for(let n=0;n<cells.length;n++)for(const cell of cells)if(cells.some(c=>reached.has(c.id)&&hexDistance(cell,c)===1))reached.add(cell.id);assert.equal(reached.size,cells.length);
     for(const cell of cells){assert.equal(cell.walkable,cell.id===entry);assert.equal(navigationTarget(cell.id),entry);assert.equal(openAll({position:cell.id,embers:8}).position,entry);}
     assert.ok(findPath(START_ID,entry).length);
-  }
+  };
+  for(const site of MAIN_SITES)check(site,SITE_SIZE[site.id]);
+  // Side quests and hidden enclaves are three-cell compounds. The generator will settle for fewer
+  // on a cramped island rather than take the map down, so this pins the world as it actually
+  // stands: every biome found room, and a shortfall here means the layout shifted.
+  for(const site of LANDMARKS.filter(s=>s.kind==='side'||s.kind==='hidden'))check(site,3);
+  // Roadside events stay single-cell curiosities.
+  for(const site of LANDMARKS.filter(s=>s.kind==='event'))check(site,1);
 });
 
 test('secrets appear at proximity and accepted quests reward completion only once',()=>{

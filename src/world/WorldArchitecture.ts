@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { LANDMARKS, TILE_MAP, siteFootprint, walkHeight, isWater, type Landmark, type Tile } from './worldData';
+import { LANDMARKS, TILE_MAP, siteFootprint, walkHeight, isWater, type Biome, type Landmark, type Tile } from './worldData';
 import { landHeightAt } from './storybookLandscape';
 import type {WorldLightSource} from './WorldLighting';
 import {buildWorldHarbor} from './WorldHarbor';
@@ -17,6 +17,12 @@ export function buildWorldArchitecture(scene:THREE.Scene,kit:Kit,lava:THREE.Mate
   // Buildings were authored small against a camera that spans 23-38 world units, so they read as
   // scenery rather than landmarks. Everything below still uses its original dimensions.
   const BUILDING_SCALE=1.5;
+  /** Outbuildings are authored to fill a cell, but at BUILDING_SCALE a compound's roofs swallow
+   *  its forecourt and each other. They draw under a reduced factor, set for the duration of one
+   *  wing call — `add` is the single choke point, so every helper built on it follows along. */
+  const WING_SCALE=.62;
+  let detail=1;
+  const scaled=(draw:()=>void)=>{detail=WING_SCALE;draw();detail=1;};
   const batches=new Map<THREE.Material,THREE.BufferGeometry[]>();
   const add=(shape:string,color:string,p:Point,dx:number,dy:number,dz:number,sx:number,sy:number,sz:number,ry=0,rx=0,rz=0,fixed=false)=>{
     if(activeSite?.biome==='blood'&&color==='red'&&(shape==='torus'||shape==='rock'))color='rune-red';
@@ -25,7 +31,7 @@ export function buildWorldArchitecture(scene:THREE.Scene,kit:Kit,lava:THREE.Mate
     // Every building is authored at the size it was designed at; one factor here grows all of them
     // together, offsets included, so nothing has to be retouched branch by branch. Plinths opt out:
     // they already fill a hex and would spill into their neighbours at 1.5x.
-    const k=fixed?1:BUILDING_SCALE;
+    const k=fixed?1:BUILDING_SCALE*detail;
     const matrix=new THREE.Matrix4().compose(new THREE.Vector3(p.x+dx*k,p.y+dy*k,p.z+dz*k),new THREE.Quaternion().setFromEuler(new THREE.Euler(rx,ry,rz)),new THREE.Vector3(sx*k,sy*k,sz*k));
     batches.get(material)!.push(kit.get(shape)!.clone().applyMatrix4(matrix));
     if(color==='glow')emitters.push({x:p.x+dx*k,y:p.y+dy*k,z:p.z+dz*k+.02,color:'#ffd091',radius:activeSite.id==='fog'&&dy>1.35?3.0:1.22,power:activeSite.id==='fog'&&dy>1.35?3.1:.90,siteId:activeSite.id,kind:shape==='box'?'window':'lamp'});
@@ -42,8 +48,57 @@ export function buildWorldArchitecture(scene:THREE.Scene,kit:Kit,lava:THREE.Mate
   };
   const offset=(p:Point,x=0,y=0,z=0):Point=>({x:p.x+x,y:p.y+y,z:p.z+z});
   const point=(t:Tile):Point=>({x:t.x,y:Math.max(walkHeight(t),landHeightAt(t.x,t.z)+.07,t.structure&&isWater(t.biome)?.62:0),z:t.z});
-  const window=(p:Point,x:number,y:number,z:number,w=.13,h=.22)=>{add('box','dark',p,x,y,z,w+.055,h+.06,.025);add('box','glow',p,x,y,z+.017,w,h,.015);};
-  const stairs=(p:Point,w=.7,count=4)=>{for(let n=0;n<count;n++)add('box','stone',p,0,.025+n*.043,.67-n*.12,w,.055+n*.075,.15);};
+  /** Sill, lintel and a mullion cross over the existing frame-and-glass pair. Exactly one 'glow'
+   *  box per window, unmoved and unsized: `add` registers an emitter for every glow piece, and
+   *  the fog lighthouse picks its beam source by looking for the highest one on that site. */
+  const window=(p:Point,x:number,y:number,z:number,w=.13,h=.22)=>{
+    add('box','dark',p,x,y,z,w+.055,h+.06,.025);add('box','glow',p,x,y,z+.017,w,h,.015);
+    // Glass front face sits at z+.0245, so the bars land inside it and the ledges clear the frame.
+    add('box','stone',p,x,y-h/2-.035,z+.012,w+.10,.042,.055);
+    add('box','stone',p,x,y+h/2+.030,z+.012,w+.10,.038,.048);
+    add('box','dark',p,x,y,z+.028,.016,h,.014);add('box','dark',p,x,y,z+.028,w,.016,.014);
+  };
+  /** Steps with a low balustrade either side; as bare slabs they read as a pile of loose stone. */
+  const stairs=(p:Point,w=.7,count=4)=>{
+    for(let n=0;n<count;n++)add('box','stone',p,0,.025+n*.043,.67-n*.12,w,.055+n*.075,.15);
+    const top=.025+(count-1)*.043,tall=top+.055,run=(count-1)*.12+.15,midZ=.67-(count-1)*.06;
+    for(const side of [-1,1]){
+      add('box','stone',p,side*(w/2+.045),tall/2,midZ,.052,tall,run);
+      add('sphere','stone',p,side*(w/2+.045),tall+.045,.67,.042,.055,.042);
+    }
+  };
+  /** Two stacked gables: the lower, wider one reads as an overhanging eave over the main pitch. */
+  const roof=(p:Point,w:number,d:number,h:number,color='slate',ry=0)=>{
+    add('gable',color,p,0,-h*.29,0,w*1.14,h*.42,d*1.10,ry);
+    add('gable',color,p,0,h*.06,0,w,h*.88,d,ry);
+    add('box','dark',p,0,h*.47,0,w*.09,.05,d*1.02,ry);
+  };
+  /** Ridge spire: post, ball, spike and a pennant. Deliberately never 'glow'. */
+  const finial=(p:Point,s=1)=>{
+    add('cylinder','gold',p,0,.10*s,0,.016*s,.22*s,.016*s);
+    add('sphere','gold',p,0,.24*s,0,.040*s,.040*s,.040*s);
+    add('cone','gold',p,0,.31*s,0,.028*s,.12*s,.028*s);
+    // Laid on its side so the triangle streams off the post; stood upright it reads as a blob
+    // a couple of pixels wide, which is all the flag ever was at map distance.
+    add('gable','cloth',p,.145*s,.29*s,0,.15*s,.26*s,.022*s,0,0,-Math.PI/2);
+  };
+  /** Post-and-rail fencing along two sides; the shared corner post closes the L. */
+  const fence=(p:Point,span:number,color='wood')=>{
+    const posts=Math.max(2,Math.round(span/.36));
+    for(const along of ['x','z'] as const){
+      for(let n=0;n<=posts;n++){const t=(n/posts-.5)*span;add('box',color,p,along==='x'?t:0,.145,along==='x'?0:t,.030,.29,.030);}
+      for(const y of [.13,.23])add('box',color,p,0,y,0,along==='x'?span:.024,.024,along==='x'?.024:span);
+    }
+  };
+  /** Lean-to outbuilding with a single-pitch roof, plus barrels and a crate against the wall. */
+  const annex=(p:Point,color='wood',s=1)=>{
+    add('box',color,p,0,.26*s,0,.78*s,.52*s,.62*s);
+    add('box','dark',p,0,.30*s,.32*s,.30*s,.34*s,.02*s);
+    add('box','slate',p,0,.60*s,0,.90*s,.10*s,.74*s,0,0,-.20);
+    add('cylinder','wood',p,.50*s,.14*s,-.30*s,.10*s,.28*s,.10*s);
+    add('cylinder','wood',p,.62*s,.12*s,-.14*s,.09*s,.24*s,.09*s);
+    add('box','plank',p,-.52*s,.11*s,-.26*s,.26*s,.22*s,.24*s);
+  };
   const lantern=(p:Point)=>{add('cylinder','gold',p,0,.29,0,.015,.57,.015);add('box','glow',p,0,.54,0,.10,.15,.10);add('cone','gold',p,0,.65,0,.12,.12,.12);};
   const crystal=(p:Point,h:number,color='purple',r=.23)=>{const material=color==='purple'?'quartz':'quartz-ice';add('crystal',material,p,0,h*.48,0,r,h*.96,r);add('cone',material,p,0,h+.13,0,r*.68,.32,r*.68);emitters.push({x:p.x,y:p.y+h*.65,z:p.z,color:color==='purple'?'#b6a9ff':'#a6e5ee',radius:Math.min(1.6,.55+h*.45),power:.3+h*.35,siteId:activeSite.id,kind:'crystal'});};
   const boat=(p:Point,scale=1,sail=false)=>{
@@ -60,13 +115,93 @@ export function buildWorldArchitecture(scene:THREE.Scene,kit:Kit,lava:THREE.Mate
   const flamePositions:Point[]=[];
   const sails:Point[]=[];
   const roots=(p:Point,s=1)=>{for(let n=0;n<5;n++){const a=n/5*Math.PI*2;beam(offset(p,Math.sin(a)*.15*s,.55*s,Math.cos(a)*.15*s),offset(p,Math.sin(a)*.83*s,.04,Math.cos(a)*.83*s),.12*s,'wood');}};
+  /** Ground plate under an occupied cell. `fixed` because a plinth already fills a whole hex and
+   *  would spill into its neighbours at BUILDING_SCALE. */
+  const plinth=(f:Point,b:Biome)=>{
+    const color=b==='desert'?'sand':b==='volcano'||b==='blood'?'dark':b==='waste'?'bone':b==='snow'?'ice':b==='forest'||b==='swamp'?'moss':'stone';
+    add('hexrock',color,f,0,-.09,0,.94,.18,.94,0,0,0,true);add('hexrock',color,f,0,.022,0,.83,.065,.83,0,0,0,true);
+  };
+  /** The outbuilding that fills each rear cell of a derived compound, one per biome. `i` is the
+   *  cell's index, so the second cell can differ from the first rather than repeat it. */
+  const WINGS:Record<Biome,(p:Point,i:number)=>void>={
+    grass:(p,i)=>{
+      for(const x of [-.32,.32])for(const z of [-.28,.28])add('cylinder','wood',p,x,.24,z,.042,.48,.042);
+      add('box','plank',p,0,.56,0,.82,.10,.74);add('gable','sand',p,0,.78,0,.90,.34,.80);
+      add('box','dark',p,0,.87,0,.10,.04,.82);
+      if(i)add('cylinder','sand',p,.48,.15,.34,.14,.30,.14);
+      else for(let n=0;n<3;n++)add('cylinder','sand',p,-.44+n*.15,.13,.36,.12,.26,.12);
+    },
+    forest:(p,i)=>{
+      add('dune','moss',p,0,.20,0,.92,.50,.86);arch(p,.26,.46,'wood');add('box','dark',p,0,.26,.34,.24,.36,.03);
+      add('cylinder','wood',p,.52,.22,-.28,.05,.44,.05);
+      if(i)add('dune','leaf',p,.30,.32,.10,.42,.26,.38);
+    },
+    desert:(p,i)=>{
+      add('box','sand',p,0,.36,0,.82,.72,.78);add('sphere','chalk',p,0,.72,0,.84,.52,.80);
+      add('box','gold',p,0,.75,0,.86,.09,.82);add('box','dark',p,0,.30,.40,.20,.44,.03);
+      if(i)add('dune','sand',p,.52,.06,-.30,.40,.12,.34);
+    },
+    cliff:(p,i)=>{
+      add('box','slate',p,0,.46,0,.82,.92,.80);add('box','stone',p,0,.97,0,.98,.12,.94);
+      for(const x of [-.34,0,.34])add('box','stone',p,x,1.10,0,.18,.18,.18);
+      window(p,0,.52,.41,.15,.22);
+      if(i)add('box','plank',p,-.30,.42,.42,.62,.10,.36);
+    },
+    snow:(p,i)=>{
+      add('box','ice',p,0,.42,0,.80,.84,.76);add('gable','chalk',p,0,.94,0,.94,.36,.86);
+      window(p,0,.44,.39,.16,.20);add('box','slate',p,.28,.98,-.12,.10,.30,.10);
+      if(i)add('cone','ice',p,-.36,.42,.30,.26,.60,.26);
+    },
+    ocean:(p,i)=>{
+      for(const x of [-.30,.30])for(const z of [-.26,.26])add('cylinder','wood',p,x,.20,z,.045,.72,.045);
+      add('box','plank',p,0,.52,0,.88,.10,.78);add('box','blue',p,0,.76,0,.70,.40,.60);
+      add('gable','cloth',p,0,1.10,0,.86,.30,.74);window(p,0,.78,.31,.18,.14);
+      if(i)boat(offset(p,.40,.58,-.30),.42);
+    },
+    blood:(p,i)=>{
+      add('hexrock','dark',p,0,.06,0,.52,.14,.52);
+      for(const side of [-1,1])add('rib','bone',p,side*.26,.03,0,.34,.60,.30);
+      add('box','bone',p,0,.60,0,.66,.10,.34);add('sphere','dark',p,0,.24,.20,.22,.22,.10);
+      if(i)add('torus','dark',p,0,.86,0,.24,.24,.24,0,Math.PI/2);
+    },
+    fog:(p,i)=>{
+      for(const x of [-.28,.28])add('cylinder','chalk',p,x,.30,0,.045,.60,.045);
+      add('box','plank',p,0,.62,0,.82,.10,.66);add('gable','blue',p,0,.86,0,.80,.28,.64);
+      lantern(offset(p,.36,.10,.30));window(p,0,.30,.28,.16,.16);
+      if(i)add('box','red',p,-.34,.18,.24,.18,.30,.18);
+    },
+    swamp:(p,i)=>{
+      for(const x of [-.34,.34])for(const z of [-.26,.26])add('cylinder','wood',p,x,.30,z,.04,.60,.04);
+      add('box','plank',p,0,.62,0,.84,.09,.66);
+      for(let n=0;n<4;n++)add('cylinder','plank',p,-.30+n*.20,.72,0,.024,.22,.024);
+      add('dune','moss',p,0,.80,0,.66,.26,.52);
+      if(i)boat(offset(p,.52,.02,.34),.46);
+    },
+    volcano:(p,i)=>{
+      add('box','slate',p,0,.34,0,.80,.68,.74);add('box','dark',p,0,.74,0,.92,.16,.86);
+      add('cylinder','copper',p,.26,.92,0,.10,.36,.10);add('cone','copper',p,.26,1.14,0,.14,.20,.14);
+      window(p,0,.36,.38,.16,.18);
+      if(i)add('rock','dark',p,-.42,.14,.32,.20,.24,.20);
+    },
+    crystal:(p,i)=>{
+      add('box','blue',p,0,.34,0,.78,.68,.70);add('gable','purple',p,0,.82,0,.88,.32,.78);
+      window(p,0,.36,.36,.16,.18);crystal(offset(p,.50,0,-.26),.44,'ice',.11);
+      if(i)crystal(offset(p,-.46,0,.28),.62,'purple',.14);
+    },
+    waste:(p,i)=>{
+      for(const x of [-.34,.34])add('rib','bone',p,x,.05,0,.28,.54,.26);
+      add('box','sand',p,0,.62,0,.86,.10,.62);add('sphere','bone',p,0,.30,.24,.26,.20,.16);
+      for(let n=0;n<3;n++)add('box','wood',p,-.26+n*.26,.14,.34,.20,.20,.18,n*.2);
+      if(i)add('box','copper',p,.46,.16,-.28,.24,.26,.22);
+    },
+  };
 
   const main=(site:Landmark)=>{
     const cells=siteFootprint(site.id),entry=point(cells[0]),parts=cells.slice(1).map(point),p=parts[0],wing=parts[1],tail=parts[2]||parts[1];
     for(const [i,tile]of cells.entries()){
-      const f=point(tile),color=site.biome==='desert'?'sand':site.biome==='volcano'||site.biome==='blood'?'dark':site.biome==='waste'?'bone':site.biome==='snow'?'ice':site.biome==='forest'||site.biome==='swamp'?'moss':'stone';
+      const f=point(tile);
       // Forecourts stay flush with the navigation surface; only occupied cells rise.
-      if(i){add('hexrock',color,f,0,-.09,0,.94,.18,.94,0,0,0,true);add('hexrock',color,f,0,.022,0,.83,.065,.83,0,0,0,true);}
+      if(i)plinth(f,site.biome);
       else {for(const side of [-1,1])lantern(offset(f,side*.67,0,.28));}
     }
     if(site.id==='camp'){
@@ -74,54 +209,64 @@ export function buildWorldArchitecture(scene:THREE.Scene,kit:Kit,lava:THREE.Mate
       add('box','plank',tail,0,.09,.65,.91,.14,.40);for(const side of [-1,1])add('cylinder','wood',tail,side*.33,.52,.59,.04,1.02,.04);
       const hearth=offset(entry,.46,0,-.38);for(let n=0;n<8;n++)add('rock','slate',hearth,Math.sin(n*.79)*.25,.025,Math.cos(n*.79)*.25,.08,.07,.08);flamePositions.push(hearth);
       for(let n=0;n<3;n++)add('cylinder','wood',wing,.58+n*.11,.15,.44,.1,.3,.1);
+      finial(offset(tail,0,1.72,0));annex(offset(tail,-.16,0,.62),'wood',.92);
+      fence(offset(entry,.46,0,-.46),1.02,'wood');
     }else if(site.id==='forest'){
       add('trunk','wood',p,0,1.10,0,.43,2.2,.43);roots(p,1.1);arch(offset(p,0,.14,.43),.30,.70,'wood');add('box','dark',p,0,.41,.38,.44,.58,.04);
       for(let n=0;n<5;n++){const a=n*1.256;beam(offset(p,0,1.36,0),offset(p,Math.sin(a)*.8,2.05,Math.cos(a)*.8),.09,'wood');add('crown',n%2?'leaf':'moss',p,Math.sin(a)*.71,2.20,Math.cos(a)*.61,.71,.61,.67,a);}
       add('dune','leaf',wing,0,.46,0,.73,.42,.62);for(const x of [-.44,.44])add('trunk','wood',wing,x,.28,0,.045,.58,.045);add('box','gold',wing,0,.19,0,.26,.31,.21);
       for(let n=0;n<5;n++)add('rock',n%2?'stone':'moss',tail,Math.sin(n*1.26)*.52,.23,Math.cos(n*1.26)*.52,.15,.35,.15,n);crystal(offset(tail,0,.07,0),.32,'ice',.13);
+      finial(offset(p,0,2.50,0),1.05);annex(offset(wing,.62,0,-.26),'wood',.84);
     }else if(site.id==='snow'){
-      add('box','ice',p,0,.75,0,1.18,1.5,1.25);add('gable','chalk',p,0,1.91,0,1.46,.89,1.5);arch(offset(p,0,.20,.65),.31,.75,'slate');window(p,0,1.40,.64,.27,.33);stairs(p,1.05,5);
-      for(const [i,t]of parts.slice(1).entries()){const h=i===0?2.4:1.5;add('cylinder','ice',t,0,h*.45,0,.33,h*.9,.33);add('cone','blue',t,0,h+.28,0,.48,.73,.48);add('cone','chalk',t,0,h+.39,0,.35,.52,.35);window(t,0,h*.60,.34,.12,.43);}
+      add('box','ice',p,0,.75,0,1.18,1.5,1.25);roof(offset(p,0,1.857,0),1.46,1.5,.89,'chalk');arch(offset(p,0,.20,.65),.31,.75,'slate');window(p,0,1.40,.64,.27,.33);stairs(p,1.05,5);
+      for(const [i,t]of parts.slice(1).entries()){const h=i===0?2.4:1.5;add('cylinder','ice',t,0,h*.45,0,.33,h*.9,.33);add('cone','blue',t,0,h+.28,0,.48,.73,.48);add('cone','chalk',t,0,h+.39,0,.35,.52,.35);window(t,0,h*.60,.34,.12,.43);finial(offset(t,0,h+.66,0),.78);}
       for(const side of [-1,1])add('box','chalk',p,side*.62,.75,0,.12,1.43,1.12);
+      annex(offset(tail,0,0,.62),'plank',.86);
     }else if(site.id==='desert'){
       for(let n=0;n<4;n++)add('box',n%2?'sand':'chalk',p,0,.2+n*.30,0,1.65-n*.27,.32,1.55-n*.27);
       add('box','gold',p,0,1.46,0,.52,.13,.49);add('box','dark',p,0,1.04,.39,.23,.46,.03);stairs(p,1.0,5);
-      for(const [i,t]of parts.slice(1).entries()){if(i<2){add('box','sand',t,0,.53,0,.74,1.06,.47);add('box','gold',t,0,1.08,0,.83,.10,.54);add('box','dark',t,0,.55,.244,.12,.58,.016);add('peak','gold',t,0,1.39,0,.36,.54,.25,Math.PI/4);}else{arch(t,.57,.82,'sand');add('box','sand',t,.58,.13,.40,.42,.23,.31,.25);}}
+      finial(offset(p,0,1.53,0),1.15);fence(offset(entry,.26,0,-.58),1.22,'wood');
+      for(const [i,t]of parts.slice(1).entries()){if(i<2){add('box','sand',t,0,.53,0,.74,1.06,.47);add('box','gold',t,0,1.08,0,.83,.10,.54);add('box','dark',t,0,.55,.244,.12,.58,.016);add('peak','gold',t,0,1.39,0,.36,.54,.25,Math.PI/4);finial(offset(t,.30,0,.24),.62);}else{arch(t,.57,.82,'sand');add('box','sand',t,.58,.13,.40,.42,.23,.31,.25);}}
     }else if(site.id==='blood'){
       add('cylinder','dark',p,0,.14,0,.86,.28,.86);add('torus','red',p,0,.30,0,.69,.69,.69,0,Math.PI/2);
       add('torus','dark',p,0,1.44,-.12,.74,.90,.74);add('torus','gold',p,0,1.44,-.11,.61,.77,.61);add('rock','red',p,0,1.25,.05,.28,.48,.25);add('cone','glow',p,0,1.84,.07,.11,.34,.11);
-      for(const [i,t]of parts.slice(1).entries()){add('peak','dark',t,0,.73,0,.54,1.45,.50,i*.7);add('peak','red',t,0,1.61,0,.18,.53,.16,i);add('torus','red',t,0,.03,0,.59,.59,.59,0,Math.PI/2);}
+      for(const [i,t]of parts.slice(1).entries()){add('peak','dark',t,0,.73,0,.54,1.45,.50,i*.7);add('peak','red',t,0,1.61,0,.18,.53,.16,i);add('torus','red',t,0,.03,0,.59,.59,.59,0,Math.PI/2);finial(offset(t,0,1.90,0),.72);}
     }else if(site.id==='fog'){
       add('cylinder','chalk',p,0,1.15,0,.32,2.3,.32);for(const y of [.17,.82,1.53,2.31])add('cylinder','blue',p,0,y,0,y===2.31?.60:.36,.10,y===2.31?.60:.36);
       add('cylinder','glow',p,0,2.62,0,.28,.53,.28);add('cone','blue',p,0,3.03,0,.59,.45,.59);add('sphere','gold',p,0,3.29,0,.07,.10,.07);
       for(let n=0;n<8;n++)add('cylinder','gold',p,Math.sin(n*.785)*.45,2.48,Math.cos(n*.785)*.45,.018,.36,.018);
       for(let n=0;n<7;n++){const a=n*.71;add('box','slate',p,Math.sin(a)*.36,.11+n*.22,Math.cos(a)*.36,.23,.08,.20,-a);}
       add('box','plank',wing,0,.16,0,1.25,.16,.95);boat(offset(wing,.15,.26,-.07),.65);for(const side of [-1,1])lantern(offset(wing,side*.48,.15,.4));
+      finial(offset(p,0,3.42,0),.90);
     }else if(site.id==='cliff'){
       add('box','slate',p,0,.72,0,1.02,1.43,.93);add('box','stone',p,0,1.47,0,1.2,.14,1.1);
       for(const x of [-.46,0,.46])for(const z of [-.44,.44])add('box','stone',p,x,1.64,z,.22,.30,.22);window(p,0,.95,.48,.15,.43);arch(offset(p,0,.08,.49),.22,.49,'stone');
       add('box','slate',wing,0,.39,0,.81,.78,.85);add('box','plank',wing,0,.87,0,1.15,.16,1.12);beam(offset(wing,-.34,.9,0),offset(wing,-.34,1.85,0),.055);beam(offset(wing,-.47,1.78,0),offset(wing,.70,1.78,0),.055);beam(offset(wing,.6,1.78,0),offset(wing,.6,.93,0),.009,'gold');bell(offset(wing,.6,.65,0),.55);
       add('box','stone',tail,0,.29,0,1.14,.58,.34);for(const x of [-.40,0,.4])add('box','stone',tail,x,.66,0,.19,.22,.38);
+      finial(offset(wing,-.34,1.88,0),.85);fence(offset(entry,-.28,0,.66),1.18,'wood');
     }else if(site.id==='ocean'){
-      add('box','blue',p,0,.51,0,1.12,1.02,.84);add('gable','copper',p,0,1.28,0,1.39,.54,1.09);for(const side of [-1,1])window(p,side*.31,.65,.436,.24,.24);add('box','dark',p,0,.30,.437,.24,.53,.025);
+      add('box','blue',p,0,.51,0,1.12,1.02,.84);roof(offset(p,0,1.2476,0),1.39,1.09,.54,'copper');for(const side of [-1,1])window(p,side*.31,.65,.436,.24,.24);add('box','dark',p,0,.30,.437,.24,.53,.025);
+      finial(offset(p,0,1.57,0),.90);
       for(const [i,t]of parts.slice(1).entries()){add('box','plank',t,0,.12,0,1.29,.16,1.15);for(const x of [-.52,.52])for(const z of [-.44,.44])add('cylinder','wood',t,x,-.17,z,.05,.75,.05);if(i===0){boat(offset(t,0,.18,0),1.12,true);sails.push(t);}else if(i===1){boat(offset(t,0,.20,0),.8);for(let n=0;n<3;n++)add('cylinder','wood',t,-.55,.32,(n-1)*.27,.12,.32,.12);}else{beam(offset(t,-.35,.16,0),offset(t,-.35,1.30,0),.055);beam(offset(t,-.55,1.22,0),offset(t,.57,1.22,0),.055);beam(offset(t,.45,1.22,0),offset(t,.45,.45,0),.008,'gold');add('box','wood',t,.4,.30,0,.37,.40,.35);}}
     }else if(site.id==='swamp'){
       for(const x of [-.42,.42])for(const z of [-.36,.36])add('trunk','wood',p,x,.54,z,.055,1.24,.055);
       add('box','plank',p,0,.71,0,1.2,.10,1.08);for(const x of [-.38,.38])add('trunk','wood',p,x,1.22,0,.06,1.01,.06,0,0,.06);
       add('dune','moss',p,0,1.73,0,.82,.49,.72);add('dune','leaf',p,-.12,1.91,.03,.50,.42,.43);bell(offset(p,0,1.08,.02),1.12);roots(p,.86);
-      add('box','wood',wing,0,.42,0,.9,.64,.7);add('gable','moss',wing,0,.94,0,1.23,.39,.95);window(wing,0,.48,.36,.23,.22);boat(offset(wing,.58,.01,.40),.57);
+      add('box','wood',wing,0,.42,0,.9,.64,.7);roof(offset(wing,0,.9166,0),1.23,.95,.39,'moss');window(wing,0,.48,.36,.23,.22);boat(offset(wing,.58,.01,.40),.57);
+      finial(offset(p,0,2.16,0),.95);finial(offset(wing,0,1.15,0),.70);
     }else if(site.id==='volcano'){
       add('crater','dark',p,0,.74,0,1.35,1.43,1.35);add('cylinder','lava',p,0,1.39,0,.44,.035,.44);add('torus','copper',p,0,1.48,0,.49,.49,.49,0,Math.PI/2);flamePositions.push(offset(p,0,1.4,0));
       for(const side of [-1,1])add('box','slate',p,side*.72,.46,.38,.27,.91,.30);add('box','dark',p,0,.78,.56,1.66,.24,.39);add('box','lava',p,0,.34,.76,.42,.48,.03);
-      for(const [i,t]of parts.slice(1).entries()){if(i===0){for(let n=0;n<3;n++){add('cylinder','dark',t,(n-1)*.39,.72+n*.21,0,.16,1.44+n*.42,.16);add('cylinder','copper',t,(n-1)*.39,1.5+n*.42,0,.20,.13,.20);flamePositions.push(offset(t,(n-1)*.39,1.55+n*.42,0));}}else if(i===1){anvil(t,1.6);add('torus','copper',t,0,.10,0,.66,.66,.66,0,Math.PI/2);}else{add('box','copper',t,0,.39,0,.95,.78,.85);add('gable','dark',t,0,.94,0,1.19,.33,1.04);window(t,0,.42,.438,.31,.25);}}
+      for(const [i,t]of parts.slice(1).entries()){if(i===0){for(let n=0;n<3;n++){add('cylinder','dark',t,(n-1)*.39,.72+n*.21,0,.16,1.44+n*.42,.16);add('cylinder','copper',t,(n-1)*.39,1.5+n*.42,0,.20,.13,.20);flamePositions.push(offset(t,(n-1)*.39,1.55+n*.42,0));}}else if(i===1){anvil(t,1.6);add('torus','copper',t,0,.10,0,.66,.66,.66,0,Math.PI/2);}else{add('box','copper',t,0,.39,0,.95,.78,.85);roof(offset(t,0,.9202,0),1.19,1.04,.33,'dark');window(t,0,.42,.438,.31,.25);finial(offset(t,0,1.12,0),.72);}}
     }else if(site.id==='crystal'){
       crystal(p,1.66,'purple',.48);add('torus','gold',p,0,1.48,0,.84,.84,.84,.4,.55,.2);add('torus','ice',p,0,1.48,0,.74,.74,.74,-.5,-.62,-.3);add('sphere','glow',p,0,2.34,0,.16,.16,.16);
+      finial(offset(p,0,2.54,0),1.05);
       crystal(offset(wing,-.25,0,-.10),.97,'ice',.28);crystal(offset(wing,.29,0,.2),1.4,'purple',.26);add('torus','gold',wing,0,.12,0,.67,.67,.67,0,Math.PI/2);
       for(const [i,t]of parts.slice(2).entries()){for(let n=0;n<3;n++)beam(offset(t,Math.sin(n*2.094)*.38,0,Math.cos(n*2.094)*.38),offset(t,0,.70,0),.035,'gold');add('cylinder','blue',t,0,.97,0,.20,.87,.20,0,-.65);add('cylinder','ice',t,0,1.30,-.27,.19,.035,.19,0,-.65);if(i)add('rock','purple',t,.4,.19,.3,.22,.35,.22);}
     }else if(site.id==='waste'){
       for(const t of [p,...parts.slice(1,3)]){for(const dz of [-.36,.02,.40])add('rib','bone',t,0,.05,dz,.68,1.30,.53);beam(offset(t,0,1.34,-.60),offset(t,0,1.34,.60),.085,'bone');}
       add('sphere','bone',p,0,.39,-.25,.48,.33,.59);for(const side of [-1,1]){add('sphere','dark',p,side*.23,.46,.15,.12,.12,.06);add('cone','bone',p,side*.48,.53,-.23,.12,.73,.12,0,0,-side*.72);}add('box','dark',p,0,.27,.27,.17,.16,.02);
-      const throne=parts.at(-1)!;add('box','sand',throne,0,.24,0,.73,.45,.66);add('box','sand',throne,0,.75,-.26,.80,1.18,.19);for(const side of [-1,1])add('box','gold',throne,side*.38,.47,.1,.13,.72,.55);add('peak','gold',throne,0,1.51,-.26,.19,.37,.14,Math.PI/4);stairs(throne,.80,3);
+      const throne=parts.at(-1)!;add('box','sand',throne,0,.24,0,.73,.45,.66);add('box','sand',throne,0,.75,-.26,.80,1.18,.19);for(const side of [-1,1])add('box','gold',throne,side*.38,.47,.1,.13,.72,.55);add('peak','gold',throne,0,1.51,-.26,.19,.37,.14,Math.PI/4);stairs(throne,.80,3);finial(offset(throne,0,1.72,0),.85);
     }
   };
 
@@ -167,6 +312,13 @@ export function buildWorldArchitecture(scene:THREE.Scene,kit:Kit,lava:THREE.Mate
       else if(b==='volcano'){add('cylinder','dark',p,0,.20,0,.026,.4,.026);for(let n=0;n<6;n++)add('rock','copper',p,Math.sin(n*1.047)*.14,.38,Math.cos(n*1.047)*.14,.11,.043,.11,n);add('sphere','glow',p,0,.40,0,.07,.06,.07);}
       else if(b==='crystal'){for(let n=0;n<3;n++)crystal(offset(p,(n-1)*.21,0,0),n===1?.59:.35,n===1?'ice':'purple',.12);}
       else {add('box','stone',p,0,.31,0,.36,.62,.16,0,0,.08);add('box','dark',p,0,.36,.09,.21,.25,.016);for(let n=0;n<3;n++){beam(offset(p,(n-1)*.04,0,.26),offset(p,(n-1)*.10,.23,.19),.012,'wood');add('sphere','cloth',p,(n-1)*.10,.24,.19,.04,.05,.04);}}
+    }
+    // A side quest or hidden enclave is a compound now: the authored centrepiece above stays on the
+    // forecourt cell, and each occupied cell behind it gets a plinth and a biome-flavoured
+    // outbuilding. Events occupy one cell, so this loop is empty for them and they stay roadside
+    // curiosities rather than walled yards.
+    for(const [i,cell] of siteFootprint(site.id).slice(1).entries()){
+      const f=point(cell);plinth(f,b);scaled(()=>WINGS[b](offset(f,-.10,0,-.16),i));
     }
   };
   for(const site of LANDMARKS){activeSite=site;if(site.id==='ocean')continue;if(site.kind==='main')main(site);else small(site);}

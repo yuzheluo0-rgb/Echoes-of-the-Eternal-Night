@@ -61,6 +61,10 @@ function terrainRelief(x: number, z: number, salt: number) {
 export const WORLD_SEED = 7319;
 export const isWater = (biome: Biome) => biome === 'ocean' || biome === 'blood' || biome === 'fog';
 export const SITE_SIZE:Record<string,number>={camp:4,forest:4,ocean:9,desert:5,blood:4,snow:5,cliff:4,fog:3,swamp:3,volcano:5,crystal:4,waste:5};
+/** Side quests and hidden enclaves are small compounds — a hall plus an outbuilding. Events stay
+ *  single-tile: a curiosity at the roadside should not come with a courtyard. Keyed by the kind
+ *  prefix of the landmark id, so `side-grass` and `side-volcano` share one entry. */
+export const DERIVED_SIZE:Record<string,number>={side:3,hidden:3};
 /** Area of the continent relative to the original 776-tile map. Linear size is its square root.
  *  Rather than scaling every ellipse radius and biome threshold below, the normalized coordinates
  *  are divided by `S`, so the whole landmass grows uniformly and every shape rule stays as
@@ -178,6 +182,29 @@ export function createWorld(worldSeed = WORLD_SEED): Tile[] {
       next.structure=site.id;if(next.walkable)walkVersion++;next.walkable=false;next.bridge=false;footprint.push(next);
     }
   }
+  // Derived landmarks grew as single huts while every main site was a compound. They grow second
+  // for one specific reason: the loop above rejects `t.landmark` candidates, and a derived entrance
+  // was stamped as a landmark long before this, so it can only ever take what that loop left over.
+  // Running first would perturb the main footprints; running here leaves all twelve byte-identical.
+  for(const tile of tiles){
+    const size=tile.landmark?DERIVED_SIZE[tile.landmark.split('-')[0]]:undefined;if(!size)continue;
+    const entrance=tile;entrance.structure=entrance.landmark;
+    const footprint=[entrance];
+    while(footprint.length<size){
+      const candidates=tiles.filter(t=>!t.structure&&!t.landmark&&hexDistance(t,entrance)<=2&&footprint.some(f=>hexDistance(t,f)===1));
+      // A cramped island cannot always host three cells. Stopping short leaves a smaller compound,
+      // which is merely plain; throwing here would take the whole map down at module load.
+      if(!candidates.length)break;
+      candidates.sort((a,b)=>{
+        const score=(t:Tile)=>hexDistance(t,entrance)*3+(t.biome===entrance.biome?0:2.5)+(isWater(t.biome)!==isWater(entrance.biome)?1.5:0)+(t.x-entrance.x)*.42+(t.z-entrance.z)*.67;
+        return score(a)-score(b)||a.id.localeCompare(b.id);
+      });
+      const next=candidates[0];
+      // Mirroring the main loop exactly: the reachability caches key off `walkVersion`, and a
+      // missed bump would let a severed site count as already reached, so nothing gets re-carved.
+      next.structure=entrance.landmark;if(next.walkable)walkVersion++;next.walkable=false;next.bridge=false;footprint.push(next);
+    }
+  }
   for(const site of MAIN_SITES)connect(tileId(site.q,site.r));
   for(const tile of tiles)if(tile.walkable)connect(tile.id);
   // Make each chapter independently traversable. Only short water crossings and
@@ -241,8 +268,21 @@ export const WORLD_BOUNDS = (() => {
 })();
 /** 1 when the map was 776 tiles, 1.74 at WORLD_GROWTH = sqrt(3); view distances follow it. */
 export const WORLD_SCALE = Math.hypot(WORLD_BOUNDS.halfX, WORLD_BOUNDS.halfZ) / BASELINE_HALF_DIAGONAL;
-export function siteFootprint(id:string){const site=MAIN_SITES.find(s=>s.id===id);if(!site)return[];const entry=TILE_MAP.get(tileId(site.q,site.r))!;return[entry,...TILES.filter(t=>t.structure===id&&t!==entry).sort((a,b)=>hexDistance(a,entry)-hexDistance(b,entry)||(a.x-entry.x)*.36+(a.z-entry.z)*.8-((b.x-entry.x)*.36+(b.z-entry.z)*.8))];}
-export function navigationTarget(id:string){const tile=TILE_MAP.get(id),site=MAIN_SITES.find(s=>s.id===tile?.structure);return site?tileId(site.q,site.r):id;}
+/** Every site's cells: the walkable forecourt first, then the occupied cells nearest to it.
+ *  Memoised because the label layer re-reads this on every camera change — 48 sites scanning all
+ *  2315 tiles each time — and `TILES` never mutates once generated. The array is shared, so read
+ *  it rather than sorting it in place. */
+const footprintCache=new Map<string,Tile[]>();
+export function siteFootprint(id:string){
+  const cached=footprintCache.get(id);if(cached)return cached;
+  const site=LANDMARKS.find(s=>s.id===id);if(!site)return[];
+  const entry=TILE_MAP.get(tileId(site.q,site.r))!;
+  const cells=[entry,...TILES.filter(t=>t.structure===id&&t!==entry).sort((a,b)=>hexDistance(a,entry)-hexDistance(b,entry)||(a.x-entry.x)*.36+(a.z-entry.z)*.8-((b.x-entry.x)*.36+(b.z-entry.z)*.8))];
+  footprintCache.set(id,cells);return cells;
+}
+/** A site's occupied cells navigate to its forecourt, so clicking a rooftop arrives at the door.
+ *  Also the migration path for saves parked on a cell that has since become a building. */
+export function navigationTarget(id:string){const tile=TILE_MAP.get(id),site=LANDMARKS.find(s=>s.id===tile?.structure);return site?tileId(site.q,site.r):id;}
 export const walkHeight = (tile: Tile) => tile.bridge ? .62 : tile.height + .045;
 export function findPath(startId: string, endId: string,regions?:RegionProgress): string[] {
   const start = TILE_MAP.get(startId), end = TILE_MAP.get(endId);

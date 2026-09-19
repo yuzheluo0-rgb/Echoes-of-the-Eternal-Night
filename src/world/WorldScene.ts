@@ -372,14 +372,18 @@ export class WorldScene {
   }
   private buildLandmarks() {
     for(const site of LANDMARKS){
-      const tile=TILE_MAP.get(`${site.q},${site.r}`)!;
-      if(site.kind==='main')for(const cell of siteFootprint(site.id).slice(1)){
-        const height=({ocean:5.48,fog:5.03,snow:4.8,forest:4.35,volcano:4.2,crystal:3.9} as Record<string,number>)[site.id]||3;
+      const tile=TILE_MAP.get(`${site.q},${site.r}`)!,cells=siteFootprint(site.id);
+      // One box per occupied cell, or a click on a roof passes through to whatever ground sits
+      // behind it. Empty for events, which stay single-tile. These never enter the scene — they
+      // exist only for the raycaster — so they cost no draw calls or triangles.
+      for(const cell of cells.slice(1)){
+        const height=({ocean:5.48,fog:5.03,snow:4.8,forest:4.35,volcano:4.2,crystal:3.9} as Record<string,number>)[site.id]||(site.kind==='main'?3:2.5);
         const geo=new THREE.BoxGeometry(1.45,height,1.45).translate(cell.x,Math.max(cell.height,.62)+height/2,cell.z),pick=new THREE.Mesh(geo,this.materials.get('terrain'));pick.userData.tileId=tile.id;pick.matrixAutoUpdate=false;this.picking.push(pick);
       }
       const beaconMaterial=new THREE.MeshBasicMaterial({color:BIOMES[site.biome].color});beaconMaterial.userData.nightGlow=true;
       const beacon=new THREE.Mesh(new THREE.OctahedronGeometry(site.kind==='main'?.085:.055),beaconMaterial);
-      beacon.position.set(tile.x,walkHeight(tile)+(site.kind==='main'?2.63:2.18),tile.z);beacon.userData.baseY=beacon.position.y;beacon.userData.siteId=site.id;beacon.visible=site.kind!=='hidden'&&site.kind!=='event';this.scene.add(beacon);this.beacons.push(beacon);
+      // Compounds float their beacon at the main-site height so it clears the new outbuildings.
+      beacon.position.set(tile.x,walkHeight(tile)+(cells.length>1?2.63:2.18),tile.z);beacon.userData.baseY=beacon.position.y;beacon.userData.siteId=site.id;beacon.visible=site.kind!=='hidden'&&site.kind!=='event';this.scene.add(beacon);this.beacons.push(beacon);
     }
     const camp=TILE_MAP.get('0,1')!,fire=new THREE.Mesh(new THREE.ConeGeometry(.14,.35,7),new THREE.MeshBasicMaterial({color:'#ffc86d'}));fire.position.set(camp.x+.46,walkHeight(camp)+.17,camp.z-.38);this.scene.add(fire);this.fire=fire;
   }
@@ -545,7 +549,7 @@ export class WorldScene {
       const panels=[...this.host.parentElement!.querySelectorAll('.world-header,.world-title,.world-atlas,.world-minimap,.world-camera,.world-bottom,.world-clock,.clock-popover')].map(p=>p.getBoundingClientRect()).filter(r=>r.width&&r.height);
       for(const site of LANDMARKS){
         const label=this.labels.get(site.id);if(!label)continue;const tile=TILE_MAP.get(`${site.q},${site.r}`)!,selected=this.selectedId===tile.id;
-        const position=new THREE.Vector3(tile.x,walkHeight(tile)+(site.kind==='main'?1.75:1.45),tile.z-.23).project(this.camera),x=(position.x*.5+.5)*width,y=(-position.y*.5+.5)*height;
+        const position=new THREE.Vector3(tile.x,walkHeight(tile)+(siteFootprint(site.id).length>1?1.75:1.45),tile.z-.23).project(this.camera),x=(position.x*.5+.5)*width,y=(-position.y*.5+.5)*height;
         const halfWidth=Math.max(42,site.name.length*6+19),covered=panels.some(r=>x+halfWidth>r.left&&x-halfWidth<r.right&&y>r.top&&y-29<r.bottom);
         const crowded=!selected&&((width<600&&this.camera.zoom<.65)||(site.kind!=='main'&&this.camera.zoom<(width<600?1.15:.60)));
         label.style.transform=`translate(${x}px,${y}px) translate(-50%,-100%)`;label.style.visibility=crowded||covered||x<12||x>width-12||y<20||y>height-20||position.z>1?'hidden':'visible';label.classList.toggle('site-selected',selected);
