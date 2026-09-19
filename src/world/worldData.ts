@@ -1,5 +1,6 @@
 import { ENCOUNTERS, STORIES } from './worldStories.ts';
 import {REGION_ORDER,canEnterTile,freshRegions,isRegionOpen,parseRegions,type RegionProgress} from './worldRegions.ts';
+import {MinCostQueue} from './priorityQueue.ts';
 export type Biome = 'grass' | 'forest' | 'desert' | 'cliff' | 'snow' | 'ocean' | 'blood' | 'fog' | 'swamp' | 'volcano' | 'crystal' | 'waste';
 export interface Tile { id: string; q: number; r: number; x: number; z: number; biome: Biome; height: number; walkable: boolean; bridge: boolean; seed: number; landmark?: string; structure?: string; transit?:Biome }
 export interface Landmark { id: string; q: number; r: number; biome: Biome; name: string; subtitle: string; lore: string; levels: string[]; difficulty: string; kind?: 'main' | 'hidden' | 'side' | 'event'; quest?: { title: string; npc: string; reward: string; targets: string[] } }
@@ -76,25 +77,33 @@ export function createWorld(worldSeed = WORLD_SEED): Tile[] {
     tiles.push({ id: tileId(q,r), q, r, x, z, biome, seed, height: heights[biome] + (liquid ? 0 : random(seed) * .08), walkable: !liquid && (biome !== 'snow' || !!landmark || random(seed + 4) > .66), bridge: false, landmark: landmark?.id });
   }
   const map = new Map(tiles.map(t => [t.id, t]));
+  // `walkable` is the only field generation mutates, so a version counter lets the reachability
+  // passes reuse one breadth-first result instead of recomputing it for all ~1000 destinations
+  // that turn out to be reachable already. A cache hit is by definition identical to a fresh run,
+  // and the breadth-first order is reproduced exactly, so the carved layout cannot shift.
+  let walkVersion = 0;
+  let connVersion = -1, connReached = new Set<string>();
   const connected = () => {
-    const reached = new Set([START_ID]), queue = [map.get(START_ID)!];
+    if (connVersion === walkVersion) return connReached;
+    const reached = connReached = new Set([START_ID]), queue = [map.get(START_ID)!];
     for (let i = 0; i < queue.length; i++) for (const [dq,dr] of DIRECTIONS) {
       const next = map.get(tileId(queue[i].q+dq,queue[i].r+dr));
       if (next?.walkable && !reached.has(next.id)) { reached.add(next.id); queue.push(next); }
     }
+    connVersion = walkVersion;
     return reached;
   };
   // Prefer dry ground and short straits, instead of drawing eight radial bridges.
   const connect = (destination: string) => {
     const reached = connected(); if (reached.has(destination)) return;
-    const open = new Set(reached), costs = new Map([...reached].map(id => [id,0])), came = new Map<string,string>();
-    while (open.size) {
-      const current = [...open].reduce((a,b) => costs.get(a)! < costs.get(b)! ? a : b);
-      open.delete(current);
+    const frontier = new MinCostQueue<string>(), came = new Map<string,string>();
+    for (const id of reached) frontier.set(id, 0);
+    while (frontier.size) {
+      const current = frontier.pop()!;
       if (current === destination) {
         let cursor = current;
         while (!reached.has(cursor)) {
-          const tile = map.get(cursor)!; tile.walkable = true; tile.bridge = isWater(tile.biome);
+          const tile = map.get(cursor)!; if (!tile.walkable) walkVersion++; tile.walkable = true; tile.bridge = isWater(tile.biome);
           cursor = came.get(cursor)!;
         }
         return;
@@ -102,8 +111,8 @@ export function createWorld(worldSeed = WORLD_SEED): Tile[] {
       const tile = map.get(current)!;
       for (const [dq,dr] of DIRECTIONS) {
         const next = map.get(tileId(tile.q+dq,tile.r+dr)); if (!next || next.structure&&!next.landmark) continue;
-        const cost = costs.get(current)! + (isWater(next.biome) ? 9 : next.walkable ? 1 : 3);
-        if (cost < (costs.get(next.id) ?? Infinity)) { costs.set(next.id,cost); came.set(next.id,current); open.add(next.id); }
+        const cost = frontier.cost(current)! + (isWater(next.biome) ? 9 : next.walkable ? 1 : 3);
+        if (cost < (frontier.cost(next.id) ?? Infinity)) { frontier.set(next.id,cost); came.set(next.id,current); }
       }
     }
   };
@@ -132,7 +141,7 @@ export function createWorld(worldSeed = WORLD_SEED): Tile[] {
         return score(a)-score(b)||a.id.localeCompare(b.id);
       });
       const next=candidates[0];if(!next)throw new Error('No building footprint for '+site.id);
-      next.structure=site.id;next.walkable=false;next.bridge=false;footprint.push(next);
+      next.structure=site.id;if(next.walkable)walkVersion++;next.walkable=false;next.bridge=false;footprint.push(next);
     }
   }
   for(const site of MAIN_SITES)connect(tileId(site.q,site.r));
@@ -142,19 +151,22 @@ export function createWorld(worldSeed = WORLD_SEED): Tile[] {
   const unlocked:Biome[]=[];
   for(const region of REGION_ORDER){
     unlocked.push(region);const progress:RegionProgress={version:1,unlocked,snowTrail:[]};
-    const reachable=()=>{const seen=new Set([START_ID]),queue=[map.get(START_ID)!];for(let i=0;i<queue.length;i++)for(const[dq,dr]of DIRECTIONS){const next=map.get(tileId(queue[i].q+dq,queue[i].r+dr));if(canEnterTile(progress,next)&&!seen.has(next!.id)){seen.add(next!.id);queue.push(next!);}}return seen;};
+    // Fresh per region, so it invalidates automatically when `progress` changes; within a region
+    // it only needs recomputing once per walkable mutation.
+    let reachVersion=-1,reachSeen=new Set<string>();
+    const reachable=()=>{if(reachVersion===walkVersion)return reachSeen;const seen=reachSeen=new Set([START_ID]),queue=[map.get(START_ID)!];for(let i=0;i<queue.length;i++)for(const[dq,dr]of DIRECTIONS){const next=map.get(tileId(queue[i].q+dq,queue[i].r+dr));if(canEnterTile(progress,next)&&!seen.has(next!.id)){seen.add(next!.id);queue.push(next!);}}reachVersion=walkVersion;return seen;};
     for(const destination of tiles.filter(t=>t.biome===region&&t.walkable)){
       const reached=reachable();if(reached.has(destination.id))continue;
-      const open=new Set(reached),costs=new Map([...reached].map(id=>[id,0])),came=new Map<string,string>();let found=false;
-      while(open.size){
-        const id=[...open].reduce((a,b)=>costs.get(a)!<costs.get(b)!?a:b);open.delete(id);
-        if(id===destination.id){let cursor=id;while(!reached.has(cursor)){const tile=map.get(cursor)!;tile.walkable=true;if(isWater(tile.biome)){tile.bridge=true;tile.transit??=region;}cursor=came.get(cursor)!;}found=true;break;}
+      const frontier=new MinCostQueue<string>(),came=new Map<string,string>();for(const id of reached)frontier.set(id,0);let found=false;
+      while(frontier.size){
+        const id=frontier.pop()!;
+        if(id===destination.id){let cursor=id;while(!reached.has(cursor)){const tile=map.get(cursor)!;if(!tile.walkable)walkVersion++;tile.walkable=true;if(isWater(tile.biome)){tile.bridge=true;tile.transit??=region;}cursor=came.get(cursor)!;}found=true;break;}
         const tile=map.get(id)!;
         for(const[dq,dr]of DIRECTIONS){
           const next=map.get(tileId(tile.q+dq,tile.r+dr));
           if(!next||next.structure&&!next.landmark||!unlocked.includes(next.biome)&&(!isWater(next.biome)||next.landmark))continue;
-          const cost=costs.get(id)!+(canEnterTile(progress,next)?1:isWater(next.biome)?6:3);
-          if(cost<(costs.get(next.id)??Infinity)){costs.set(next.id,cost);came.set(next.id,id);open.add(next.id);}
+          const cost=frontier.cost(id)!+(canEnterTile(progress,next)?1:isWater(next.biome)?6:3);
+          if(cost<(frontier.cost(next.id)??Infinity)){frontier.set(next.id,cost);came.set(next.id,id);}
         }
       }
       if(!found)throw new Error('Unreachable chapter location: '+region+' / '+destination.id);

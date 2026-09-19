@@ -1,9 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { BIOMES, DIRECTIONS, LANDMARKS, START_ID, TILE_MAP, TILES, WORLD_SEED, createWorld, findPath, hexDistance, isWater, parseSave, tileId,advanceJourney,acceptSideQuest,resolveEncounter,travelByBeacon,MAIN_SITES,SITE_SIZE,siteFootprint,navigationTarget } from './worldData.ts';
 import { REGION_ORDER } from './worldRegions.ts';
 /** The chapter system seals every biome but grass, so fixtures that travel further open the map first. */
 const openAll=(extra:Record<string,unknown>={})=>parseSave(JSON.stringify({regions:{version:1,unlocked:[...REGION_ORDER]},...extra}));
+/** Regenerate only when the map is deliberately redesigned: a mismatch means the coastline or
+ *  bridge carve moved, every docs/previews screenshot is stale, and old saves may point at
+ *  different terrain. Structural tests cannot tell "identical" from "different but still valid". */
+const LAYOUT_DIGEST='sha256:c469e6cf3445deac3a183b5f8a563fed5e68686b85287a04fbd1d5cb9e5e0d2f';
+
+test('the generated layout matches the frozen digest', () => {
+  const canonical=TILES.map(t=>[t.id,t.biome,t.walkable?1:0,t.bridge?1:0,t.transit??'',t.structure??'',t.landmark??'',t.height.toFixed(6)].join('/')).join('\n');
+  assert.equal('sha256:'+createHash('sha256').update(canonical).digest('hex'),LAYOUT_DIGEST);
+});
+
+test('world generation stays inside the startup budget', () => {
+  const start=performance.now();createWorld();const ms=performance.now()-start;
+  // Runs at module load via `TILES = createWorld()`, so it blocks first paint. The heap plus the
+  // reachability cache put 776 tiles at ~27ms; this guard catches a silent regression.
+  assert.ok(ms<400,`createWorld took ${ms.toFixed(0)}ms`);
+});
 
 test('large seeded islands retain twelve distinct biomes and regular hex navigation', () => {
   assert.ok(TILES.length > 700&&TILES.length<1000); assert.equal(new Set(TILES.map(t => t.id)).size, TILES.length);
