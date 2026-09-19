@@ -85,9 +85,18 @@ export class WorldWeather{
       if(isWater(tile.biome)){points.push(probe);break;}
     }
     const curve=new THREE.CatmullRomCurve3(points),positions:number[]=[],uvs:number[]=[],indices:number[]=[];
+    const smooth=(a:number,b:number,v:number)=>{const s=Math.min(1,Math.max(0,(v-a)/(b-a)));return s*s*(3-2*s);};
     for(let i=0;i<=160;i++){
       const t=i/160,p=curve.getPoint(t),direction=curve.getTangent(t),tile=nearestTile(p.x,p.z);
-      for(const side of [-1,1]){const x=p.x-direction.z*width*side,z=p.z+direction.x*width*side;positions.push(x,landHeightAt(x,z)+.04,z);uvs.push(side*.5+.5,t*18);}
+      // A real river broadens and settles onto the sea surface as it reaches the coast. A
+      // constant-width ribbon running at terrain height right up to the shoreline is what made the
+      // mouth look pasted onto the water.
+      const spread=width*(1+t*t*2.4),mouth=smooth(.72,1,t);
+      for(const side of [-1,1]){
+        const x=p.x-direction.z*spread*side,z=p.z+direction.x*spread*side;
+        positions.push(x,THREE.MathUtils.lerp(landHeightAt(x,z)+.04,.125,mouth),z);
+        uvs.push(side*.5+.5,t*18);
+      }
       // Only a building interrupts the ribbon now. Skipping water as well used to shatter the river
       // into loose fragments at exactly the point where it should meet the sea.
       if(i&&tile&&!tile.structure){const n=i*2;indices.push(n-2,n,n-1,n-1,n,n+1);}
