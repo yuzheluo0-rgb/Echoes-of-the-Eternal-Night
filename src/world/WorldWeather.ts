@@ -39,10 +39,27 @@ export class WorldWeather{
   private scale=new THREE.Vector3();
   constructor(scene:THREE.Scene,flames:{x:number;y:number;z:number}[]){
     this.group.name='world-weather';scene.add(this.group);
-    const puffs=[[-.8,0,0,.85,.23,.48],[0,.15,0,1.05,.40,.65],[.9,.02,.04,.73,.26,.50],[.2,0,.40,.66,.21,.46]].map(([x,y,z,sx,sy,sz])=>new THREE.IcosahedronGeometry(1,1).scale(sx,sy,sz).translate(x,y,z));
+    // An irregular, flat-bottomed cumulus. Four ellipses in a row read as four ellipses in a row;
+    // twelve puffs of varying size, sharing a baseline and heaped higher in the middle, read as a
+    // cloud. Each puff is placed so its underside sits on that baseline.
+    const puffs:THREE.BufferGeometry[]=[];
+    for(let i=0;i<12;i++){
+      const t=i/11-.5,sx=.28+random(i*7.3)*.44,sy=sx*(.48+random(i*3.1)*.30),sz=sx*(.70+random(i*5.7)*.44);
+      puffs.push(new THREE.IcosahedronGeometry(1,1).scale(sx,sy,sz).translate(t*2.1,-.10+sy*.88+(random(i*13.7)-.5)*.05,(random(i*11.1)-.5)*.66));
+    }
     const cloudGeometry=mergeGeometries(puffs)!;puffs.forEach(g=>g.dispose());
     this.clouds=new THREE.InstancedMesh(cloudGeometry,new THREE.MeshLambertMaterial({color:'#b1b8b3',transparent:true,opacity:.29,depthWrite:false}),10);this.clouds.name='drifting-clouds';this.clouds.frustumCulled=false;this.clouds.instanceMatrix.setUsage(THREE.DynamicDrawUsage);this.group.add(this.clouds);
-    const birdGeometry=new THREE.BufferGeometry();birdGeometry.setAttribute('position',new THREE.Float32BufferAttribute([0,0,.10,-.35,.035,-.065,-.12,0,.045,0,0,.10,.12,0,.045,.35,.035,-.065,0,0,.17,-.035,0,-.10,.035,0,-.10],3));
+    // A dart body with two swept wings — six triangles instead of one flat sliver. The flap shader
+    // still lifts the tips by |x|, so the extra span is what makes the wingbeat readable.
+    const birdVerts:number[]=[];
+    const tri=(a:number[],b:number[],c:number[])=>birdVerts.push(...a,...b,...c);
+    tri([0,.02,.17],[-.055,0,-.11],[.055,0,-.11]);
+    tri([0,.05,.02],[-.055,0,-.11],[.055,0,-.11]);
+    for(const side of [-1,1]){
+      tri([side*.05,.01,-.01],[side*.26,.02,-.07],[side*.13,0,-.15]);
+      tri([side*.26,.02,-.07],[side*.47,.03,-.12],[side*.13,0,-.15]);
+    }
+    const birdGeometry=new THREE.BufferGeometry();birdGeometry.setAttribute('position',new THREE.Float32BufferAttribute(birdVerts,3));
     const birdMaterial=new THREE.ShaderMaterial({side:THREE.DoubleSide,uniforms:{uTime:this.time},vertexShader:`uniform float uTime;void main(){vec3 p=position;p.y+=sin(uTime*7.+instanceMatrix[3].x)*abs(p.x)*.63;gl_Position=projectionMatrix*modelViewMatrix*instanceMatrix*vec4(p,1.);}`,fragmentShader:'void main(){gl_FragColor=vec4(.055,.13,.16,1.);}'});
     this.birds=new THREE.InstancedMesh(birdGeometry,birdMaterial,15);this.birds.name='migrating-birds';this.birds.frustumCulled=false;this.birds.instanceMatrix.setUsage(THREE.DynamicDrawUsage);this.group.add(this.birds);
     const origins=[...flames,...TILES.filter(t=>t.biome==='volcano'&&!t.structure&&!t.landmark&&random(t.seed)>.4).map(t=>({x:t.x+.5,y:landHeightAt(t.x+.5,t.z-.35)+.64,z:t.z-.35}))];
