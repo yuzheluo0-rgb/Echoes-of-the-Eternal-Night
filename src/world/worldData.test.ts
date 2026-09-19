@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BIOMES, DIRECTIONS, LANDMARKS, START_ID, TILE_MAP, TILES, WORLD_SEED, createWorld, findPath, hexDistance, isWater, parseSave, tileId,advanceJourney,acceptSideQuest,resolveEncounter,travelByBeacon,MAIN_SITES,SITE_SIZE,siteFootprint,navigationTarget } from './worldData.ts';
+import { REGION_ORDER } from './worldRegions.ts';
+/** The chapter system seals every biome but grass, so fixtures that travel further open the map first. */
+const openAll=(extra:Record<string,unknown>={})=>parseSave(JSON.stringify({regions:{version:1,unlocked:[...REGION_ORDER]},...extra}));
 
 test('large seeded islands retain twelve distinct biomes and regular hex navigation', () => {
   assert.ok(TILES.length > 700&&TILES.length<1000); assert.equal(new Set(TILES.map(t => t.id)).size, TILES.length);
@@ -35,7 +38,7 @@ test('save validation rejects invalid positions and missions and deduplicates vi
   const defaults=parseSave(null);assert.equal(defaults.embers,3);assert.deepEqual(parseSave('{bad json'),defaults);
   assert.equal(parseSave(JSON.stringify({ position: blocked.id })).position, START_ID);
   const available=TILES.find(t=>t.walkable&&!t.landmark)!.id;
-  assert.deepEqual(parseSave(JSON.stringify({ position: available, visited: ['forest', 'forest', 'fake', null], mission: valid })), { ...defaults,position: available, visited: ['camp', 'forest'], mission: valid });
+  assert.deepEqual(openAll({ position: available, visited: ['forest', 'forest', 'fake', null], mission: valid }), { ...openAll(),position: available, visited: ['camp', 'forest'], mission: valid });
   assert.equal(parseSave(JSON.stringify({ mission: 'unknown' })).mission, null);
   assert.equal(parseSave('null').position, START_ID);
 });
@@ -44,7 +47,7 @@ test('multi-cell architecture has connected footprints, accessible forecourts an
   for(const site of MAIN_SITES){
     const cells=siteFootprint(site.id),entry=tileId(site.q,site.r);assert.equal(cells.length,SITE_SIZE[site.id]);assert.ok(site.id==='ocean'?cells.length===9:cells.length>=3&&cells.length<=5);assert.equal(cells[0].id,entry);
     const reached=new Set([entry]);for(let n=0;n<cells.length;n++)for(const cell of cells)if(cells.some(c=>reached.has(c.id)&&hexDistance(cell,c)===1))reached.add(cell.id);assert.equal(reached.size,cells.length);
-    for(const cell of cells){assert.equal(cell.walkable,cell.id===entry);assert.equal(navigationTarget(cell.id),entry);assert.equal(parseSave(JSON.stringify({position:cell.id,embers:8})).position,entry);}
+    for(const cell of cells){assert.equal(cell.walkable,cell.id===entry);assert.equal(navigationTarget(cell.id),entry);assert.equal(openAll({position:cell.id,embers:8}).position,entry);}
     assert.ok(findPath(START_ID,entry).length);
   }
 });
@@ -68,7 +71,7 @@ test('encounter choices are local, persistent and cannot be farmed or overspent'
 });
 
 test('beacons require a visit, charge once and always allow a free return to camp',()=>{
- const volcano=LANDMARKS.find(s=>s.id==='volcano')!;let save=parseSave(null);
+ const volcano=LANDMARKS.find(s=>s.id==='volcano')!;let save=openAll();
  assert.equal(travelByBeacon(save,volcano.id),save);save=advanceJourney(save,tileId(volcano.q,volcano.r));
  save=travelByBeacon(save,'camp');assert.equal(save.position,START_ID);assert.equal(save.embers,3);
  save=travelByBeacon(save,volcano.id);assert.equal(save.position,tileId(volcano.q,volcano.r));assert.equal(save.embers,2);

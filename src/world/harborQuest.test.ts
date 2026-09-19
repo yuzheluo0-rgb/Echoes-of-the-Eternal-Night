@@ -2,13 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {parseSave,advanceJourney,MAIN_SITES,LANDMARKS,tileId,travelByBeacon,siteFootprint} from './worldData.ts';
 import {acceptHarborProject,repairHarbor,HARBOR_STAGES,harborPosition} from './harborQuest.ts';
+import {REGION_ORDER} from './worldRegions.ts';
+/** The chapter system seals every biome but grass, so harbor fixtures open the map first. */
+const openAll=()=>parseSave(JSON.stringify({regions:{version:1,unlocked:[...REGION_ORDER]}}));
 
 test('the abandoned harbor has nine cells and accepts its project only at the forecourt',()=>{
-  assert.equal(siteFootprint('ocean').length,9);let save=parseSave(null);assert.equal(acceptHarborProject(save),save);
+  assert.equal(siteFootprint('ocean').length,9);let save=openAll();assert.equal(acceptHarborProject(save),save);
   save=advanceJourney(save,harborPosition());const accepted=acceptHarborProject(save);assert.deepEqual(accepted.harbor,{accepted:true,stage:0});assert.equal(acceptHarborProject(accepted),accepted);assert.equal(repairHarbor(accepted,0),accepted);
 });
 test('three harbor repairs require local attendance and supplies, change stage, and reward only once',()=>{
-  let save=acceptHarborProject(advanceJourney(parseSave(null),harborPosition()));
+  let save=acceptHarborProject(advanceJourney(openAll(),harborPosition()));
   for(const [index,step]of HARBOR_STAGES.entries()){
     for(const target of step.targets){const site=LANDMARKS.find(s=>s.id===target.id)!;save=advanceJourney(save,tileId(site.q,site.r));}
     assert.equal(repairHarbor(save,index),save,'cannot repair remotely');save=advanceJourney(save,harborPosition());const before=save;

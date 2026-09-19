@@ -7,6 +7,7 @@ import { tileSurface, cartoonWater, cloakGeometry, landHeightAt, pathClearance }
 import { WorldRenderBudget, type WorldQuality } from './WorldQuality';
 import { buildWorldArchitecture } from './WorldArchitecture';
 import { WorldWeather, flowingLava, addWind } from './WorldWeather';
+import { isRegionOpen, type RegionProgress } from './worldRegions';
 import { buildWorldBridges } from './WorldBridges';
 import {WorldLighting} from './WorldLighting';
 import {WorldTime} from './WorldTime';
@@ -68,6 +69,9 @@ export class WorldScene {
   private lantern: THREE.PointLight;
   private fire: THREE.Mesh | null = null;
   private beacons: THREE.Mesh[] = [];
+  private regions: RegionProgress | null = null;
+  private discovered: string[] = [];
+  private encounters: Record<string, number> = {};
   private fog: THREE.Mesh[] = [];
   private fireflies: THREE.Points;
   private waterTimes: { value: number }[] = [];
@@ -375,7 +379,11 @@ export class WorldScene {
     const inner = new THREE.Mesh(new THREE.RingGeometry(.76, .83, 6), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: opacity * .24, side: THREE.DoubleSide, depthWrite: false })); inner.rotation.x = -Math.PI / 2; inner.rotation.z = Math.PI / 6; group.add(inner);
   }
   setLabels(labels: Map<string, HTMLElement>) { this.labels = labels; this.uiDirty = true; }
-  setDiscoveries(ids:string[],encounters:Record<string,number>){for(const beacon of this.beacons){const site=LANDMARKS.find(s=>s.id===beacon.userData.siteId)!;beacon.visible=site.kind==='hidden'||site.kind==='event'?ids.includes(site.id)&&encounters[site.id]===undefined:true;}this.lighting.setDiscoveries(ids);this.renderDirty=true;this.uiDirty=true;}
+  setDiscoveries(ids:string[],encounters:Record<string,number>){this.discovered=ids;this.encounters=encounters;this.lighting.setDiscoveries(ids);this.refreshBeacons();}
+  /** Beacons stay dark inside a sealed region until its chapter is claimed. */
+  setRegions(regions:RegionProgress){this.regions=regions;this.refreshBeacons();}
+  /** Discovery and sealing both gate the same beacon, so they share one calculation. */
+  private refreshBeacons(){for(const beacon of this.beacons){const site=LANDMARKS.find(s=>s.id===beacon.userData.siteId)!;const found=site.kind==='hidden'||site.kind==='event'?this.discovered.includes(site.id)&&this.encounters[site.id]===undefined:true;beacon.visible=found&&(!this.regions||isRegionOpen(this.regions,site.biome));}this.renderDirty=true;this.uiDirty=true;}
   setReduced(reduced: boolean) { this.reduced = reduced; this.renderDirty = true; }
   setPaused(paused: boolean) { this.paused = paused; this.controls.enabled = !paused; this.renderDirty = true; this.lastTime = 0; this.renderBudget.resetSamples(); }
   setQuality(quality: WorldQuality) {
