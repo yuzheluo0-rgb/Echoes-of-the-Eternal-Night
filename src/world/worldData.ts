@@ -20,18 +20,18 @@ export const BIOMES: Record<Biome, { name: string; color: string; description: s
 };
 export const MAIN_SITES: Landmark[] = [
   { id: 'camp', q: 0, r: 1, biome: 'grass', name: '余烬营地', subtitle: 'THE LAST HEARTH', lore: '长夜之中，总有人守着一簇火。循着远处的钟声，找回属于守夜人的第一枚印记。', levels: ['荒野巡夜', '失落的商队', '草原守望者'], difficulty: '推荐初访' },
-  { id: 'forest', q: -4, r: 4, biome: 'forest', name: '幽林圣所', subtitle: 'THE HOLLOW GROVE', lore: '根须缠绕的石门后，旧日的祈祷仍未散去。不要回应林中的第二声脚步。', levels: ['低语林径', '古树的心脏', '无面林主'], difficulty: '幽暗险境' },
-  { id: 'ocean', q: 0, r: 5, biome: 'ocean', name: '沉潮旧港', subtitle: 'THE HARBOR THAT FORGOT THE DAWN', lore: '旧王国最大的南方港口沉寂于此。吊机折向海面，沉船堵住船坞，百年未燃的航灯下，只剩一位不肯离开的老船匠。让这座港口再次迎接归帆，是重建主世界的第一项工程。', levels: ['潮痕栈桥', '幽灵航线', '深海回响'], difficulty: '主世界修复工程' },
-  { id: 'desert', q: 5, r: -1, biome: 'desert', name: '沙海遗迹', subtitle: 'THE GILDED RUIN', lore: '风沙磨去了石碑上的名字，却磨不去王冠的重量。沉睡的王正在等待新的祭品。', levels: ['埋骨沙丘', '日蚀王陵', '黄金之殇'], difficulty: '失落禁地' },
-  { id: 'blood', q: 4, r: -4, biome: 'blood', name: '血潮祭坛', subtitle: 'THE CRIMSON ALTAR', lore: '猩红浪潮之下，似乎有一颗庞大的心脏。踏过黑石祭桥，直面没有尽头的饥渴。', levels: ['猩红渡口', '献祭回廊', '血潮之心'], difficulty: '极危禁地' },
-  { id: 'snow', q: 0, r: -4, biome: 'snow', name: '霜冠神殿', subtitle: 'THE FROST CROWN', lore: '雪线之上，群星触手可及。冰封神殿里，最后一位骑士仍守着空无一人的王座。', levels: ['寂静雪线', '冰封长阶', '霜冠骑士'], difficulty: '永冻险境' },
-  { id: 'cliff', q: -3, r: -2, biome: 'cliff', name: '断崖哨塔', subtitle: 'THE FALLEN WATCH', lore: '哨塔之下是深不见底的裂谷。守望者的钟声，从未因城墙坍塌而停止。', levels: ['碎石古道', '悬空哨所', '敲钟人'], difficulty: '高地险境' },
-  { id: 'fog', q: -5, r: 0, biome: 'fog', name: '雾港灯塔', subtitle: 'THE VEILED BEACON', lore: '雾是一片没有边界的海。跟随灯火，穿过悬于虚空的木桥，抵达被世界遗忘的港口。', levels: ['迷雾墓园', '遗忘浮岛', '引路人的灯'], difficulty: '迷雾险境' },
-  { id: 'swamp', q: -5, r: 5, biome: 'swamp', name: '苔泽钟楼', subtitle: 'THE MOSSBELL', lore: '钟楼的根基早已没入苔水，仍有一只无形的手在暮色中摇响晚钟。', levels: ['芦苇低语', '苔水迷径', '沉钟守卫'], difficulty: '苔泽险境' },
-  { id: 'volcano', q: 15, r: -6, biome: 'volcano', name: '灰烬熔炉', subtitle: 'THE EMBER FORGE', lore: '王朝的锻炉熄灭之后，山的心脏替它燃烧。火光中，隐约有人仍在锤打最后一把剑。', levels: ['熔岩古道', '灰烬长阶', '不灭炉心'], difficulty: '熔火禁地' },
-  { id: 'crystal', q: -15, r: 5, biome: 'crystal', name: '星镜尖塔', subtitle: 'THE STARGLASS', lore: '尖塔记录的星辰比夜空中多出一颗。只有走进晶石的影子，才能看到它的轨迹。', levels: ['折光原野', '镜中回廊', '星镜守护者'], difficulty: '折光秘境' },
-  { id: 'waste', q: -5, r: -9, biome: 'waste', name: '遗骨王庭', subtitle: 'THE BONE COURT', lore: '荒原上的王庭没有屋顶，只有巨兽遗骨替昔日的王遮挡风沙。', levels: ['风蚀旷野', '遗骨长廊', '无名旧王'], difficulty: '古国遗境' },
-].map((site,index)=>({...site,q:index>0&&index<8?site.q*2:site.q,r:index>0&&index<8?site.r*2:site.r,kind:'main' as const,levels:site.levels as [string,string,string],biome:site.biome as Biome}));
+  { id: 'forest', q: -14, r: 14, biome: 'forest', name: '幽林圣所', subtitle: 'THE HOLLOW GROVE', lore: '根须缠绕的石门后，旧日的祈祷仍未散去。不要回应林中的第二声脚步。', levels: ['低语林径', '古树的心脏', '无面林主'], difficulty: '幽暗险境' },
+  { id: 'ocean', q: 0, r: 17, biome: 'ocean', name: '沉潮旧港', subtitle: 'THE HARBOR THAT FORGOT THE DAWN', lore: '旧王国最大的南方港口沉寂于此。吊机折向海面，沉船堵住船坞，百年未燃的航灯下，只剩一位不肯离开的老船匠。让这座港口再次迎接归帆，是重建主世界的第一项工程。', levels: ['潮痕栈桥', '幽灵航线', '深海回响'], difficulty: '主世界修复工程' },
+  { id: 'desert', q: 17, r: -3, biome: 'desert', name: '沙海遗迹', subtitle: 'THE GILDED RUIN', lore: '风沙磨去了石碑上的名字，却磨不去王冠的重量。沉睡的王正在等待新的祭品。', levels: ['埋骨沙丘', '日蚀王陵', '黄金之殇'], difficulty: '失落禁地' },
+  { id: 'blood', q: 14, r: -14, biome: 'blood', name: '血潮祭坛', subtitle: 'THE CRIMSON ALTAR', lore: '猩红浪潮之下，似乎有一颗庞大的心脏。踏过黑石祭桥，直面没有尽头的饥渴。', levels: ['猩红渡口', '献祭回廊', '血潮之心'], difficulty: '极危禁地' },
+  { id: 'snow', q: 0, r: -14, biome: 'snow', name: '霜冠神殿', subtitle: 'THE FROST CROWN', lore: '雪线之上，群星触手可及。冰封神殿里，最后一位骑士仍守着空无一人的王座。', levels: ['寂静雪线', '冰封长阶', '霜冠骑士'], difficulty: '永冻险境' },
+  { id: 'cliff', q: -10, r: -7, biome: 'cliff', name: '断崖哨塔', subtitle: 'THE FALLEN WATCH', lore: '哨塔之下是深不见底的裂谷。守望者的钟声，从未因城墙坍塌而停止。', levels: ['碎石古道', '悬空哨所', '敲钟人'], difficulty: '高地险境' },
+  { id: 'fog', q: -17, r: 0, biome: 'fog', name: '雾港灯塔', subtitle: 'THE VEILED BEACON', lore: '雾是一片没有边界的海。跟随灯火，穿过悬于虚空的木桥，抵达被世界遗忘的港口。', levels: ['迷雾墓园', '遗忘浮岛', '引路人的灯'], difficulty: '迷雾险境' },
+  { id: 'swamp', q: -9, r: 9, biome: 'swamp', name: '苔泽钟楼', subtitle: 'THE MOSSBELL', lore: '钟楼的根基早已没入苔水，仍有一只无形的手在暮色中摇响晚钟。', levels: ['芦苇低语', '苔水迷径', '沉钟守卫'], difficulty: '苔泽险境' },
+  { id: 'volcano', q: 26, r: -10, biome: 'volcano', name: '灰烬熔炉', subtitle: 'THE EMBER FORGE', lore: '王朝的锻炉熄灭之后，山的心脏替它燃烧。火光中，隐约有人仍在锤打最后一把剑。', levels: ['熔岩古道', '灰烬长阶', '不灭炉心'], difficulty: '熔火禁地' },
+  { id: 'crystal', q: -26, r: 9, biome: 'crystal', name: '星镜尖塔', subtitle: 'THE STARGLASS', lore: '尖塔记录的星辰比夜空中多出一颗。只有走进晶石的影子，才能看到它的轨迹。', levels: ['折光原野', '镜中回廊', '星镜守护者'], difficulty: '折光秘境' },
+  { id: 'waste', q: -9, r: -16, biome: 'waste', name: '遗骨王庭', subtitle: 'THE BONE COURT', lore: '荒原上的王庭没有屋顶，只有巨兽遗骨替昔日的王遮挡风沙。', levels: ['风蚀旷野', '遗骨长廊', '无名旧王'], difficulty: '古国遗境' },
+].map(site=>({...site,kind:'main' as const,levels:site.levels as [string,string,string],biome:site.biome as Biome}));
 export const DIRECTIONS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]] as const;
 export const START_ID = '0,1';
 export const tileId = (q: number, r: number) => `${q},${r}`;
@@ -40,16 +40,22 @@ export function random(seed: number) { const n = Math.sin(seed * 127.1 + 311.7) 
 export const WORLD_SEED = 7319;
 export const isWater = (biome: Biome) => biome === 'ocean' || biome === 'blood' || biome === 'fog';
 export const SITE_SIZE:Record<string,number>={camp:4,forest:4,ocean:9,desert:5,blood:4,snow:5,cliff:4,fog:3,swamp:3,volcano:5,crystal:4,waste:5};
+/** Area of the continent relative to the original 776-tile map. Linear size is its square root.
+ *  Rather than scaling every ellipse radius and biome threshold below, the normalized coordinates
+ *  are divided by `S`, so the whole landmass grows uniformly and every shape rule stays as
+ *  authored. Change this one number to resize the world. */
+export const WORLD_GROWTH = Math.sqrt(3);
 /** Seeded coastlines sit on the same regular pointy-top hex lattice as navigation. */
 export function createWorld(worldSeed = WORLD_SEED): Tile[] {
   const tiles: Tile[] = [];
+  const S = WORLD_GROWTH;
   const ellipse = (x: number, z: number, cx: number, cz: number, rx: number, rz: number) => 1 - ((x - cx) / rx) ** 2 - ((z - cz) / rz) ** 2;
   const phase = random(worldSeed) * 9;
   const heights: Record<Biome, number> = { grass: .56, forest: .59, desert: .46, cliff: 1.02, snow: .79, ocean: .08, blood: .08, fog: .08, swamp:.34,volcano:.72,crystal:.58,waste:.66 };
-  for (let q = -20; q <= 20; q++) for (let r = -15; r <= 15; r++) {
+  for (let q = -45; q <= 45; q++) for (let r = -28; r <= 28; r++) {
     const x = Math.sqrt(3) * (q + r / 2), z = r * 1.5;
-    const gx=x/2,gz=z/2;
-    const seed = (q + 19) * 59 + (r + 19) * 13 + worldSeed;
+    const gx=x/2/S,gz=z/2/S;
+    const seed = (q + 50) * 59 + (r + 30) * 13 + worldSeed;
     const ripple = Math.sin(gx * .83 + phase) * .10 + Math.cos(gz * 1.17 - gx * .32) * .11;
     if (ellipse(gx, gz, 0, 0, 14.9, 10.6) + ripple < 0) continue;
     // A hooked mainland, a broken eastern cape and a few smaller outlying islands.
@@ -120,12 +126,18 @@ export function createWorld(worldSeed = WORLD_SEED): Tile[] {
   for (const tile of tiles) if (tile.walkable) connect(tile.id);
   for(const site of MAIN_SITES) for(const kind of ['side','hidden','event'] as const) {
     const occupied=tiles.filter(t=>t.landmark);
-    const candidates=tiles.filter(t=>t.biome===site.biome&&!t.landmark&&occupied.every(o=>hexDistance(t,o)>=3));
+    // Separation scales with the continent: a fixed 3 hexes reads as cramped once the map grows.
+    const spacing=Math.round(3*S);
+    const candidates=tiles.filter(t=>t.biome===site.biome&&!t.landmark&&occupied.every(o=>hexDistance(t,o)>=spacing));
     candidates.sort((a,b)=>{
       const score=(t:Tile)=>random(t.seed+(kind==='hidden'?71:23))*3+hexDistance(t,site)*(kind==='hidden'?.16:-.1);
       return score(b)-score(a);
     });
-    const chosen=candidates[0]||tiles.find(t=>t.biome===site.biome&&!t.landmark);
+    // A small island cannot always honour the spacing once its neighbours are placed. The old
+    // fallback took an arbitrary tile of the right biome, which dropped sites next to each other;
+    // take the roomiest one left instead so the crowding degrades gracefully.
+    let chosen=candidates[0];
+    if(!chosen){let roomiest=-1;for(const t of tiles){if(t.biome!==site.biome||t.landmark)continue;let nearest=Infinity;for(const o of occupied)nearest=Math.min(nearest,hexDistance(t,o));if(nearest>roomiest){roomiest=nearest;chosen=t;}}}
     if(!chosen)throw new Error('Missing location for '+site.biome);
     chosen.landmark=kind+'-'+site.biome;connect(chosen.id);
   }
@@ -194,7 +206,7 @@ export const WORLD_BOUNDS = (() => {
   }
   return { minX, maxX, minZ, maxZ, halfX: (maxX - minX) / 2, halfZ: (maxZ - minZ) / 2, centerX: (minX + maxX) / 2, centerZ: (minZ + maxZ) / 2 };
 })();
-/** Exactly 1 for today's map; grows with the coastline, and everything derived follows. */
+/** 1 when the map was 776 tiles, 1.74 at WORLD_GROWTH = sqrt(3); view distances follow it. */
 export const WORLD_SCALE = Math.hypot(WORLD_BOUNDS.halfX, WORLD_BOUNDS.halfZ) / BASELINE_HALF_DIAGONAL;
 export function siteFootprint(id:string){const site=MAIN_SITES.find(s=>s.id===id);if(!site)return[];const entry=TILE_MAP.get(tileId(site.q,site.r))!;return[entry,...TILES.filter(t=>t.structure===id&&t!==entry).sort((a,b)=>hexDistance(a,entry)-hexDistance(b,entry)||(a.x-entry.x)*.36+(a.z-entry.z)*.8-((b.x-entry.x)*.36+(b.z-entry.z)*.8))];}
 export function navigationTarget(id:string){const tile=TILE_MAP.get(id),site=MAIN_SITES.find(s=>s.id===tile?.structure);return site?tileId(site.q,site.r):id;}
@@ -222,7 +234,7 @@ export const SAVE_KEY = 'eternal-night-world-v1';
 const secretSite=(site:Landmark)=>site.kind==='hidden'||site.kind==='event';
 export function advanceJourney(save:WorldSave,position:string):WorldSave {
   const tile=TILE_MAP.get(position);if(!tile||!canEnterTile(save.regions,tile))return save;
-  const discovered=[...new Set([...save.discovered,...LANDMARKS.filter(s=>isRegionOpen(save.regions,s.biome)&&secretSite(s)&&hexDistance(tile,s)<=2).map(s=>s.id)])];
+  const discovered=[...new Set([...save.discovered,...LANDMARKS.filter(s=>isRegionOpen(save.regions,s.biome)&&secretSite(s)&&hexDistance(tile,s)<=Math.round(2*WORLD_GROWTH)).map(s=>s.id)])];
   const visited=[...new Set([...save.visited,...(tile.landmark?[tile.landmark]:[])])];
   const newlyComplete=LANDMARKS.filter(s=>s.quest&&save.acceptedQuests.includes(s.id)&&!save.completedQuests.includes(s.id)&&s.quest.targets.every(id=>visited.includes(id))).map(s=>s.id);
   const regions=tile.biome==='snow'&&save.regions.snowTrail.length<6&&!save.regions.snowTrail.includes(position)?{...save.regions,snowTrail:[...save.regions.snowTrail,position]}:save.regions;
