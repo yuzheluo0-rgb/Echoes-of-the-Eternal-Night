@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
-import {TILE_MAP,siteFootprint} from './worldData';
+import {MAIN_SITES,TILE_MAP,WORLD_SCALE,siteFootprint,tileId} from './worldData';
 import {landHeightAt} from './storybookLandscape';
 import type {WorldLightSource} from './WorldLighting';
 type AddPiece=(shape:string,color:string,x:number,y:number,z:number,sx:number,sy:number,sz:number,ry?:number,rx?:number,rz?:number)=>void;
@@ -22,13 +22,20 @@ export function buildWorldHarbor(scene:THREE.Scene,kit:Map<string,THREE.BufferGe
     for(const [material,geometries]of batches){const normalized=geometries.map(g=>{const n=g.index?g.toNonIndexed():g;for(const key of Object.keys(n.attributes))if(key!=='position'&&key!=='normal')n.deleteAttribute(key);if(n!==g)g.dispose();return n;});const mesh=new THREE.Mesh(mergeGeometries(normalized)!,material);mesh.castShadow=!material.userData.nightGlow;mesh.receiveShadow=true;mesh.matrixAutoUpdate=false;mesh.userData.harbor=true;group.add(mesh);normalized.forEach(g=>g.dispose());}
   };
   const tilePoint=(id:string)=>{const t=TILE_MAP.get(id)!;return{x:t.x,y:Math.max(.67,landHeightAt(t.x,t.z)+.05),z:t.z};};
-  const warehouse=tilePoint('1,9'),crane=tilePoint('-1,11'),tower=tilePoint('2,10'),cargo=tilePoint('2,9');
-  const ship={x:10.55,y:.36,z:16.53};
+  // Anchored to the harbor's own tile. The previous literals ('1,9', '-1,11', '2,10', '2,9' and a
+  // wreck at 10.55/16.53) were absolute coordinates from before the map was enlarged, so the whole
+  // yard — warehouse, crane, tower, cargo and the wreck — ended up in open water far inland.
+  const harbor=MAIN_SITES.find(s=>s.id==='ocean')!;
+  const cellId=(dq:number,dr:number)=>tileId(harbor.q+dq,harbor.r+dr);
+  const nearby=(dq:number,dr:number)=>tilePoint(cellId(dq,dr));
+  const warehouse=nearby(1,-1),crane=nearby(-1,1),tower=nearby(2,0),cargo=nearby(2,-1);
+  const berth=tilePoint(tileId(harbor.q,harbor.r));
+  const ship={x:berth.x+1.89*WORLD_SCALE,y:.36,z:berth.z+1.53*WORLD_SCALE};
   build('harbor-seawalls-and-ruined-warehouses',0,3,(add,beam)=>{
     for(const [i,t]of siteFootprint('ocean').entries()){
       if(!i)continue;const y=Math.max(.60,landHeightAt(t.x,t.z));
       // Piles frame the tidal slip. Water remains visible beneath the wreck.
-      if(!['0,11','1,11'].includes(t.id))add('hexrock','slate',t.x,y-.13,t.z,.94,.26,.94);
+      if(![cellId(0,1),cellId(1,1)].includes(t.id))add('hexrock','slate',t.x,y-.13,t.z,.94,.26,.94);
       for(const side of [-1,1]){add('cylinder','wood',t.x+side*.58,.42,t.z+.55,.07,.78,.07);add('cylinder','gold',t.x+side*.58,.68,t.z+.55,.078,.04,.078);}
       if(i%2)for(let n=0;n<3;n++)add('rock','moss',t.x-.56+n*.14,.21,t.z+.71,.10,.075,.11,n);
     }
@@ -42,10 +49,10 @@ export function buildWorldHarbor(scene:THREE.Scene,kit:Map<string,THREE.BufferGe
     // Customs gate, barrel yard and the broken western sea arm.
     add('rib','stone',cargo.x,cargo.y+.04,cargo.z,.55,1.02,.40);add('box','gold',cargo.x,cargo.y+1.08,cargo.z,.34,.11,.36);
     for(let n=0;n<5;n++){const x=cargo.x-.58+(n%3)*.37,z=cargo.z+.32+Math.floor(n/3)*.34;add('box','wood',x,cargo.y+.16,z,.30,.32,.30,.11*n);add('box','gold',x,cargo.y+.33,z,.032,.015,.32,.11*n);}
-    const arm=tilePoint('-2,12');for(let n=0;n<7;n++){const t=n/6,x=THREE.MathUtils.lerp(crane.x,arm.x,t),z=THREE.MathUtils.lerp(crane.z,arm.z,t);add('box','stone',x,.62,z,.88,.23,.30,-.52);if(n%2===0)add('box','slate',x-.31,.86,z,.24,.40,.22,-.52,0,.14);}
+    const arm=tilePoint(cellId(-2,2));for(let n=0;n<7;n++){const t=n/6,x=THREE.MathUtils.lerp(crane.x,arm.x,t),z=THREE.MathUtils.lerp(crane.z,arm.z,t);add('box','stone',x,.62,z,.88,.23,.30,-.52);if(n%2===0)add('box','slate',x-.31,.86,z,.24,.40,.22,-.52,0,.14);}
     add('torus','gold',arm.x,.87,arm.z,.30,.30,.30,Math.PI/2);add('box','gold',arm.x,.82,arm.z,.07,.70,.07);
     // The shipwright and his repair bench are sheltered beside the forecourt.
-    const artisan=tilePoint('0,10');add('box','wood',artisan.x-.55,.86,artisan.z-.39,.52,.44,.30);add('box','plank',artisan.x-.55,1.10,artisan.z-.39,.61,.07,.39);
+    const artisan=tilePoint(cellId(0,0));add('box','wood',artisan.x-.55,.86,artisan.z-.39,.52,.44,.30);add('box','plank',artisan.x-.55,1.10,artisan.z-.39,.61,.07,.39);
     add('cone','blue',artisan.x-.38,.92,artisan.z-.04,.14,.43,.13);add('sphere','cloth',artisan.x-.38,1.21,artisan.z-.04,.10,.12,.10);add('sphere','bone',artisan.x-.38,1.17,artisan.z+.025,.07,.09,.07);add('dune','dark',artisan.x-.38,1.31,artisan.z-.04,.13,.08,.13);
     add('box','slate',artisan.x-.68,1.20,artisan.z-.42,.22,.10,.12);add('cylinder','wood',artisan.x-.68,1.10,artisan.z-.42,.024,.21,.024);
     // The lighthouse shell stays recognizable throughout all three repairs.
@@ -56,7 +63,7 @@ export function buildWorldHarbor(scene:THREE.Scene,kit:Map<string,THREE.BufferGe
     add('cone','dark',tower.x,3.72,tower.z,.67,.47,.67);add('sphere','gold',tower.x,3.98,tower.z,.06,.11,.06);
   });
   const dock=(repaired:boolean)=>build(repaired?'rebuilt-docks-and-upright-crane':'broken-docks-and-leaning-crane',repaired?1:0,repaired?3:0,(add,beam)=>{
-    for(const id of ['1,10','0,11','1,11']){const p=tilePoint(id);for(let n=0;n<8;n++){if(!repaired&&[2,3,6].includes(n))continue;add('box',repaired?'plank':'wood',p.x,p.y-.02,p.z+(n-3.5)*.155,1.38,.085,.13,0,0,repaired?0:(n%3-1)*.10);}}
+    for(const id of [cellId(1,0),cellId(0,1),cellId(1,1)]){const p=tilePoint(id);for(let n=0;n<8;n++){if(!repaired&&[2,3,6].includes(n))continue;add('box',repaired?'plank':'wood',p.x,p.y-.02,p.z+(n-3.5)*.155,1.38,.085,.13,0,0,repaired?0:(n%3-1)*.10);}}
     const x=crane.x,z=crane.z,y=crane.y,lean=repaired?0:.51;
     add('cylinder','dark',x,y+.12,z,.40,.23,.40);beam('copper',[x,y+.20,z],[x+lean,y+2.35,z],.085);
     beam('wood',[x-.28,y+.25,z],[x+lean,y+2.0,z],.055);beam('copper',[x+lean-.37,y+2.18,z],[x+lean+1.07,y+2.47,z],.075);

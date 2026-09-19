@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BIOMES, DIRECTIONS, LANDMARKS, TILE_MAP, TILES, WORLD_SCALE, random, walkHeight, navigationTarget, siteFootprint, type Biome } from './worldData';
 import { tileSurface, cartoonWater, cloakGeometry, landHeightAt, pathClearance } from './storybookLandscape';
 import { WorldRenderBudget, type WorldQuality } from './WorldQuality';
@@ -22,6 +22,22 @@ export interface SceneCallbacks {
   onFollow?: (following: boolean) => void;
 }
 const WATER = new Set<Biome>(['ocean', 'blood', 'fog']);
+/** Canopy blob. A plain icosahedron reads as a faceted ball, so each vertex is pushed in or out by
+ *  a hash of its own position — the copies that share a corner move together, so the surface stays
+ *  closed — and welding first turns the per-face normals into smooth ones. */
+function foliageGeometry() {
+  const source = new THREE.IcosahedronGeometry(1, 1);
+  const position = source.getAttribute('position');
+  for (let n = 0; n < position.count; n++) {
+    const x = position.getX(n), y = position.getY(n), z = position.getZ(n);
+    const bump = .74 + random(x * 31.7 + y * 57.1 + z * 13.3) * .48;
+    position.setXYZ(n, x * bump, y * bump * .78, z * bump);
+  }
+  const welded = mergeVertices(source, 1e-4);
+  welded.computeVertexNormals();
+  source.dispose();
+  return welded;
+}
 function mountainGeometry() {
   const points: number[] = [], uvs: number[] = [], indices: number[] = [], colors: number[] = [];
   const levels = [0, .18, .4, .64, .83, 1], radii = [1, .85, .57, .37, .19, 0];
@@ -135,6 +151,8 @@ export class WorldScene {
     this.geometry.set('rock',new THREE.IcosahedronGeometry(1,0));
     this.geometry.set('pebble',new THREE.IcosahedronGeometry(1,0));
     this.geometry.set('crown',new THREE.IcosahedronGeometry(1,1));
+    this.geometry.set('foliage',foliageGeometry());
+    this.geometry.set('bloom',new THREE.SphereGeometry(1,6,4));
     this.geometry.set('sphere',new THREE.SphereGeometry(1,16,12));
     this.geometry.set('cone',new THREE.ConeGeometry(1,1,10));
     this.geometry.set('trunk',new THREE.CylinderGeometry(.6,1,1,6));
@@ -256,8 +274,12 @@ export class WorldScene {
       for(let n=0;n<3;n++){const s=scale*(.44-n*.09);this.instance('cone',this.mat(snowy?'snow-leaves':'pine-leaves',snowy?'#bac9c2':'#3b6050'),x,y+scale*(.55+n*.25),z,s,scale*.7,s,seed);}
     } else {
       const leaves=this.mat('round-leaves-'+seed%3,['#4a654f','#5c7557','#748364'][Math.abs(seed%3)]);
-      this.instance('crown',leaves,x,y+scale*.86,z,scale*.45,scale*.55,scale*.43,seed);
-      for(const side of [-1,1])this.instance('crown',leaves,x+scale*.23*side,y+scale*.65,z+.08,scale*.29,scale*.35,scale*.31,seed+side);
+      this.instance('foliage',leaves,x,y+scale*.88,z,scale*.48,scale*.44,scale*.46,seed);
+      // Lobes scattered rather than mirrored left and right, so the canopy outline is irregular.
+      for(let k=0;k<3;k++){
+        const a=random(seed*3.3+k*29.7)*Math.PI*2,rr=scale*.24+random(seed*11+k*7.1)*scale*.18;
+        this.instance('foliage',leaves,x+Math.sin(a)*rr,y+scale*(.58+random(seed+k*5)*.32),z+Math.cos(a)*rr,scale*.27+random(seed+k*3)*scale*.10,scale*.24,scale*.26,seed+k*13);
+      }
     }
   }
   private buildProps() {
@@ -268,31 +290,44 @@ export class WorldScene {
       if(biome==='forest'||biome==='grass') {
         const count=biome==='forest'?5:2;
         for(let n=0;n<count;n++){
-          const a=n*2.4+seed,r=.53+random(seed+n)*.24,tx=x+Math.sin(a)*r,tz=z+Math.cos(a)*r;
+          // Angle and radius both hashed per instance. Stepping the angle by a constant put every
+          // plant on one tidy ring, which is what made the ground look arranged rather than grown.
+          const a=random(seed*7.3+n*31.7)*Math.PI*2,r=.22+random(seed*13.1+n*57.3)*.66,tx=x+Math.sin(a)*r,tz=z+Math.cos(a)*r;
           if(pathClearance(tile,tx,tz)<.21||tile.landmark)continue;
           if(biome==='forest'||random(seed+n)>.56)this.tree(tx,landHeightAt(tx,tz),tz,.66+random(seed+n*4)*.34,seed+n);
-          else {this.instance('crown',this.mat('shrubs','#8eb469'),tx,landHeightAt(tx,tz)+.10,tz,.20,.15,.18);for(let k=0;k<3;k++)this.instance('sphere',this.mat('flowers','#f1d397'),tx+(k-1)*.06,landHeightAt(tx,tz)+.19,tz,.035,.04,.035);}
+          else {this.instance('foliage',this.mat('shrubs','#8eb469'),tx,landHeightAt(tx,tz)+.10,tz,.20,.15,.18);for(let k=0;k<3;k++)this.instance('bloom',this.mat('flowers','#f1d397'),tx+(random(tx*3.1+k*9.7)-.5)*.2,landHeightAt(tx,tz)+.17+random(tz*5.3+k)*.05,tz+(random(tz*7.1+k*4.3)-.5)*.2,.035,.04,.035);}
         }
       } else if(biome==='snow') {
         if(!tile.walkable) {this.instance('mountain',this.materials.get('mountains')!,x,landHeightAt(x,z)-.05,z,.85,1.3+random(seed)*1.0,.78,seed);}
         else if(!tile.landmark) {const tx=x-.55,tz=z-.24;this.tree(tx,landHeightAt(tx,tz),tz,.64,seed,true);}
       } else if(biome==='cliff') {
-        for(let n=0;n<2;n++){const a=seed+n*2.7,tx=x+Math.sin(a)*.57,tz=z+Math.cos(a)*.57;if(pathClearance(tile,tx,tz)<.24||tile.landmark)continue;for(let k=0;k<3;k++){const r=.34-k*.055;this.instance('hexrock',this.mat('cliff-layer-'+k,['#737f91','#96a3b0','#b5b9ae'][k]),tx,landHeightAt(tx,tz)+.13+k*.22,tz,r,.25,r,seed);}}
+        for(let n=0;n<2;n++){const a=random(seed*3.1+n*41.3)*Math.PI*2,r=.24+random(seed*5.7+n*23.9)*.62,tx=x+Math.sin(a)*r,tz=z+Math.cos(a)*r;if(pathClearance(tile,tx,tz)<.24||tile.landmark)continue;for(let k=0;k<3;k++){const r=.34-k*.055;this.instance('hexrock',this.mat('cliff-layer-'+k,['#737f91','#96a3b0','#b5b9ae'][k]),tx,landHeightAt(tx,tz)+.13+k*.22,tz,r,.25,r,seed);}}
       } else if(biome==='desert') {
         if(tile.landmark)continue;
-        for(let n=0;n<2;n++){const a=seed+n*2.6,tx=x+Math.sin(a)*.60,tz=z+Math.cos(a)*.60;if(pathClearance(tile,tx,tz)<.23)continue;this.instance('dune',this.mat('dune-'+n,n?'#e6b86c':'#efd196'),tx,landHeightAt(tx,tz)-.01,tz,.40,.20+random(seed)*.17,.3,a);}
+        for(let n=0;n<2;n++){const a=random(seed*3.7+n*29.1)*Math.PI*2,r=.25+random(seed*7.9+n*17.3)*.62,tx=x+Math.sin(a)*r,tz=z+Math.cos(a)*r;if(pathClearance(tile,tx,tz)<.23)continue;this.instance('dune',this.mat('dune-'+n,n?'#e6b86c':'#efd196'),tx,landHeightAt(tx,tz)-.01,tz,.40,.20+random(seed)*.17,.3,a);}
         if(random(seed)>.64){const tx=x-.55,tz=z+.4,y=landHeightAt(tx,tz);this.instance('cylinder',this.mat('cactus','#7a9c70'),tx,y+.25,tz,.06,.5,.06);this.instance('box',this.mat('cactus','#7a9c70'),tx+.09,y+.28,tz,.17,.07,.06);this.instance('cylinder',this.mat('cactus','#7a9c70'),tx+.16,y+.36,tz,.04,.2,.04);}
       } else if(biome==='swamp'&&!tile.landmark) {
         const tx=x+.55,tz=z-.30,y=landHeightAt(tx,tz);
         this.instance('cylinder',this.mat('bog-water','#456f6c'),tx,y+.01,tz,.32,.015,.28);
         for(let n=0;n<3;n++){const sx=tx-.25+n*.09;this.instance('cylinder',this.mat('reeds','#b0b27a'),sx,y+.2,tz-.18,.016,.4,.016);this.instance('cylinder',this.mat('reed-head','#716746'),sx,y+.40,tz-.18,.035,.13,.035);}
         if(random(seed)>.55)this.tree(x-.52,landHeightAt(x-.52,z),z,.70,seed);
-      } else if(biome==='volcano'&&!tile.landmark) {
+      } else if(biome==='volcano') {
+        if(tile.caldera){
+          // Basin floor: one flat molten plate per tile with darker crust slabs drifting on it, so
+          // the lake reads as a single pool rather than a ring of separate cones.
+          const lava=this.mat('lava','#f89a53'),rock=this.mat('volcanic-rock','#554d62');
+          this.instance('hexrock',lava,x,.46,z,1.02,.05,1.02,seed);
+          if(random(seed*5)>.62)this.instance('hexrock',rock,x+(random(seed*3)-.5)*.55,.49,z+(random(seed*7)-.5)*.55,.34+random(seed)*.34,.05,.30+random(seed*2)*.34,seed);
+          if(random(seed*11)>.78)this.instance('crystal',this.mat('ember','#ffb066'),x+(random(seed*13)-.5)*.5,.56,z+(random(seed*17)-.5)*.5,.05,.2,.05,seed);
+          continue;
+        }
+        if(tile.landmark)continue;
         const tx=x+.5,tz=z-.35,y=landHeightAt(tx,tz),lava=this.mat('lava','#f89a53');
-        if(random(seed)>.4){this.instance('crater',this.mat('volcanic-rock','#554d62'),tx,y+.32,tz,.62,.64,.62,seed);this.instance('cylinder',lava,tx,y+.58,tz,.19,.02,.19);}
+        // Vents are rare now: the caldera is the landmark, not a field of look-alike cones.
+        if(random(seed)>.82){this.instance('crater',this.mat('volcanic-rock','#554d62'),tx,y+.32,tz,.62,.64,.62,seed);this.instance('cylinder',lava,tx,y+.58,tz,.19,.02,.19);}
         for(let n=0;n<2;n++)this.instance('box',lava,x-.50+n*.2,landHeightAt(x-.5+n*.2,z+.4)+.022,z+.4,.22,.018,.045,seed+n);
       } else if(biome==='crystal'&&!tile.landmark) {
-        for(let n=0;n<3;n++){const a=seed+n*2.4,tx=x+Math.sin(a)*.61,tz=z+Math.cos(a)*.61;if(pathClearance(tile,tx,tz)<.24)continue;const h=.35+random(seed+n)*.4,m=this.mat('quartz-'+n,['#c8c2f0','#aaa4dc','#acd8df'][n]);this.instance('crystal',m,tx,landHeightAt(tx,tz)+h/2,tz,.16,h,.16,a);this.instance('cone',m,tx,landHeightAt(tx,tz)+h+.1,tz,.105,.22,.105,a);}
+        for(let n=0;n<3;n++){const a=random(seed*4.3+n*37.7)*Math.PI*2,r=.24+random(seed*9.1+n*19.7)*.62,tx=x+Math.sin(a)*r,tz=z+Math.cos(a)*r;if(pathClearance(tile,tx,tz)<.24)continue;const h=.35+random(seed+n)*.4,m=this.mat('quartz-'+n,['#c8c2f0','#aaa4dc','#acd8df'][n]);this.instance('crystal',m,tx,landHeightAt(tx,tz)+h/2,tz,.16,h,.16,a);this.instance('cone',m,tx,landHeightAt(tx,tz)+h+.1,tz,.105,.22,.105,a);}
       } else if(biome==='waste'&&!tile.landmark) {
         const tx=x+.53,tz=z-.31,y=landHeightAt(tx,tz);
         if(random(seed)>.58){for(let n=0;n<3;n++)this.instance('rib',this.mat('ivory','#e5d7af'),tx,y+.02,tz+n*.13,.27,.26,.24,seed);}

@@ -2,7 +2,7 @@ import { ENCOUNTERS, STORIES } from './worldStories.ts';
 import {REGION_ORDER,canEnterTile,freshRegions,isRegionOpen,parseRegions,type RegionProgress} from './worldRegions.ts';
 import {MinCostQueue} from './priorityQueue.ts';
 export type Biome = 'grass' | 'forest' | 'desert' | 'cliff' | 'snow' | 'ocean' | 'blood' | 'fog' | 'swamp' | 'volcano' | 'crystal' | 'waste';
-export interface Tile { id: string; q: number; r: number; x: number; z: number; biome: Biome; height: number; walkable: boolean; bridge: boolean; seed: number; landmark?: string; structure?: string; transit?:Biome }
+export interface Tile { id: string; q: number; r: number; x: number; z: number; biome: Biome; height: number; walkable: boolean; bridge: boolean; seed: number; landmark?: string; structure?: string; transit?:Biome; caldera?:boolean }
 export interface Landmark { id: string; q: number; r: number; biome: Biome; name: string; subtitle: string; lore: string; levels: string[]; difficulty: string; kind?: 'main' | 'hidden' | 'side' | 'event'; quest?: { title: string; npc: string; reward: string; targets: string[] } }
 export const BIOMES: Record<Biome, { name: string; color: string; description: string }> = {
   grass: { name: '草原', color: '#b9c780', description: '风掠过旧王国的草甸，篝火尚有余温。' },
@@ -37,6 +37,27 @@ export const START_ID = '0,1';
 export const tileId = (q: number, r: number) => `${q},${r}`;
 export const hexDistance = (a: { q: number; r: number }, b: { q: number; r: number }) => (Math.abs(a.q - b.q) + Math.abs(a.r - b.r) + Math.abs(a.q + a.r - b.q - b.r)) / 2;
 export function random(seed: number) { const n = Math.sin(seed * 127.1 + 311.7) * 43758.5453; return n - Math.floor(n); }
+/** Bilinear value noise over world space. Smoothstep interpolation keeps it free of the grid
+ *  creases a plain lerp would leave across every cell boundary. */
+function valueNoise(x: number, z: number, salt: number) {
+  const xi = Math.floor(x), zi = Math.floor(z), u = x - xi, v = z - zi;
+  const su = u * u * (3 - 2 * u), sv = v * v * (3 - 2 * v);
+  const at = (i: number, j: number) => random(i * 127.1 + j * 311.7 + salt * 74.7);
+  return (at(xi,zi) * (1 - su) + at(xi+1,zi) * su) * (1 - sv) + (at(xi,zi+1) * (1 - su) + at(xi+1,zi+1) * su) * sv;
+}
+/** How far each biome is allowed to rise and fall. Without this every tile of a biome sits at the
+ *  single elevation its table entry names, so the continent reads as flat coloured plates.
+ *  Wetlands stay nearly level, highlands get real relief. */
+const RELIEF: Record<Biome, number> = { grass: .42, forest: .52, desert: .38, cliff: 1.30, snow: 1.05, ocean: 0, blood: 0, fog: 0, swamp: .16, volcano: .92, crystal: .60, waste: .76 };
+/** Three octaves, largest features about five world units across — a couple of hexes. */
+function terrainRelief(x: number, z: number, salt: number) {
+  let sum = 0, total = 0, amplitude = 1, frequency = .19;
+  for (let octave = 0; octave < 3; octave++) {
+    sum += amplitude * valueNoise(x * frequency, z * frequency, salt + octave * 131);
+    total += amplitude; amplitude *= .5; frequency *= 2.07;
+  }
+  return sum / total - .5;
+}
 export const WORLD_SEED = 7319;
 export const isWater = (biome: Biome) => biome === 'ocean' || biome === 'blood' || biome === 'fog';
 export const SITE_SIZE:Record<string,number>={camp:4,forest:4,ocean:9,desert:5,blood:4,snow:5,cliff:4,fog:3,swamp:3,volcano:5,crystal:4,waste:5};
@@ -80,7 +101,8 @@ export function createWorld(worldSeed = WORLD_SEED): Tile[] {
     const landmark = MAIN_SITES.find(l => l.q === q && l.r === r);
     if (landmark) biome = landmark.biome;
     const liquid = isWater(biome);
-    tiles.push({ id: tileId(q,r), q, r, x, z, biome, seed, height: heights[biome] + (liquid ? 0 : random(seed) * .08), walkable: !liquid && (biome !== 'snow' || !!landmark || random(seed + 4) > .66), bridge: false, landmark: landmark?.id });
+    const relief = liquid ? 0 : terrainRelief(x, z, seed) * RELIEF[biome] + random(seed) * .04;
+    tiles.push({ id: tileId(q,r), q, r, x, z, biome, seed, height: heights[biome] + relief, walkable: !liquid && (biome !== 'snow' || !!landmark || random(seed + 4) > .66), bridge: false, landmark: landmark?.id });
   }
   const map = new Map(tiles.map(t => [t.id, t]));
   // `walkable` is the only field generation mutates, so a version counter lets the reachability
@@ -183,6 +205,17 @@ export function createWorld(worldSeed = WORLD_SEED): Tile[] {
       }
       if(!found)throw new Error('Unreachable chapter location: '+region+' / '+destination.id);
     }
+  }
+  // The volcano island carries one signature caldera instead of a scatter of small cones: a flat
+  // lava basin two rings wide, walled by a raised rock rim. Structure cells are skipped so the
+  // forge keeps its own plinth and reads as a platform standing in the lava.
+  const caldera=MAIN_SITES.find(s=>s.id==='volcano')!;
+  for(const tile of tiles){
+    if(tile.structure||tile.biome!=='volcano')continue;
+    const ring=hexDistance(tile,caldera);
+    if(ring<=2){tile.caldera=true;tile.height=.40;}
+    else if(ring===3)tile.height+=.95;
+    else if(ring===4)tile.height+=.35;
   }
   return tiles;
 }

@@ -31,17 +31,45 @@ export function pathClearance(tile: Tile, x: number, z: number) {
   return distance;
 }
 export function tileSurface(tile: Tile, water = false) {
-  const positions: number[] = [], colors: number[] = [], indices: number[] = [];
+  const positions: number[] = [], colors: number[] = [], normals: number[] = [], indices: number[] = [];
   const base = new THREE.Color(PALETTE[tile.biome]);
+  const shade = .97 + Math.sin(tile.seed)*.035;
   const vertex = (x: number,z: number) => {
     positions.push(x,water ? .125 : landHeightAt(x,z),z);
-    const shade = .97 + Math.sin(tile.seed)*.035;
     colors.push(base.r*shade,base.g*shade,base.b*shade);
+    if (water) { normals.push(0,1,0); return positions.length/3-1; }
+    // Slope of the height field. Each sector owns its own vertices, so computeVertexNormals would
+    // average only the faces of one sector and leave a visible crease down every seam; deriving the
+    // normal from the underlying field instead makes the duplicates agree exactly.
+    const e = .3;
+    const gx = landHeightAt(x-e,z) - landHeightAt(x+e,z), gz = landHeightAt(x,z-e) - landHeightAt(x,z+e);
+    const len = Math.hypot(gx,2*e,gz);
+    normals.push(gx/len,2*e/len,gz/len);
+    return positions.length/3-1;
   };
-  vertex(tile.x,tile.z);
-  for (const radius of [.52,1]) for (let n=0;n<6;n++) vertex(tile.x+Math.sin(n*Math.PI/3)*radius,tile.z+Math.cos(n*Math.PI/3)*radius);
-  for (let n=0;n<6;n++) { const a=1+n,b=1+(n+1)%6,c=a+6,d=b+6; indices.push(0,a,b,a,c,b,b,c,d); }
-  const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3)); geometry.setAttribute('color',new THREE.Float32BufferAttribute(colors,3)); geometry.setIndex(indices); geometry.computeVertexNormals();
+  // Sampling only the centre and the rim averages every hill away between them, which is why the
+  // continent used to read as flat plates. Water is flat, so six triangles per hex are exact there.
+  const steps = water ? 1 : 3;
+  for (let sector = 0; sector < 6; sector++) {
+    const a0 = sector*Math.PI/3, a1 = (sector+1)*Math.PI/3;
+    const grid: number[][] = [];
+    for (let i = 0; i <= steps; i++) {
+      grid.push([]);
+      for (let j = 0; j <= i; j++) {
+        const u = (i-j)/steps, w = j/steps;
+        grid[i].push(vertex(tile.x + Math.sin(a0)*u + Math.sin(a1)*w, tile.z + Math.cos(a0)*u + Math.cos(a1)*w));
+      }
+    }
+    for (let i = 0; i < steps; i++) for (let j = 0; j <= i; j++) {
+      indices.push(grid[i][j],grid[i+1][j],grid[i+1][j+1]);
+      if (j < i) indices.push(grid[i][j],grid[i+1][j+1],grid[i][j+1]);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+  geometry.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
+  geometry.setAttribute('normal',new THREE.Float32BufferAttribute(normals,3));
+  geometry.setIndex(indices);
   return geometry;
 }
 export function cartoonWater(color: string, opacity = 1) {

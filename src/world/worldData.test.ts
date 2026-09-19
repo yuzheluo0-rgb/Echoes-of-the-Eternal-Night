@@ -9,7 +9,7 @@ const openAll=(extra:Record<string,unknown>={})=>parseSave(JSON.stringify({regio
  *  bridge carve moved, every docs/previews screenshot is stale, and old saves may point at
  *  different terrain. Structural tests cannot tell "identical" from "different but still valid".
  *  Regenerated 2026-09-19 for the WORLD_GROWTH = sqrt(3) continent (776 -> 2315 tiles). */
-const LAYOUT_DIGEST='sha256:5bd6ebea38ebfe40a4aac3cf3f3907fd413182ae6960d6848057c932a257eb12';
+const LAYOUT_DIGEST='sha256:aea17b32691649eedf5041de22ab20e6efcffc5e7a0ec5daf6de318c9b075a1b';
 
 test('landmarks keep their distance so the continent does not feel cramped', () => {
   // The complaint this guards against: sites packed shoulder to shoulder with no wilderness
@@ -20,7 +20,7 @@ test('landmarks keep their distance so the continent does not feel cramped', () 
 });
 
 test('the generated layout matches the frozen digest', () => {
-  const canonical=TILES.map(t=>[t.id,t.biome,t.walkable?1:0,t.bridge?1:0,t.transit??'',t.structure??'',t.landmark??'',t.height.toFixed(6)].join('/')).join('\n');
+  const canonical=TILES.map(t=>[t.id,t.biome,t.walkable?1:0,t.bridge?1:0,t.transit??'',t.structure??'',t.landmark??'',t.caldera?1:0,t.height.toFixed(6)].join('/')).join('\n');
   assert.equal('sha256:'+createHash('sha256').update(canonical).digest('hex'),LAYOUT_DIGEST);
 });
 
