@@ -33,11 +33,15 @@ export function setAudioVolume(volume: number) {
   level = Math.max(0, Math.min(1, volume));
   if (context && output) output.gain.setTargetAtTime(level, context.currentTime, .05);
 }
-export function setWorldAudio(enabled:boolean,biome:Biome='grass'){
+export function setWorldAudio(enabled:boolean,biome:Biome='grass',track?:string){
   try{
     if(!enabled){worldSound?.stop();worldSound=undefined;return;}
-    const ctx=audio();void ctx.resume();if(!worldSound)worldSound=new WorldSoundscape(ctx,output,reverb,noiseBuffer);worldSound.setBiome(biome);
+    const ctx=audio();void ctx.resume();if(!worldSound)worldSound=new WorldSoundscape(ctx,output,reverb,noiseBuffer,track);worldSound.setBiome(biome);if(track)worldSound.setScore(track);
   }catch{/* Sound restrictions never block exploration. */}
+}
+/** Switching tracks is a no-op while the world is silent; the choice is applied when sound returns. */
+export function setWorldTrack(track:string){
+  try{worldSound?.setScore(track);}catch{/* A missing track never blocks exploration. */}
 }
 function tone(ctx: AudioContext, frequency: number, endFrequency: number, duration: number, amplitude: number, delay = 0, type: OscillatorType = 'sine') {
   const osc = ctx.createOscillator(); const envelope = ctx.createGain(); const now = ctx.currentTime + delay;

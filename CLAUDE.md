@@ -7,7 +7,7 @@ React 19 + TypeScript + Vite 7 + Three.js 的卡牌肉鸽游戏。当前入口�
 
 ```sh
 npm run dev      # http://127.0.0.1:5173/#/world
-npm test         # 53 项，node --experimental-strip-types --test
+npm test         # 56 项，node --experimental-strip-types --test
 npm run build    # tsc -b && vite build
 ```
 
@@ -60,6 +60,14 @@ npm run build    # tsc -b && vite build
   （摆放层 import 了 worldData，会成环）。
   **这个坑已经真踩过**：一开始渲染层叫 `WorldFauna.ts`，与 `worldFauna.ts` 只差大小写，
   Write 时在 Windows 上**直接静默覆盖**了数据文件，代码整个消失。别再用这种名字。
+- **配乐是谱面数据，不是音频文件**。`worldScores.ts` 是纯数据（和弦、旋律、调式、音色），
+  `WorldSoundscape.ts` 现场合成。加分轨只要往 `SCORES` 里加一首，右上角面板自动列出来。
+  注意 `worldScores.ts` 的 `mode` 字段是调式白名单，`soundscape.test.ts` 拿它校验每个音——
+  写错一个音会直接红，这比事后用耳朵发现强。
+- **纯数据必须和合成器分文件**。`WorldSoundscape.ts` 的构造函数用了 TS 参数属性
+  （`constructor(private ctx: AudioContext, ...)`），而 `node --experimental-strip-types`
+  是 strip-only，**加载这种语法直接抛错**。所以谱面数据拆在 `worldScores.ts` 里，
+  测试只 import 那个。和 `faunaSpecies.ts` / `worldFauna.ts` 的拆法同一个理由。
 - **`WorldLocation.tsx` / `WorldJournal.tsx` 用 `ENCOUNTERS[site.biome]` 取奇遇内容**，
   加第二个奇遇就会撞车，需改为按地点 id 取。
 - **熔岩池用 `tile.caldera` 标记**，地形塑形与渲染共用该判据。
@@ -140,6 +148,12 @@ npm run build    # tsc -b && vite build
   `WorldScene` 在 `reduced` 时根本不推进 `elapsed`，整条时间轴是冻的。
 - `.work/fauna-programs.cjs` —— 打印着色器程序数与每物种的 fauna uniform，
   用来验证上面那条"29 个物种共用一个程序"的坑没有复发。
+- `.work/world-audio.cjs <曲目id> [秒数]` —— **没法"听"的时候用它**：把 AnalyserNode 接到
+  主输出上，平均若干帧的频谱，列出峰值并判断每个峰是否在谱面上。改配乐后跑一次，
+  比对 `matched N/N`。目前两首都是 22/22，音分误差基本在 ±5 以内。
+- `.work/world-score-shot.cjs <tag> [曲目] [宽] [高]` —— 右上角声音面板关闭/展开的截图。
+  注意脚本是**在出错时也 process.exit** 的：只写 `process.exitCode` 的话，浏览器没关，
+  进程会一直挂着不返回。
 
 浏览器加载有 WebGL，无头模式可正常渲染。**改完视觉务必自己截图核对**，
 不要凭推断下结论——这个项目里出现过"看到河口变宽就以为已通海"的误判。

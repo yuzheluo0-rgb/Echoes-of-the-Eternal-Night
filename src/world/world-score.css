@@ -1,0 +1,29 @@
+/* The sound button and its panel. Anchored to the right edge of the top rail, so it opens inward
+   over the map instead of off the side of the screen. */
+.world-score{position:relative;display:flex;}
+.score-popover{position:absolute;right:0;top:46px;z-index:20;width:274px;padding:16px 16px 14px;border:1px solid #c1bc8c55;border-radius:14px;background:linear-gradient(140deg,#193d47fa,#122b3bfc);box-shadow:0 16px 48px #061b2c66;color:#dce1d0;text-align:left;animation:world-reveal .18s ease both;}
+.score-heading{display:flex;justify-content:space-between;align-items:center;font-family:'Noto Serif SC',serif;font-size:16px;letter-spacing:2px;color:#e7d5a8;}
+.score-heading button{display:grid;place-items:center;width:24px;height:24px;border:0;background:none;color:#b5c4b6;cursor:pointer;}
+.score-heading button:hover{color:#f4d69b;}
+.score-popover>p{font-size:10px;line-height:1.8;color:#9dbcb4;margin:9px 0 13px;}
+.score-power{display:flex;align-items:center;gap:9px;width:100%;min-height:38px;padding:0 11px;border:1px solid #d1c38f35;border-radius:9px;background:#b2c3a00a;color:#d8ceab;cursor:pointer;text-align:left;}
+.score-power span{font-size:11px;letter-spacing:1px;}
+.score-power small{margin-left:auto;font-size:9px;color:#8fb0a8;}
+.score-power[aria-pressed=true]{border-color:#e7c98277;background:#dac18721;color:#f6d794;}
+.score-power[aria-pressed=true] small{color:#c2a86f;}
+.score-label{display:block;font-size:9px;color:#a9bfb3;letter-spacing:2px;margin:15px 0 8px;}
+.score-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:1px solid #b4c7a628;border-radius:9px;background:#c6c19208;color:#d5c79f;cursor:pointer;text-align:left;}
+.score-item+.score-item{margin-top:6px;}
+.score-item>svg:first-child{flex-shrink:0;color:#bda979;}
+.score-item:hover:not(:disabled),.score-item:focus-visible{background:#d6bd8a25;border-color:#d0be8666;outline:none;}
+.score-item[aria-pressed=true]{border-color:#e7c98277;background:#dac1871f;color:#f6d794;}
+.score-item:disabled{opacity:.5;cursor:default;}
+.score-copy{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.score-copy strong{font-family:'Noto Serif SC',serif;font-weight:400;font-size:13px;letter-spacing:1.5px;}
+.score-copy small{font-size:9px;line-height:1.5;color:#8fb0a8;}
+.score-item[aria-pressed=true] .score-copy small{color:#cbab6f;}
+.score-check{margin-left:auto;flex-shrink:0;color:#e7c982;}
+.score-popover .score-footnote{font-size:9px;line-height:1.7;color:#7ea19f;margin:13px 0 0;}
+@media(max-width:850px){.score-popover{width:262px;padding:14px;}}
+@media(max-width:520px){.score-popover{width:min(262px,calc(100vw - 34px));top:42px;}}
+@media(max-height:560px){.score-popover{top:40px;padding:12px;}.score-popover>p{display:none;}}
