@@ -1,0 +1,712 @@
+/* 第一章战斗 demo. Its own world, like `gallery.css`: nothing here is reachable from the map's
+   stylesheet, and nothing in the map can reach in. Every class is prefixed `bd-` so it cannot
+   collide with the card faces it borrows (`CardFace` brings `cards.css` with it).
+
+   The screen is one viewport tall and never scrolls: the fight is the whole frame, the hand is the
+   floor of it. Only the two rows that can grow — enemies and cards — are allowed to scroll, and
+   only sideways. Under 900px the whole thing unpins and becomes an ordinary scrolling page. */
+
+.bd {
+  --ink: #d9d3c0;
+  --dim: #8b9a94;
+  --gold: #d4bd87;
+  --gold-bright: #f0dcae;
+  --line: rgba(180, 170, 130, .16);
+  --edge: rgba(190, 175, 130, .32);
+  --hp: linear-gradient(180deg, #e8cf95, #c08a3e 58%, #7c5120);
+  --hp-enemy: linear-gradient(180deg, #e79a8e, #b8433a 58%, #6d1f1a);
+  position: relative;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 50% -14%, #1d2a30 0%, #121a1e 46%, #0a0f12 100%);
+  color: var(--ink);
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+}
+/* The floor of the world, so the enemies stand on something rather than float in a gradient. */
+.bd::after {
+  content: '';
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: 46%;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 116%, rgba(224, 180, 95, .16), transparent 62%),
+    linear-gradient(0deg, rgba(6, 10, 13, .72), transparent);
+}
+.bd h1, .bd h2, .bd h3 { font-family: 'Noto Serif SC', 'Songti SC', 'STZhongsong', serif; font-weight: 400; margin: 0; }
+.bd button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+.bd p { margin: 0; }
+
+/* ------------------------------------------------------------------ header */
+
+.bd-top {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: flex-end;
+  gap: 26px;
+  flex-wrap: wrap;
+  padding: 16px 24px 14px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(8, 13, 16, .72), rgba(8, 13, 16, .18));
+}
+.bd-brand { min-width: 0; flex: 1; }
+.bd-kicker { font-size: 10px; letter-spacing: 3.4px; color: #b8a678; margin-bottom: 7px; }
+.bd-title { font-size: 27px; letter-spacing: 6px; color: #ece3c9; }
+.bd-title small { font-family: 'Segoe UI', sans-serif; font-size: 9px; letter-spacing: 3.2px; color: var(--dim); margin-left: 14px; }
+.bd-sub { font-size: 12.5px; line-height: 1.7; color: #93a49c; margin-top: 7px; }
+.bd-facts { display: flex; gap: 22px; }
+.bd-fact { display: flex; flex-direction: column; gap: 4px; }
+.bd-fact i { font-style: normal; font-size: 10px; letter-spacing: 2.4px; color: var(--dim); }
+.bd-fact b { font-family: Georgia, 'Songti SC', serif; font-weight: 400; font-size: 22px; color: #e6d9b6; letter-spacing: 1px; }
+.bd-tools { display: flex; gap: 7px; }
+
+.bd-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 15px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-size: 12.5px;
+  letter-spacing: 1.6px;
+  color: #a9b6ae;
+  transition: color .2s, border-color .2s, background .2s;
+}
+.bd-btn:hover { color: #f4e8ca; border-color: rgba(212, 189, 135, .5); }
+.bd-sound.on { color: #d9c48c; border-color: rgba(212, 189, 135, .45); background: rgba(212, 189, 135, .08); }
+.bd-end-turn {
+  width: 100%;
+  justify-content: space-between;
+  padding: 11px 14px;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 15px;
+  letter-spacing: 3px;
+  color: #f4e8ca;
+  border-color: rgba(212, 189, 135, .55);
+  background: linear-gradient(115deg, rgba(107, 96, 70, .5), rgba(143, 123, 82, .5));
+}
+.bd-end-turn:hover { background: linear-gradient(115deg, rgba(130, 116, 77, .68), rgba(165, 145, 101, .68)); }
+.bd-end-turn.off { opacity: .4; }
+
+/* ------------------------------------------------------------------- stage */
+
+.bd-stage {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr) 312px;
+  gap: 16px;
+  padding: 16px 24px 14px;
+}
+.bd-player-panel, .bd-log, .bd-field {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: linear-gradient(140deg, rgba(26, 39, 44, .78), rgba(14, 21, 26, .82));
+}
+
+/* ------------------------------------------------------- player (the left) */
+
+.bd-player-panel { display: flex; flex-direction: column; gap: 13px; padding: 16px 15px; overflow: hidden; }
+.bd-panel-head { border-bottom: 1px solid var(--line); padding-bottom: 11px; }
+.bd-panel-kicker { font-size: 9px; letter-spacing: 2.8px; color: #b8a678; margin-bottom: 6px; }
+.bd-panel-head h2 { font-size: 22px; letter-spacing: 5px; color: #ece1c4; }
+.bd-panel-note { font-size: 12px; line-height: 1.85; color: #7f9189; border-top: 1px solid var(--line); padding-top: 11px; margin-top: auto; }
+
+.bd-energy { display: flex; align-items: center; gap: 10px; }
+.bd-energy-label { font-size: 10px; letter-spacing: 2.4px; color: var(--dim); }
+.bd-pips { display: flex; gap: 7px; flex: 1; }
+.bd-pip {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid rgba(190, 175, 130, .3);
+  background: rgba(255, 255, 255, .03);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .7);
+  transition: background .25s, box-shadow .25s, border-color .25s;
+}
+.bd-pip.on {
+  border-color: rgba(240, 220, 174, .7);
+  background: radial-gradient(circle at 36% 30%, #fff3d2, #d8a24f 68%, #8a5f22);
+  box-shadow: 0 0 11px rgba(224, 180, 95, .6), inset 0 1px 1px rgba(255, 255, 255, .5);
+}
+.bd-energy-num { font-family: Georgia, serif; font-size: 22px; font-weight: 400; color: #e6d9b6; }
+.bd-energy-num i { font-style: normal; font-size: 13px; color: var(--dim); }
+
+.bd-pills { display: flex; flex-wrap: wrap; gap: 5px; }
+.bd-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid;
+  font-size: 12.5px;
+  letter-spacing: .6px;
+  cursor: help;
+}
+.bd-pill b { font-family: Georgia, serif; font-weight: 400; font-size: 14px; }
+.bd-pill.good { color: #e8cf94; border-color: rgba(220, 190, 120, .5); background: rgba(200, 160, 80, .13); }
+.bd-pill.bad { color: #e3948c; border-color: rgba(220, 110, 100, .45); background: rgba(180, 60, 50, .14); }
+.bd-pill.zero { opacity: .3; }
+.bd-pill-empty { font-size: 12px; color: #6d7d77; letter-spacing: 1px; }
+.bd-powers { display: flex; flex-wrap: wrap; gap: 5px; }
+.bd-powers span {
+  display: inline-flex; gap: 5px; padding: 4px 9px; border-radius: 2px; font-size: 12px;
+  color: #cfe0d8; border: 1px solid rgba(159, 192, 180, .32); background: rgba(159, 192, 180, .1);
+}
+.bd-powers b { font-family: Georgia, serif; font-weight: 400; color: #eaf3ee; }
+
+.bd-piles { display: flex; gap: 6px; }
+.bd-pile {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 4px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, .022);
+  transition: border-color .2s, background .2s, color .2s;
+}
+.bd-pile span { font-size: 10.5px; letter-spacing: 1.4px; color: var(--dim); }
+.bd-pile b { font-family: Georgia, serif; font-weight: 400; font-size: 20px; color: #e6d9b6; }
+.bd-pile:not(:disabled):hover { border-color: rgba(212, 189, 135, .5); background: rgba(212, 189, 135, .07); }
+.bd-pile:disabled { opacity: .35; }
+
+/* ---------------------------------------------------------- health and block */
+
+.bd-bar { position: relative; margin-top: 9px; }
+.bd-bar-track {
+  position: relative;
+  height: 20px;
+  border: 1px solid rgba(190, 175, 130, .28);
+  border-radius: 2px;
+  background: rgba(4, 8, 11, .78);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, .85), 0 1px 0 rgba(255, 255, 255, .04);
+  overflow: hidden;
+}
+/* The ghost is the old value, and it leaves slowly: a hit flashes white and drains a beat later. */
+.bd-bar-ghost {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: linear-gradient(90deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .72));
+  transition: width .95s cubic-bezier(.2, .8, .2, 1) .3s;
+}
+.bd-bar-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: var(--hp);
+  box-shadow: 0 0 12px rgba(224, 180, 95, .3), inset 0 1px 0 rgba(255, 255, 255, .35);
+  transition: width .26s cubic-bezier(.2, .8, .2, 1);
+}
+.bd-bar-enemy .bd-bar-fill { background: var(--hp-enemy); box-shadow: 0 0 12px rgba(200, 70, 55, .32), inset 0 1px 0 rgba(255, 255, 255, .3); }
+.bd-bar-shine {
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .22), transparent);
+  pointer-events: none;
+}
+.bd-bar-num {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: Georgia, 'Songti SC', serif;
+  font-size: 20px;
+  letter-spacing: .5px;
+  color: #fff8e6;
+  text-shadow: 0 1px 2px #000, 0 0 9px rgba(0, 0, 0, .95);
+  pointer-events: none;
+}
+.bd-bar-num i { font-style: normal; font-size: .62em; opacity: .7; margin: 0 2px; }
+/* 格挡 is a shield, not a second bar: it never mixes with health. */
+.bd-block {
+  position: absolute;
+  left: -13px;
+  top: -9px;
+  width: 32px;
+  height: 37px;
+  display: grid;
+  place-items: center;
+  padding-bottom: 5px;
+  font-family: Georgia, serif;
+  font-size: 16px;
+  color: #0c1519;
+  background: linear-gradient(180deg, #dff0f6, #8fb6c6 62%, #4d7484);
+  clip-path: polygon(50% 0, 100% 24%, 100% 72%, 50% 100%, 0 72%, 0 24%);
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, .6));
+  animation: bd-pop .34s cubic-bezier(.2, 1.5, .4, 1) both;
+  z-index: 3;
+}
+@keyframes bd-pop {
+  from { transform: scale(.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* ---------------------------------------------------------- enemies (centre) */
+
+.bd-field { display: flex; flex-direction: column; border: none; background: none; min-height: 0; }
+.bd-enemy-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 22px;
+  padding: 4px 8px 10px;
+  overflow: auto;
+}
+.bd-enemy {
+  position: relative;
+  flex: 0 0 auto;
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  transition: opacity .9s ease, filter .9s ease;
+}
+.bd-enemy.is-dead { opacity: .3; filter: grayscale(1); }
+
+.bd-intents { min-height: 34px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; padding-bottom: 7px; }
+.bd-intent {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid;
+  border-radius: 2px;
+  font-size: 12.5px;
+  letter-spacing: .6px;
+  white-space: nowrap;
+}
+.bd-intent.atk { color: #f0b3a6; border-color: rgba(220, 110, 95, .55); background: rgba(150, 45, 35, .28); }
+.bd-intent.def { color: #bcd7e2; border-color: rgba(140, 190, 210, .45); background: rgba(50, 100, 125, .24); }
+.bd-intent.hex { color: #dcc0e6; border-color: rgba(180, 140, 200, .42); background: rgba(90, 55, 110, .24); }
+.bd-intent.junk { color: #cfc4a4; border-color: rgba(180, 170, 130, .38); background: rgba(90, 85, 65, .26); }
+.bd-intent.spec { color: #e8d69c; border-color: rgba(212, 189, 135, .48); background: rgba(140, 115, 60, .26); }
+.bd-intent-idle { color: #6d7d77; border-color: var(--line); background: none; }
+
+.bd-enemy-frame { display: block; padding: 0; border-radius: 999px 999px 12px 12px; transition: transform .3s cubic-bezier(.16, 1, .3, 1); }
+.bd-enemy-frame:not(:disabled):hover { transform: translateY(-4px); }
+.bd-enemy-frame:disabled { cursor: default; }
+/* An arch, not a window: the frame is cut like a chapel doorway and the painting fills it whole. */
+.bd-enemy-art {
+  position: relative;
+  display: block;
+  height: clamp(140px, 25vh, 248px);
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  border-radius: 50% 50% 12px 12px / 40% 40% 12px 12px;
+  background: #0b0f13;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .6), inset 0 0 0 1px rgba(255, 255, 255, .05);
+  transition: border-color .3s, box-shadow .3s;
+}
+.bd-enemy:hover .bd-enemy-art { border-color: rgba(212, 189, 135, .6); box-shadow: 0 14px 34px rgba(0, 0, 0, .66), 0 0 26px rgba(196, 160, 90, .16); }
+.bd-enemy.on .bd-enemy-art { border-color: var(--gold); box-shadow: 0 0 0 1px rgba(212, 189, 135, .7), 0 0 30px rgba(212, 189, 135, .3), 0 14px 34px rgba(0, 0, 0, .6); }
+.bd-enemy-img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 18%; display: block; }
+/* Painting, not cut-out: the vignette is what keeps the photograph inside its frame. */
+.bd-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 34%, transparent 32%, rgba(4, 7, 10, .5) 74%, rgba(4, 7, 10, .92) 100%),
+    linear-gradient(0deg, rgba(4, 7, 10, .8), transparent 42%);
+}
+.bd-target-mark {
+  position: absolute;
+  left: 50%;
+  top: 9px;
+  width: 13px;
+  height: 13px;
+  margin-left: -6px;
+  rotate: 45deg;
+  border: 1px solid var(--gold-bright);
+  background: rgba(212, 189, 135, .28);
+  box-shadow: 0 0 12px rgba(240, 220, 174, .8);
+  opacity: 0;
+  transition: opacity .25s;
+}
+.bd-enemy.on .bd-target-mark { opacity: 1; animation: bd-pulse 1.9s ease-in-out infinite; }
+@keyframes bd-pulse { 0%, 100% { transform: none; } 50% { transform: scale(1.28); } }
+
+.bd-enemy-foot { padding-top: 10px; }
+.bd-enemy-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.bd-enemy-name { font-size: 17.5px; letter-spacing: 3px; text-shadow: 0 1px 6px rgba(0, 0, 0, .8); }
+.bd-rank { font-size: 10px; letter-spacing: 1.8px; color: #7f9189; }
+.bd-enemy-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.bd-enemy-pills:empty { display: none; }
+.bd-enemy-note { font-size: 11.5px; line-height: 1.6; color: #7d8f88; margin-top: 7px; }
+
+/* -------------------------------------------------------------- hand (floor) */
+
+/* The floor of the screen, and the only row allowed to be wide: five 236px cards do not fit in the
+   middle column, and a hand you have to scroll to read is not a hand. */
+.bd-hand-row {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 20px 34px 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-shrink: 0;
+}
+@supports (justify-content: safe center) {
+  .bd-hand-row { justify-content: safe center; }
+}
+.bd-hand-card { display: block; padding: 0; flex: 0 0 auto; position: relative; transition: margin .3s; }
+.bd-hand-card + .bd-hand-card { margin-left: -30px; }
+.bd-hand-card:hover, .bd-hand-card.on { z-index: 6; }
+.bd-hand-card.on .cq .cq-inner { box-shadow: 0 0 0 2px rgba(240, 220, 174, .7), 0 0 34px rgba(212, 189, 135, .4), 0 10px 26px rgba(0, 0, 0, .55); }
+.bd-hand-card.off { filter: grayscale(.72) brightness(.62); }
+.bd-hand-card.off:hover { filter: grayscale(.4) brightness(.78); }
+.bd-hand-empty { color: #6d7d77; font-size: 12.5px; letter-spacing: 2px; padding: 130px 0; }
+
+/* 灰烬 and 未熄的誓言 are not in the library, so they get a plain face rather than no face. */
+.bd-junk {
+  position: relative;
+  width: 236px;
+  height: 344px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 22px;
+  text-align: center;
+  border: 1px solid #453f33;
+  border-radius: 10px;
+  background: repeating-linear-gradient(118deg, rgba(255, 255, 255, .022) 0 2px, transparent 2px 5px), linear-gradient(160deg, #23282a, #15191b 70%);
+  box-shadow: inset 0 0 34px rgba(0, 0, 0, .7);
+}
+.bd-junk h3 { font-size: 19px; letter-spacing: 4px; color: #cfc7ae; }
+.bd-junk p { font-size: 12.5px; line-height: 1.85; color: #9aa8a1; }
+.bd-junk-cost {
+  position: absolute;
+  left: 12px; top: 12px;
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  font-size: 17px;
+  color: #e8dcc0;
+  border: 1px solid #4d4638;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #2b3a44, #0d161c 72%);
+}
+.bd-junk-tag { font-size: 10px; letter-spacing: 2.4px; color: #6d7d77; border-top: 1px solid #333; padding-top: 10px; width: 70%; }
+
+/* --------------------------------------------------------------- log (right) */
+
+.bd-log { display: flex; flex-direction: column; min-height: 0; padding: 14px 13px; }
+.bd-log-head { display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+.bd-log-head h2 { font-size: 16px; letter-spacing: 3px; color: #e7dcc0; }
+.bd-log-head h2 small { font-family: 'Segoe UI', sans-serif; font-size: 8px; letter-spacing: 2.6px; color: var(--dim); margin-left: 9px; }
+.bd-played { font-size: 12px; letter-spacing: 1px; color: #8b9a94; }
+.bd-played b { font-family: Georgia, serif; font-weight: 400; font-size: 20px; color: #e6d9b6; margin: 0 3px; }
+.bd-played.hot { color: #d9c48c; }
+.bd-played.hot b { color: #f0dcae; text-shadow: 0 0 14px rgba(224, 180, 95, .6); }
+.bd-played i { font-style: normal; font-size: 10.5px; letter-spacing: 1.4px; color: #b8a678; margin-left: 8px; border-left: 1px solid var(--line); padding-left: 8px; }
+
+.bd-log-body { flex: 1; min-height: 0; overflow-y: auto; padding: 11px 4px 11px 0; }
+.bd-log-line { font-size: 13px; line-height: 1.78; color: #8b9a94; }
+.bd-log-line.good { color: #a9c9a4; }
+.bd-log-line.bad { color: #e09189; }
+.bd-log-line.special { color: #e3c58d; }
+.bd-log-line.special + .bd-log-line.special { margin-top: 7px; }
+.bd-log-note { font-size: 10.5px; letter-spacing: 1.2px; color: #6d7d77; border-top: 1px solid var(--line); padding-top: 9px; }
+
+/* ------------------------------------------------------------ hit effects */
+
+.bd-fx { position: absolute; inset: 0; pointer-events: none; z-index: 8; overflow: hidden; border-radius: 8px; }
+.fx { position: absolute; inset: 0; display: block; pointer-events: none; }
+.fx i { position: absolute; display: block; opacity: 0; }
+
+/* 普通攻击 — one cold white cut, plus the flash where the edge passed. */
+.fx-slash {
+  left: -30%; top: 46%;
+  width: 160%; height: 3px;
+  background: linear-gradient(90deg, transparent, #eaf4ff 20%, #fff 50%, #cfe4ff 78%, transparent);
+  box-shadow: 0 0 14px rgba(200, 230, 255, .85);
+  animation: fx-cut .46s cubic-bezier(.15, .9, .2, 1) both;
+  animation-delay: var(--fx-delay, 0ms);
+}
+.fx-flash {
+  left: 50%; top: 46%;
+  width: 120px; height: 120px;
+  margin: -60px 0 0 -60px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, .8), rgba(200, 225, 255, .28) 42%, transparent 70%);
+  animation: fx-flash .34s ease-out both;
+  animation-delay: var(--fx-delay, 0ms);
+}
+@keyframes fx-cut {
+  0% { opacity: 0; transform: translate(-64%, 0) rotate(-24deg) scaleY(.2); }
+  20% { opacity: 1; transform: translate(-12%, 0) rotate(-24deg) scaleY(1); }
+  55% { opacity: .95; transform: translate(14%, 0) rotate(-24deg) scaleY(1); }
+  100% { opacity: 0; transform: translate(58%, 0) rotate(-24deg) scaleY(.3); }
+}
+@keyframes fx-flash { 0% { opacity: 0; transform: scale(.4); } 25% { opacity: 1; } 100% { opacity: 0; transform: scale(1.5); } }
+
+/* 火焰 — a bloom and nine embers thrown outward. */
+.fx-bloom {
+  left: 50%; top: 46%;
+  width: 150px; height: 150px;
+  margin: -75px 0 0 -75px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 240, 200, .95), rgba(240, 140, 60, .62) 38%, rgba(150, 40, 20, 0) 72%);
+  animation: fx-bloom .62s ease-out both;
+  animation-delay: var(--fx-delay, 0ms);
+}
+@keyframes fx-bloom { 0% { opacity: 0; transform: scale(.25); } 22% { opacity: 1; } 100% { opacity: 0; transform: scale(1.35); } }
+.fx-particle {
+  left: 50%; top: 46%;
+  width: 9px; height: 9px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff0c8, #e2701f 58%, rgba(120, 30, 10, 0));
+  animation: fx-throw .8s cubic-bezier(.2, .7, .3, 1) both;
+  animation-delay: calc(var(--fx-delay, 0ms) + var(--i, 0) * 42ms);
+}
+@keyframes fx-throw {
+  0% { opacity: 1; transform: translate(0, 0) scale(.4); }
+  70% { opacity: .9; }
+  100% { opacity: 0; transform: translate(var(--dx, 0), var(--dy, 0)) scale(1.35); }
+}
+
+/* 格挡 — a golden ring that rises out of the floor and closes over you. */
+.fx-ring {
+  left: 50%; bottom: 4%;
+  width: 172px; height: 52px;
+  margin-left: -86px;
+  border-radius: 50%;
+  border: 2px solid rgba(240, 214, 150, .9);
+  box-shadow: 0 0 22px rgba(224, 180, 95, .55), inset 0 0 20px rgba(224, 180, 95, .35);
+  animation: fx-rise-ring 1.05s ease-out both;
+  animation-delay: calc(var(--fx-delay, 0ms) + var(--i, 0) * 120ms);
+}
+@keyframes fx-rise-ring {
+  0% { opacity: 0; transform: translateY(30px) scale(.45); }
+  28% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-96px) scale(1.14); }
+}
+
+/* 资源 — sparks climbing off the card that made them. */
+.fx-ember .fx-particle {
+  background: radial-gradient(circle, #fff4d6, #ffc866 55%, rgba(190, 120, 20, 0));
+  box-shadow: 0 0 10px rgba(255, 205, 120, .8);
+  animation: fx-climb 1.15s ease-out both;
+}
+@keyframes fx-climb {
+  0% { opacity: 0; transform: translate(0, 14px) scale(.5); }
+  22% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx, 0), var(--dy, -110px)) scale(1.1); }
+}
+
+/* 治疗与其他 — a quiet white light. */
+.fx-heal .fx-bloom {
+  background: radial-gradient(circle, rgba(255, 255, 255, .8), rgba(220, 235, 245, .3) 42%, transparent 72%);
+  animation-duration: .8s;
+}
+
+/* 消散 — ink, not fire. */
+.fx-puff {
+  left: 50%; top: 50%;
+  width: 130px; height: 130px;
+  margin: -65px 0 0 -65px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(180, 190, 185, .5), rgba(90, 100, 98, .22) 46%, transparent 72%);
+  animation: fx-puff 1s ease-out both;
+  animation-delay: var(--fx-delay, 0ms);
+}
+@keyframes fx-puff { 0% { opacity: 0; transform: scale(.3); } 30% { opacity: .9; } 100% { opacity: 0; transform: scale(1.6); } }
+
+/* Damage numbers. Big, outlined, and gone before you can read them twice. */
+.fx-float {
+  position: absolute;
+  left: 50%; top: 30%;
+  transform: translateX(-50%);
+  font-family: Georgia, 'Songti SC', serif;
+  font-size: 30px;
+  letter-spacing: 1px;
+  color: #fff4dc;
+  -webkit-text-stroke: 1.4px rgba(0, 0, 0, .82);
+  paint-order: stroke fill;
+  text-shadow: 0 3px 10px rgba(0, 0, 0, .85), 0 0 22px rgba(255, 200, 120, .45);
+  white-space: nowrap;
+  animation: fx-float 1.25s cubic-bezier(.2, .7, .3, 1) both;
+  animation-delay: var(--fx-delay, 0ms);
+}
+.fx-float.block { font-size: 22px; color: #d8ecf5; text-shadow: 0 3px 10px rgba(0, 0, 0, .85), 0 0 20px rgba(150, 210, 240, .5); }
+.fx-float.good { font-size: 22px; color: #ffe6ae; }
+.fx-float.bad { font-size: 22px; color: #f3a79c; }
+@keyframes fx-float {
+  0% { opacity: 0; transform: translate(-50%, 12px) scale(.7); }
+  18% { opacity: 1; transform: translate(-50%, -4px) scale(1.12); }
+  32% { transform: translate(-50%, -14px) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -66px) scale(1); }
+}
+
+/* The screen itself flinches when the player is hit. */
+.bd-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 20% 55%, rgba(190, 45, 35, .34), rgba(140, 25, 20, .14) 55%, transparent 78%);
+  animation: bd-hurt .62s ease-out both;
+}
+@keyframes bd-hurt { 0% { opacity: 0; } 18% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ------------------------------------------------------------ result / piles */
+
+.bd-over { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(4, 8, 11, .74); backdrop-filter: blur(6px); animation: bd-fade .5s ease-out both; }
+@keyframes bd-fade { from { opacity: 0; } to { opacity: 1; } }
+.bd-over-card {
+  width: min(420px, 92vw);
+  padding: 30px 28px;
+  text-align: center;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  background: linear-gradient(140deg, #1b2a30, #101a20);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .7);
+  animation: bd-pop .5s cubic-bezier(.2, 1.4, .4, 1) both;
+}
+.bd-over-card.won { border-color: rgba(224, 180, 95, .55); box-shadow: 0 30px 90px rgba(0, 0, 0, .7), 0 0 60px rgba(196, 160, 90, .22); }
+.bd-over-kicker { font-size: 9px; letter-spacing: 4px; color: #b8a678; margin-bottom: 10px; }
+.bd-over-card h2 { font-size: 30px; letter-spacing: 8px; color: #ece1c4; }
+.bd-over-card.lost h2 { color: #e2a49c; }
+.bd-over-card p { font-size: 13px; line-height: 1.95; color: #9fb0a7; margin: 15px 0 22px; }
+.bd-over-btn { margin: 0 auto; padding: 11px 22px; }
+
+.bd-modal { position: fixed; inset: 0; z-index: 45; display: grid; place-items: center; padding: 24px; background: rgba(5, 9, 12, .8); backdrop-filter: blur(7px); }
+.bd-modal-inner { position: relative; width: min(460px, 92vw); max-height: 70vh; padding: 22px; border: 1px solid rgba(190, 175, 130, .3); border-radius: 5px; background: linear-gradient(140deg, #1b2a30, #101a20); box-shadow: 0 30px 90px rgba(0, 0, 0, .7); }
+.bd-modal-inner h3 { font-size: 20px; letter-spacing: 4px; color: #ede1c3; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+.bd-modal-inner h3 small { display: block; font-family: 'Segoe UI', sans-serif; font-size: 10px; letter-spacing: 1.6px; color: var(--dim); margin-top: 6px; }
+.bd-modal-list { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 0 4px; overflow-y: auto; max-height: 52vh; }
+.bd-modal-card { display: flex; align-items: baseline; gap: 8px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 3px; background: rgba(255, 255, 255, .028); }
+.bd-modal-card b { font-family: 'Noto Serif SC', serif; font-weight: 400; font-size: 14px; letter-spacing: 1.6px; color: #e2d7b8; }
+.bd-modal-card i { font-style: normal; font-size: 11px; color: var(--dim); }
+.bd-modal-empty { color: var(--dim); font-size: 13px; padding: 12px 0; }
+.bd-modal-close { position: absolute; right: 10px; top: 10px; width: 28px; height: 28px; border-radius: 50%; color: #93a49c; }
+.bd-modal-close:hover { color: #f0e4c4; background: rgba(255, 255, 255, .07); }
+
+/* ---------------------------------------------------------------- the tour */
+
+/* Clicks are swallowed everywhere; the spotlight is a hole in a shadow, and a shadow cannot be
+   clicked, so everything under the hole stays live. */
+.bd-tour-shield { position: fixed; inset: 0; z-index: 60; }
+.bd-tour-mask {
+  position: fixed;
+  z-index: 61;
+  border-radius: 8px;
+  pointer-events: none;
+  /* A hole in the dark, not a box drawn on top of it: the shadow spreads outwards only, so whatever
+     is inside the rect keeps its own colours. */
+  box-shadow: 0 0 0 9999px rgba(4, 8, 11, .74);
+}
+.bd-tour-mask-full { left: 0; top: 0; width: 100vw; height: 100vh; border-radius: 0; }
+.bd-tour-ring {
+  position: fixed;
+  z-index: 62;
+  border-radius: 8px;
+  pointer-events: none;
+  border: 1px solid rgba(240, 220, 174, .75);
+  box-shadow: 0 0 0 1px rgba(240, 220, 174, .18), 0 0 34px rgba(212, 189, 135, .35), inset 0 0 26px rgba(212, 189, 135, .12);
+  animation: bd-breathe 2.6s ease-in-out infinite;
+}
+@keyframes bd-breathe {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(240, 220, 174, .16), 0 0 26px rgba(212, 189, 135, .28), inset 0 0 20px rgba(212, 189, 135, .1); }
+  50% { box-shadow: 0 0 0 1px rgba(240, 220, 174, .3), 0 0 44px rgba(212, 189, 135, .5), inset 0 0 30px rgba(212, 189, 135, .18); }
+}
+.bd-tour-bubble {
+  position: fixed;
+  z-index: 70;
+  padding: 18px 19px 16px;
+  border: 1px solid rgba(212, 189, 135, .5);
+  border-radius: 5px;
+  background: linear-gradient(150deg, #1e2c33, #101a20 72%);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .74), 0 0 40px rgba(160, 130, 70, .14);
+  animation: bd-pop .3s cubic-bezier(.2, 1.3, .5, 1) both;
+}
+.bd-tour-step { font-size: 9px; letter-spacing: 3px; color: #b8a678; margin-bottom: 8px; }
+.bd-tour-title { font-size: 22px; letter-spacing: 4px; color: #ece1c4; margin-bottom: 11px; }
+.bd-tour-body { font-size: 13px; line-height: 2; color: #a9b8ae; }
+.bd-tour-hint { font-size: 12.5px; letter-spacing: 1.2px; color: #f0dcae; margin-top: 11px; border-left: 2px solid rgba(212, 189, 135, .55); padding-left: 10px; }
+.bd-tour-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 17px; }
+.bd-tour-next { padding: 9px 16px; color: #f4e8ca; border-color: rgba(212, 189, 135, .55); background: rgba(212, 189, 135, .12); }
+.bd-tour-next:disabled { opacity: .45; }
+.bd-tour-skip { font-size: 11.5px; letter-spacing: 1.4px; color: #7f9189; }
+.bd-tour-skip:hover { color: #d9c48c; }
+
+/* ------------------------------------------------------------ small screens */
+
+/* Short viewports: the cards keep their full size but give back the room they are not using, so the
+   field never ends up shorter than the thing standing in it. */
+@media (max-height: 860px) {
+  .bd-hand-card { transform: scale(.86); transform-origin: 50% 100%; margin-top: -48px; }
+  .bd-hand-row { padding-top: 12px; }
+}
+
+
+@media (max-width: 900px) {
+  .bd { height: auto; min-height: 100dvh; overflow: visible; }
+  .bd-top { padding: 13px 14px 12px; gap: 14px; }
+  .bd-title { font-size: 22px; letter-spacing: 4px; }
+  .bd-title small { display: block; margin: 5px 0 0; }
+  .bd-sub { display: none; }
+  .bd-facts { gap: 16px; }
+  .bd-tools { width: 100%; }
+  .bd-btn { flex: 1; justify-content: center; padding: 9px 10px; letter-spacing: 1px; }
+
+  .bd-stage { display: block; padding: 12px 12px 24px; }
+  .bd-player-panel, .bd-log { margin-bottom: 12px; }
+  .bd-player-panel { gap: 11px; }
+  .bd-panel-note { margin-top: 4px; }
+
+  /* The two rows that grow sideways stay sideways — they scroll instead of wrapping. */
+  .bd-enemy-row { justify-content: flex-start; padding: 4px 2px 8px; }
+  .bd-enemy { width: 168px; }
+  .bd-enemy-art { height: clamp(130px, 30vh, 200px); }
+  .bd-enemy-note { display: none; }
+
+  /* The hand is the one thing that must never be off-screen, so it sticks to the floor. */
+  .bd-hand-row {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    justify-content: flex-start;
+    padding: 14px 4px 12px;
+    background: linear-gradient(0deg, rgba(8, 13, 16, .97) 62%, rgba(8, 13, 16, 0));
+  }
+  .bd-hand-card + .bd-hand-card { margin-left: -74px; }
+  .bd-hand-empty { padding: 60px 0; }
+
+  .bd-log-body { max-height: 40vh; }
+  .bd-over-card { padding: 24px 20px; }
+  .bd-over-card h2 { font-size: 25px; letter-spacing: 6px; }
+  .bd-tour-bubble { left: 12px !important; right: 12px; width: auto !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bd *, .bd *::before, .bd *::after,
+  .bd-fx *, .bd-fx *::before, .bd-fx *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  /* Without motion a hit effect is just a flicker, so it is dropped; the numbers stay, because the
+     numbers are information, and the log has them either way. */
+  .fx { display: none; }
+  .fx-float { opacity: 1; }
+  .bd-tour-ring { animation: none !important; }
+}
