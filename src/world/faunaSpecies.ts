@@ -12,6 +12,10 @@ export type Habitat = 'land' | 'water' | 'air';
 
 export interface FaunaPalette {
   coat: string; belly: string; dark: string;
+  /** Eye glow, and the only tone that is emissive rather than lit. The rule is `accent` ⇔
+   *  `temperament: 'hostile'` — a species with no accent gets no eyes at all, and `fauna.test.ts`
+   *  holds the two together so a friendly animal can never quietly grow a pair. */
+  accent?: string;
 }
 
 /** Which imported mesh a species wears, and how to bend it into shape. The source models are the
@@ -20,7 +24,10 @@ export interface FaunaPalette {
 export interface FaunaModel {
   /** OBJ basename under `public/assets/world/fauna/`. */
   file: string;
-  /** Radians added after the head is turned onto +z, for models the height rule gets wrong. */
+  /** Radians added after the head is turned onto +z, for models the height rule gets wrong. Two of
+   *  them do: `piranha` and `whale` are both deeper at the tail than at the snout — the piranha's
+   *  caudal fin, the whale's flukes — so the rule turns them round, and every species wearing
+   *  those meshes swims tail-first until it is given a `yaw`. */
   yaw?: number;
   /** Per-axis squash applied before scaling — how one mesh is bent into a second creature. */
   stretch?: [number, number, number];
@@ -64,7 +71,7 @@ export const SPECIES: Species[] = [
     palette: { coat: '#c2682f', belly: '#f0e2ca', dark: '#43281a' }, model: { file: 'fox' }, motion: { speed: .9, range: 5 },
     lore: '它总在人看不见的地方先停下。草甸上的赤狐记得每一处篝火的余温，也记得谁曾经喂过它。' },
   { id: 'wolf', biome: 'grass', name: '灰狼', latin: 'Lupus cineris', temperament: 'hostile', habitat: 'land', size: .92, large: true,
-    palette: { coat: '#6d7178', belly: '#c9ccc8', dark: '#2f333a' }, model: { file: 'wolf' }, motion: { speed: 1.5, range: 8 },
+    palette: { coat: '#6d7178', belly: '#c9ccc8', dark: '#2f333a', accent: '#ffb23a' }, model: { file: 'wolf' }, motion: { speed: 1.5, range: 8 },
     lore: '它先看见你，然后才让你看见它。长夜之后狼群学会了不叫，只在你身后留下两行并排的脚印。' },
   { id: 'sheepdog', biome: 'grass', name: '牧羊犬', latin: 'Canis vigil', temperament: 'friendly', habitat: 'land', size: .78,
     palette: { coat: '#c9a878', belly: '#f2e7d2', dark: '#6a5236' }, model: { file: 'dog' }, motion: { speed: 1.2, range: 6 },
@@ -74,7 +81,7 @@ export const SPECIES: Species[] = [
     palette: { coat: '#8a4a24', belly: '#d8c7a6', dark: '#2f1c11' }, model: { file: 'fox', scale: 1.08 }, motion: { speed: .9, range: 5 },
     lore: '毛色比草甸的同类更深，几乎融进树影。它跟人保持的距离，正好是一支箭的射程。' },
   { id: 'lynx', biome: 'forest', name: '猞猁', latin: 'Lynx umbrosa', temperament: 'hostile', habitat: 'land', size: .62,
-    palette: { coat: '#6b5a48', belly: '#cdbfa4', dark: '#2b241c' }, model: { file: 'cat', scale: 1.15 }, motion: { speed: 1.3, range: 7 },
+    palette: { coat: '#6b5a48', belly: '#cdbfa4', dark: '#2b241c', accent: '#ffd24a' }, model: { file: 'cat', scale: 1.15 }, motion: { speed: 1.3, range: 7 },
     lore: '它蹲在枝桠上一动不动，直到你走出很远，才发现那截「枯枝」换了方向。' },
   { id: 'songbird', biome: 'forest', name: '林雀', latin: 'Avis nemoris', temperament: 'friendly', habitat: 'air', size: .34, sizeAxis: 'length',
     palette: { coat: '#7d8f5c', belly: '#e6e2c6', dark: '#3c4230' }, model: { file: 'bird' }, motion: { speed: 1.1, range: 6 },
@@ -95,7 +102,7 @@ export const SPECIES: Species[] = [
     lore: '走在碎石上没有一点声音。修桥匠说，它比任何一位守望者都更熟悉这条山脊。' },
   // 雪山 — the frozen line: a white wolf and a white raptor.
   { id: 'icewolf', biome: 'snow', name: '冰狼', latin: 'Lupus glacialis', temperament: 'hostile', habitat: 'land', size: .95, large: true,
-    palette: { coat: '#c6d2da', belly: '#f2f6f8', dark: '#7d8b96' }, model: { file: 'wolf', scale: 1.05 }, motion: { speed: 1.5, range: 8 },
+    palette: { coat: '#c6d2da', belly: '#f2f6f8', dark: '#7d8b96', accent: '#7fe6ff' }, model: { file: 'wolf', scale: 1.05 }, motion: { speed: 1.5, range: 8 },
     lore: '霜冠神殿的骑士曾把它们当作坐骑的替身。它们的毛色和雪线以上的一切一样白。' },
   { id: 'snowowl', biome: 'snow', name: '雪枭', latin: 'Bubo nivis', temperament: 'neutral', habitat: 'air', size: .82, sizeAxis: 'length',
     palette: { coat: '#e8eef2', belly: '#fbfdfe', dark: '#9aa8b4' }, model: { file: 'eagle', scale: .92 }, motion: { speed: 1.2, range: 7 },
@@ -105,24 +112,24 @@ export const SPECIES: Species[] = [
     lore: '雪面上那串突然中断的脚印多半是它的——它一跳能越过两个人并排的距离。' },
   // 大海 — open water: a whale, a school-fish and a hunter.
   { id: 'whale', biome: 'ocean', name: '远海鲸', latin: 'Balaena longinqua', temperament: 'neutral', habitat: 'water', size: 2.6, sizeAxis: 'length', large: true,
-    palette: { coat: '#4a6472', belly: '#c2d2d8', dark: '#25333c' }, model: { file: 'whale' }, motion: { speed: .55, range: 12 },
+    palette: { coat: '#4a6472', belly: '#c2d2d8', dark: '#25333c' }, model: { file: 'whale', yaw: Math.PI }, motion: { speed: .55, range: 12 },
     lore: '它浮上来换气的时候，旧港的灯塔正好转过去。老船匠说那是在替沉船清点人数。' },
   { id: 'shoalfish', biome: 'ocean', name: '银鳍鱼', latin: 'Piscis argenteus', temperament: 'friendly', habitat: 'water', size: .85, sizeAxis: 'length',
     palette: { coat: '#8fb4c4', belly: '#eaf3f6', dark: '#476470' }, model: { file: 'fish', scale: 1.1 }, motion: { speed: 1.0, range: 6 },
     lore: '涨潮时贴着栈桥的桩子游过，鳞片把航灯的光撕成一小片一小片。' },
   { id: 'piranha', biome: 'ocean', name: '裂齿鱼', latin: 'Serra marina', temperament: 'hostile', habitat: 'water', size: .95, sizeAxis: 'length',
-    palette: { coat: '#5d6a5a', belly: '#cbd0b8', dark: '#2b332a' }, model: { file: 'piranha' }, motion: { speed: 1.3, range: 8 },
+    palette: { coat: '#5d6a5a', belly: '#cbd0b8', dark: '#2b332a', accent: '#ff5a3c' }, model: { file: 'piranha', yaw: Math.PI }, motion: { speed: 1.3, range: 8 },
     lore: '幽灵航线上最常见的东西。它们不咬船，只咬从船上掉下去的影子。' },
   // 血海 — the crimson tide: everything here is red and hungry.
   { id: 'bloodfin', biome: 'blood', name: '血鳍', latin: 'Pinna cruenta', temperament: 'hostile', habitat: 'water', size: 1.05, sizeAxis: 'length',
-    palette: { coat: '#8e2f3c', belly: '#d9a0a4', dark: '#3d1218' }, model: { file: 'piranha', scale: 1.12 }, motion: { speed: 1.35, range: 8 },
+    palette: { coat: '#8e2f3c', belly: '#d9a0a4', dark: '#3d1218', accent: '#ff2d3d' }, model: { file: 'piranha', scale: 1.12, yaw: Math.PI }, motion: { speed: 1.35, range: 8 },
     lore: '祭坛下的水比别处暖。它们围着黑石祭桥转圈，像在等什么被推下去。' },
   { id: 'bonewhale', biome: 'blood', name: '骸鲸', latin: 'Balaena ossium', temperament: 'neutral', habitat: 'water', size: 3.0, sizeAxis: 'length', large: true,
-    palette: { coat: '#6b4a52', belly: '#c9b2b0', dark: '#2c1a1f' }, model: { file: 'whale', scale: .92 }, motion: { speed: .5, range: 12 },
+    palette: { coat: '#6b4a52', belly: '#c9b2b0', dark: '#2c1a1f' }, model: { file: 'whale', scale: .92, yaw: Math.PI }, motion: { speed: .5, range: 12 },
     lore: '皮肉早被啃净了，骨架却还在游。血潮之心每跳一次，它就浮上来一次。' },
   // 雾海 — the veil: pale shapes that are only half there.
   { id: 'mistwhale', biome: 'fog', name: '雾鲸', latin: 'Balaena nebula', temperament: 'neutral', habitat: 'water', size: 2.8, sizeAxis: 'length', large: true,
-    palette: { coat: '#9fb2bd', belly: '#e8eef1', dark: '#5c6d78' }, model: { file: 'whale' }, motion: { speed: .45, range: 12 },
+    palette: { coat: '#9fb2bd', belly: '#e8eef1', dark: '#5c6d78' }, model: { file: 'whale', yaw: Math.PI }, motion: { speed: .45, range: 12 },
     lore: '雾里的轮廓比雾本身更淡。灯塔守夜人从不记录它的位置，因为记了也对不上。' },
   { id: 'veilgull', biome: 'fog', name: '雾鸥', latin: 'Larus velatus', temperament: 'friendly', habitat: 'air', size: .60, sizeAxis: 'length',
     palette: { coat: '#c3ced6', belly: '#f2f6f8', dark: '#7b8894' }, model: { file: 'bird', scale: 1.35 }, motion: { speed: 1.1, range: 8 },
@@ -137,11 +144,11 @@ export const SPECIES: Species[] = [
     palette: { coat: '#5f6b45', belly: '#c6cdae', dark: '#2b3122' }, model: { file: 'chick', scale: 1.05 }, motion: { speed: .8, range: 4, grazes: true },
     lore: '在浮草上走，踩不破一层苔。它叫起来像两块湿石头互相敲。' },
   { id: 'marshcat', biome: 'swamp', name: '沼猫', latin: 'Felis palustris', temperament: 'hostile', habitat: 'land', size: .55,
-    palette: { coat: '#6d6a52', belly: '#cbc8ac', dark: '#2e2d22' }, model: { file: 'cat' }, motion: { speed: 1.25, range: 7 },
+    palette: { coat: '#6d6a52', belly: '#cbc8ac', dark: '#2e2d22', accent: '#b6ff5c' }, model: { file: 'cat' }, motion: { speed: 1.25, range: 7 },
     lore: '踩在浮草上不会陷下去。船坞的老蛙人从不把鱼晾在低处。' },
   // 火山 — the ember forge: a boar that eats cinders and a fox that walks on warm stone.
   { id: 'cinderboar', biome: 'volcano', name: '熔鬃野猪', latin: 'Aper cineris', temperament: 'hostile', habitat: 'land', size: .85, large: true,
-    palette: { coat: '#6b4038', belly: '#b58a76', dark: '#2a1a17' }, model: { file: 'pig', stretch: [1, .95, .85] }, motion: { speed: 1.1, range: 7, grazes: true },
+    palette: { coat: '#6b4038', belly: '#b58a76', dark: '#2a1a17', accent: '#ff7a1f' }, model: { file: 'pig', stretch: [1, .95, .85] }, motion: { speed: 1.1, range: 7, grazes: true },
     lore: '背脊上的鬃毛是烧焦的。学徒说它啃冷却的炉渣，像别处的猪啃橡果。' },
   { id: 'emberfox', biome: 'volcano', name: '余烬狐', latin: 'Vulpes ember', temperament: 'neutral', habitat: 'land', size: .66,
     palette: { coat: '#8a4526', belly: '#d9a878', dark: '#2e1a12' }, model: { file: 'fox', scale: 1.05 }, motion: { speed: 1.15, range: 6 },
@@ -155,7 +162,7 @@ export const SPECIES: Species[] = [
     lore: '踩过的地方会留下很浅的光。记录星光的学者用它当路标，比罗盘准。' },
   // 荒原 — the bone court: a scavenger dog and a vulture.
   { id: 'bonehound', biome: 'waste', name: '骸犬', latin: 'Canis ossium', temperament: 'hostile', habitat: 'land', size: .84, large: true,
-    palette: { coat: '#c3b79c', belly: '#efe8d6', dark: '#6f6653' }, model: { file: 'dog', scale: 1.05 }, motion: { speed: 1.45, range: 8 },
+    palette: { coat: '#c3b79c', belly: '#efe8d6', dark: '#6f6653', accent: '#e6ffb0' }, model: { file: 'dog', scale: 1.05 }, motion: { speed: 1.45, range: 8 },
     lore: '它把巨兽的肋骨当成自己的院子。拾荒者说，被它盯上的东西最后都会变成骨头。' },
   { id: 'vulture', biome: 'waste', name: '秃鹫', latin: 'Vultur aridus', temperament: 'neutral', habitat: 'air', size: 1.0, sizeAxis: 'length', large: true,
     palette: { coat: '#6e5c46', belly: '#c4b498', dark: '#2f2820' }, model: { file: 'eagle', scale: 1.1 }, motion: { speed: 1.5, range: 10 },

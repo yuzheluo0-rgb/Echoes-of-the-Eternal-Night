@@ -7,7 +7,7 @@ React 19 + TypeScript + Vite 7 + Three.js 的卡牌肉鸽游戏。当前入口�
 
 ```sh
 npm run dev      # http://127.0.0.1:5173/#/world
-npm test         # 45 项，node --experimental-strip-types --test
+npm test         # 53 项，node --experimental-strip-types --test
 npm run build    # tsc -b && vite build
 ```
 
@@ -20,6 +20,7 @@ npm run build    # tsc -b && vite build
 测试全绿，构建干净。
 
 每个地貌另有 **2~3 只自由活动的动物**（共 29 种，模型来自 CC0 素材，见下）。
+8 个敌对种有自发光眼睛，陆生动物走对角步态（腿前后摆、抬蹄、身体随步点起伏）。
 
 ### 待办
 
@@ -32,9 +33,8 @@ npm run build    # tsc -b && vite build
 3. **敌对生物目前只是气氛**。它们不会靠近、不会挡路、不触发遭遇，只有图鉴里的
    `temperament` 标签与配色区分。要做"会追人的狼"得接 `WorldCreatures` 的 wander
    状态机与 `canEnterTile`，工程量另算。
-4. **给敌对种加发光眼睛**。现在整只生物是**一个**顶点着色的 mesh（1 draw call），
-   加眼睛要么再起一个自发光子 mesh（每种 +1 draw call），要么在片元着色器里按
-   `aGlow` 顶点属性加自发光。
+4. **生物只有"走"，没有别的状态**。没有奔跑、受惊、进食以外的行为，转身也只是一条
+   插值曲线。要做"会追人的狼"见第 3 条。
 
 ## 动手前必读的坑
 
@@ -68,8 +68,28 @@ npm run build    # tsc -b && vite build
   "先没动物、再突然冒出来"。加载失败只记录并跳过（世界照常打开），
   但**每个物种的模型文件是否存在有测试兜底**——否则打错文件名会静默少一只动物。
 - **导入的生物是单色平涂，颜色是按几何算出来的**。`WorldCreatures.tint()` 按高度分三段
-  （最低段=腿、朝下的面=腹、其余=外套色）。头部朝向也是推断的：四足动物头颈更高，
-  取长轴较高的一端；鱼、鲸、鸟不适用，由物种表 `model.yaw` 显式指定。
+  （最低段=腿、朝下的面=腹、其余=外套色）。头部朝向也是推断的：头颈更高的一端是头，
+  四足动物上都对，但**鱼和鲸不行**（见下一条）。
+- **`piranha.obj` 与 `whale.obj` 是反的，必须给 `model.yaw: Math.PI`**。这两个网格尾鳍
+  比吻部还高，`headYaw()` 判反，少了 `yaw` 它们就**倒着游**——piranha / bloodfin /
+  whale / bonewhale / mistwhale 五条都吃这个。`fauna.test.ts` 有一条要求共用同一网格的
+  物种 `yaw` 一致，加第三种鲸时忘抄会直接红。
+- **着色器里的每物种常量必须走 uniform，不能拼进源码**。29 个物种共用**一个**编译结果：
+  `shaderID` 存在时 three.js 只按 `material.customProgramCacheKey()` 认程序，而它是常量，
+  **`onBeforeCompile` 改过的源码根本不参与缓存键**。早先把 `minY/spanY/minZ/spanZ` 用
+  `toFixed(4)` 拼进顶点着色器，后果是**第一个编译的物种（狐狸）的比例被全部 29 只共用**：
+  鲸的全身落进"头部"带，秧鸡的落进任何带之外（小到 `fTop` 恒为 0，头颈完全不动）。
+  现在统一走 `uFaunaBox` / `uFaunaWalk` / `uFaunaLegs` / `uFaunaEye`，程序数仍然是 1。
+  加新的每物种动画量时照做，别再用模板字符串。
+- **眼睛是焊进身体几何的**（追加 2 个八面体 + `aGlow` 顶点属性），不是子 mesh，
+  所以 draw call 不变。用八面体而不是朝外的面片，是因为面片在动物背对镜头时会整个消失。
+  有 `palette.accent` 才有眼睛，`accent` ⇔ `temperament: 'hostile'`，测试钉住了这条。
+  眼睛位置全由几何推：头带取 z 的 [72%, 88%]（取前 1/5 会量到鼻梁、取前 1/3 会量到肩背，
+  狗还会量到前腿，第一次就栽在这），高度 = 该带最高点 − 16% 身高，宽度 = 眼高处的最大 |x|。
+  猫要特别注意：它的最高点是**竖起来的尾巴**，所以眼睛高度绝不能取整体身高的比例。
+- **步态是"髋部不动、蹄子位移最大"的剪切**，不是整体平移：`below` 从髋的 0 渐变到蹄的 1，
+  腿才不会从身上撕下来。步频由步幅反推（`speed*.55 / (2*stride)`），两者绑死才不会滑步，
+  改 `motion.speed` 不用手动调频率。
 - **水生与飞行种按"体长"归一化，不是身高**（`sizeAxis: 'length'`），否则鲸鱼按身高
   缩放会有两个半格长。游动生物的入水深度必须用**模型高度**算，不能用 `size`——
   这两个量对鲸鱼毫无关系，用 `size` 会把整条鲸沉到海面下一整个单位。
@@ -107,6 +127,19 @@ npm run build    # tsc -b && vite build
 - `.work/world-closeup.cjs <tag> "<名称>:<格id>:<缩放>;..."` —— 按坐标拍近景。
   注意视角之间用 `;` 分隔，因为格坐标本身含逗号。
 - `.work/world-shot.cjs <tag> [1]` —— 整图与总览。
+  （`world-final-perf.cjs` 的 volcano 场景目前是坏的：`samples:-20`、没有任何 draws，
+  改动前后都一样，不是回归。）
+- `.work/fauna-eyes.cjs <tag> [zoom]` —— 8 个敌对种各拍一张头颈近景，冻结在确定性出生
+  姿态，两次跑可以直接 A/B。`.work/fauna-walk.cjs <物种> <帧数>` 是同一套的自然行走连拍。
+- `.work/fauna-pose.cjs <物种> [zoom] [裁切宽]` —— 把一只钉在 yaw 0/90/180/270 各拍一张。
+  **判断"头朝哪边"就靠它**：相机固定在 +x+z，yaw=90 时局部 +z 落在屏幕右侧，
+  所以哪端是头一眼可辨。鱼和鲸的朝向 bug 就是这么查出来的。
+- `.work/fauna-gait.cjs <物种> [帧数]` —— 侧对镜头 + 把 `aGait` 钉在 1 的走姿连拍。
+  注意它**包住 `creatures.update` 来钉实例矩阵**：用 rAF 会和场景自己的循环抢，
+  大约一半的帧会拍到没钉住的状态。也别指望 reduced-motion 下能看动画——
+  `WorldScene` 在 `reduced` 时根本不推进 `elapsed`，整条时间轴是冻的。
+- `.work/fauna-programs.cjs` —— 打印着色器程序数与每物种的 fauna uniform，
+  用来验证上面那条"29 个物种共用一个程序"的坑没有复发。
 
 浏览器加载有 WebGL，无头模式可正常渲染。**改完视觉务必自己截图核对**，
 不要凭推断下结论——这个项目里出现过"看到河口变宽就以为已通海"的误判。

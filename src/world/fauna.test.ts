@@ -22,6 +22,30 @@ test('every land is stocked with two or three species that belong to it', () => 
   assert.equal(SPECIES_BY_ID.size, SPECIES.length);
 });
 
+test('species sharing a mesh agree on which way it faces', () => {
+  // `yaw` corrects a mesh the head-finding rule gets wrong, so it belongs to the file, not to the
+  // animal wearing it: a third whale species that forgets to copy the flip swims tail-first.
+  const byFile = new Map<string, { id: string; yaw: number }[]>();
+  for (const species of SPECIES) {
+    const key = species.model.file;
+    if (!byFile.has(key)) byFile.set(key, []);
+    byFile.get(key)!.push({ id: species.id, yaw: species.model.yaw ?? 0 });
+  }
+  for (const [file, users] of byFile) {
+    const yaw = users[0].yaw;
+    for (const user of users) assert.equal(user.yaw, yaw, `${user.id} and ${users[0].id} disagree on ${file}.obj's facing`);
+  }
+});
+
+test('only the hostile species carry an eye glow', () => {
+  // The render layer grows eyes from `palette.accent` alone, so an accent on a friendly animal
+  // would give it a pair of burning eyes with nothing else in the game to say why.
+  for (const species of SPECIES) {
+    assert.equal(!!species.palette.accent, species.temperament === 'hostile',
+      `${species.id} is ${species.temperament} but ${species.palette.accent ? 'has' : 'lacks'} an accent`);
+  }
+});
+
 test('every species can actually reach its own habitat', () => {
   // The bug this guards: a water species in a biome that has no water tiles at all. Placement
   // silently skips it and the biome comes up one animal short with nothing to show for it.

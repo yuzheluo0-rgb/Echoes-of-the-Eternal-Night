@@ -76,35 +76,180 @@ function tint(geometry: THREE.BufferGeometry, species: Species) {
   return geometry;
 }
 
-/** Injects idle, grazing and gait motion into a stock Lambert program, so creatures keep scene
- *  lighting and shadows. Everything is driven off the rest position, which is what lets one
- *  un-split mesh still have a swinging tail, a bobbing head and a lowered muzzle. */
-function animate(material: THREE.MeshLambertMaterial, time: { value: number }, box: THREE.Box3) {
+/** How hard the eyes push past white. They are the one emissive thing in the bestiary, and the
+ *  night exposure flattens everything else, so this is deliberately well over 1. */
+const EYE_GLOW = 1.7;
+
+/**
+ * Two small glowing beads, one per side of the head, welded into the body geometry so thirty
+ * eyeballs still cost nothing extra to draw and inherit the head's motion for free.
+ *
+ * The head is measured off the geometry rather than assumed. The front fifth of the bounding box
+ * is muzzle and skull; a wider slice drags the quadruped's front legs in and lands the eyes on its
+ * chest, and taking a fraction of `box.max.y` floats them above the ears, because a cat's tallest
+ * point is its raised tail. Each bead is then anchored to the nearest real vertex on its own side
+ * of the skull and pushed out along that vertex's normal — mirroring one side onto the other would
+ * misplace an eye on the meshes that are not symmetric, and the dog is not.
+ */
+function addEyes(geometry: THREE.BufferGeometry, species: Species) {
+  const position = geometry.getAttribute('position'), normal = geometry.getAttribute('normal');
+  const box = geometry.boundingBox!;
+  const count = position.count;
+  const spanY = Math.max(.001, box.max.y - box.min.y), spanZ = Math.max(.001, box.max.z - box.min.z);
+  const glow = new Float32Array(count);
+
+  const accent = species.palette.accent;
+  const extra: number[] = [], extraNormal: number[] = [], extraColor: number[] = [];
+  if (accent) {
+    const eye = new THREE.Color(accent);
+    // The skull is read from a band behind the muzzle but still ahead of the shoulder. Taking the
+    // whole front third instead measures the withers on a short-necked animal, and taking the
+    // front fifth measures the bridge of the nose — and on the dog it measures the forelegs, which
+    // is how the first attempt put an eye on the shoulder.
+    const crown = box.min.z + spanZ * .72, nape = box.min.z + spanZ * .88;
+    let skullTop = -Infinity;
+    for (let i = 0; i < count; i++) {
+      const z = position.getZ(i);
+      if (z < crown || z > nape) continue;
+      skullTop = Math.max(skullTop, position.getY(i));
+    }
+    const eyeY = skullTop - spanY * .16, radius = spanY * .055;
+    const front = box.min.z + spanZ * .74, back = box.min.z + spanZ * .94;
+    const eyeZ = box.min.z + spanZ * .84;
+    const wide = [0, 0];
+    for (let i = 0; i < count; i++) {
+      const z = position.getZ(i);
+      if (z < front || z > back) continue;
+      if (Math.abs(position.getY(i) - eyeY) > spanY * .18) continue;
+      const side = position.getX(i) < 0 ? 1 : 0;
+      wide[side] = Math.max(wide[side], Math.abs(position.getX(i)));
+    }
+    for (const side of [0, 1]) {
+      // The widest vertex at eye height *is* the side of the skull. Among the ones that share that
+      // width, the one nearest the eye's depth is the one sitting where an eye belongs.
+      let score = Infinity, x = 0, y = 0, z = 0, nx = 0, ny = 1, nz = 0;
+      for (let i = 0; i < count; i++) {
+        const zi = position.getZ(i);
+        if (zi < front || zi > back) continue;
+        if ((position.getX(i) < 0 ? 1 : 0) !== side) continue;
+        if (Math.abs(position.getY(i) - eyeY) > spanY * .18) continue;
+        if (Math.abs(position.getX(i)) < wide[side] * .92) continue;
+        const near = Math.abs(zi - eyeZ) / spanZ;
+        if (near >= score) continue;
+        score = near;
+        x = position.getX(i); y = position.getY(i); z = zi;
+        nx = normal.getX(i); ny = normal.getY(i); nz = normal.getZ(i);
+      }
+      if (score === Infinity) continue;
+      const away = new THREE.Vector3(nx, ny, nz).normalize();
+      const centre = new THREE.Vector3(x, y, z).addScaledVector(away, radius * .55);
+      // An octahedron rather than a flat quad: a quad facing out of the skull disappears the moment
+      // the animal turns its back on the camera, and these are meant to be seen from anywhere.
+      const across = new THREE.Vector3(Math.abs(away.x) > .9 ? 0 : 1, Math.abs(away.x) > .9 ? 1 : 0, 0);
+      const right = new THREE.Vector3().crossVectors(across, away).normalize().multiplyScalar(radius);
+      const up = new THREE.Vector3().crossVectors(away, right).normalize().multiplyScalar(radius);
+      const poles = [away.clone().multiplyScalar(radius), right, up];
+      const corners = poles.flatMap(pole => [centre.clone().add(pole), centre.clone().sub(pole)]);
+      for (const face of [[0, 2, 4], [0, 4, 3], [0, 3, 5], [0, 5, 2], [1, 4, 2], [1, 3, 4], [1, 5, 3], [1, 2, 5]]) {
+        for (const index of face) {
+          const vertex = corners[index];
+          extra.push(vertex.x, vertex.y, vertex.z);
+          extraNormal.push(away.x, away.y, away.z);
+          extraColor.push(eye.r, eye.g, eye.b);
+        }
+      }
+    }
+  }
+  const added = extra.length / 3;
+  if (added) {
+    const grow = (name: string, tail: number[], size: number) => {
+      const current = geometry.getAttribute(name);
+      const out = new Float32Array((count + added) * size);
+      out.set(current.array as Float32Array, 0);
+      out.set(tail, count * size);
+      geometry.setAttribute(name, new THREE.BufferAttribute(out, size));
+    };
+    grow('position', extra, 3);
+    grow('normal', extraNormal, 3);
+    grow('color', extraColor, 3);
+    glow.fill(1, count);
+  }
+  // Always present, even all-zero: the shared shader declares `aGlow`, and a missing attribute
+  // falls back to the generic vertex value rather than to "no eye here".
+  geometry.setAttribute('aGlow', new THREE.BufferAttribute(glow, 1));
+}
+
+/**
+ * Injects idle, grazing, walking and eye-glow into a stock Lambert program, so creatures keep scene
+ * lighting and shadows. Everything is driven off the rest position, which is what lets one
+ * un-split mesh still have a swinging tail, a bobbing head and a lowered muzzle.
+ *
+ * The per-species constants travel as uniforms rather than as literals spliced into the source.
+ * All twenty-nine species share ONE compiled program — `customProgramCacheKey` is a constant here,
+ * and three.js keys its program cache on that rather than on the injected source — so a baked
+ * literal is silently whatever species compiled first. That was the fox, which `SPECIES` builds
+ * before any other animal, so every larger creature animated on a 0.70-unit fox's proportions: a
+ * whale's entire body fell inside the "head" band and a rail's inside nothing at all.
+ */
+function animate(material: THREE.MeshLambertMaterial, time: { value: number }, box: THREE.Box3, species: Species) {
   const minZ = box.min.z, spanZ = Math.max(.001, box.max.z - box.min.z);
   const minY = box.min.y, spanY = Math.max(.001, box.max.y - box.min.y);
-  const head = (spanY * .34).toFixed(4);
+  // One gait cycle carries the animal two steps, and it covers `motion.speed * .55` world units a
+  // second (see `update`). Deriving the cadence from the stride is what stops the feet skating.
+  const stride = spanY * .30;
+  const cadence = THREE.MathUtils.clamp(species.motion.speed * .55 / (2 * stride), .7, 3.2);
+  const accent = species.palette.accent;
+  const eye = new THREE.Color(accent ?? 0x000000);
   material.onBeforeCompile = shader => {
     shader.uniforms.uFaunaTime = time;
-    shader.vertexShader = `attribute float aPhase;\nattribute float aGait;\nattribute float aGraze;\nuniform float uFaunaTime;\n` + shader.vertexShader;
+    shader.uniforms.uFaunaBox = { value: new THREE.Vector4(minY, spanY, minZ, spanZ) };
+    shader.uniforms.uFaunaWalk = { value: new THREE.Vector2(stride, cadence) };
+    shader.uniforms.uFaunaLegs = { value: species.habitat === 'land' ? 1 : 0 };
+    // `.w` is the glow strength, so a species with no accent contributes none of it.
+    shader.uniforms.uFaunaEye = { value: new THREE.Vector4(eye.r, eye.g, eye.b, accent ? EYE_GLOW : 0) };
+    shader.vertexShader = `attribute float aPhase;\nattribute float aGait;\nattribute float aGraze;\nattribute float aGlow;\nuniform float uFaunaTime;\nuniform vec4 uFaunaBox;\nuniform vec2 uFaunaWalk;\nuniform float uFaunaLegs;\nvarying float vGlow;\nvarying float vPhase;\n` + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
-      float fRear = smoothstep(.50, .95, (transformed.z - ${minZ.toFixed(4)}) / ${spanZ.toFixed(4)});
-      float fTop  = smoothstep(.66, .95, (transformed.y - ${minY.toFixed(4)}) / ${spanY.toFixed(4)});
-      float fLeg  = 1.0 - smoothstep(.06, .44, (transformed.y - ${minY.toFixed(4)}) / ${spanY.toFixed(4)});
+      // Every weight reads the rest pose, never the displaced vertex, or the offsets below would
+      // compound into one another.
+      vec3 rest = transformed;
+      float head  = uFaunaBox.y * .34;
+      float hUp   = (rest.y - uFaunaBox.x) / uFaunaBox.y;
+      float fRear = smoothstep(.50, .95, (rest.z - uFaunaBox.z) / uFaunaBox.w);
+      float fTop  = smoothstep(.66, .95, hUp);
+      float fLeg  = 1.0 - smoothstep(.06, .44, hUp);
+      // 0 at the hip, 1 at the hoof: the leg shears away from the body instead of tearing off it.
+      float below = clamp((.40 - hUp) / .36, 0.0, 1.0);
       transformed.y += sin(uFaunaTime * 1.5 + aPhase) * .011 * (1.0 - fLeg);
       transformed.x += sin(uFaunaTime * .90 + aPhase * 1.7) * .048 * fRear;
       transformed.y += sin(uFaunaTime * 1.9 + aPhase * 2.3) * .014 * fTop;
       transformed.x += sin(uFaunaTime * 2.4 + aPhase) * .012 * fTop;
       // Feeding: the muzzle drops and swings with the neck rather than pivoting on a joint.
       float graze = aGraze * fTop;
-      transformed.y -= graze * ${head};
-      transformed.z += graze * ${head} * .40;
+      transformed.y -= graze * head;
+      transformed.z += graze * head * .40;
       transformed.x += sin(uFaunaTime * 1.3 + aPhase) * graze * .030;
-      float gait = sin(uFaunaTime * 7.0 + aPhase + transformed.z * 3.2);
-      transformed.y += abs(gait) * .050 * aGait;
-      transformed.x += gait * .028 * aGait * fLeg * sign(transformed.x + .00001);
+      // A diagonal walk: opposite legs pair up, the foot swings fore and aft about the hip, and it
+      // only leaves the ground on the forward half of the beat. That lift is what reads as a step
+      // rather than as the whole animal sliding along the grass.
+      float walk  = aGait * uFaunaLegs;
+      float fore  = smoothstep(.38, .62, (rest.z - uFaunaBox.z) / uFaunaBox.w);
+      float beat  = uFaunaTime * uFaunaWalk.y + aPhase + fore * PI + step(0.0, rest.x) * PI;
+      float swing = sin(beat);
+      transformed.z += swing * uFaunaWalk.x * below * walk;
+      transformed.y += max(0.0, swing) * uFaunaWalk.x * .34 * below * below * walk;
+      // The body rides up twice a cycle, once per landing pair.
+      transformed.y += (0.5 - 0.5 * cos(beat * 2.0)) * uFaunaWalk.x * .16 * (1.0 - below) * walk;
+      vGlow = aGlow;
+      vPhase = aPhase;
     `);
+    // Eyes are the one emissive tone in the bestiary, and they are mixed in here rather than set on
+    // `emissive` so they follow the same tonemapping, colour space and fog as the rest of the scene.
+    shader.fragmentShader = `uniform float uFaunaTime;\nuniform vec4 uFaunaEye;\nvarying float vGlow;\nvarying float vPhase;\n` + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
+      outgoingLight = mix(outgoingLight, uFaunaEye.rgb * uFaunaEye.w * (.86 + .14 * sin(uFaunaTime * 2.3 + vPhase)), vGlow);
+      #include <opaque_fragment>`);
   };
-  material.customProgramCacheKey = () => 'fauna-idle-v3';
+  material.customProgramCacheKey = () => 'fauna-idle-v4';
 }
 
 interface Entry { species: Species; mesh: THREE.InstancedMesh; records: FaunaRecord[]; gait: THREE.InstancedBufferAttribute; graze: THREE.InstancedBufferAttribute; }
@@ -119,6 +264,8 @@ interface Wanderer {
   path: { x: number; z: number; tileId: string }[];
   step: number;
   graze: number;
+  /** Eased 0..1 walk weight. A hard 0/1 snaps the legs on the instant a path is picked. */
+  gait: number;
 }
 
 export class WorldCreatures {
@@ -156,9 +303,12 @@ export class WorldCreatures {
       const own = this.records.filter(record => record.species === species.id);
       if (!own.length) continue;
       const geometry = tint(normalize(source, species), species);
+      // `addEyes` appends to the mesh, so the bounding box `tint` left behind is still the body's:
+      // the eye beads sit inside the skull, and both `heights` and the walk weights want the body.
+      addEyes(geometry, species);
       this.heights.set(species.id, geometry.boundingBox!.max.y - geometry.boundingBox!.min.y);
       const material = new THREE.MeshLambertMaterial({ vertexColors: true });
-      animate(material, this.time, geometry.boundingBox!);
+      animate(material, this.time, geometry.boundingBox!, species);
       const mesh = new THREE.InstancedMesh(geometry, material, own.length);
       mesh.name = 'fauna-' + species.id;
       mesh.receiveShadow = true;
@@ -179,7 +329,7 @@ export class WorldCreatures {
         this.quaternion.setFromEuler(new THREE.Euler(0, record.rot, 0));
         this.matrix.compose(this.position.set(record.x, y, record.z), this.quaternion, this.scale.setScalar(record.scale * (species.model.scale ?? 1)));
         mesh.setMatrixAt(i, this.matrix);
-        this.wanderers.push({ entry, index: i, record, species, x: record.x, z: record.z, y, yaw: record.rot, mode: 'idle', timer: 1 + random(record.tileId.length * 7.7) * 4, path: [], step: 0, graze: 0 });
+        this.wanderers.push({ entry, index: i, record, species, x: record.x, z: record.z, y, yaw: record.rot, mode: 'idle', timer: 1 + random(record.tileId.length * 7.7) * 4, path: [], step: 0, graze: 0, gait: 0 });
       });
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.instanceMatrix.needsUpdate = true;
@@ -247,12 +397,12 @@ export class WorldCreatures {
         }
         wanderer.y = this.seatY(species, wanderer.record.tileId, wanderer.x, wanderer.z);
       }
-      const moving = wanderer.mode === 'walk' ? 1 : 0;
+      wanderer.gait += ((wanderer.mode === 'walk' ? 1 : 0) - wanderer.gait) * Math.min(dt * 5, 1);
       this.quaternion.setFromEuler(new THREE.Euler(0, wanderer.yaw, 0));
       this.matrix.compose(this.position.set(wanderer.x, wanderer.y, wanderer.z), this.quaternion, this.scale.setScalar(wanderer.record.scale * (species.model.scale ?? 1)));
       wanderer.entry.mesh.setMatrixAt(wanderer.index, this.matrix);
       wanderer.entry.mesh.instanceMatrix.needsUpdate = true;
-      wanderer.entry.gait.setX(wanderer.index, moving);
+      wanderer.entry.gait.setX(wanderer.index, wanderer.gait);
       wanderer.entry.gait.needsUpdate = true;
       wanderer.entry.graze.setX(wanderer.index, wanderer.graze);
       wanderer.entry.graze.needsUpdate = true;
