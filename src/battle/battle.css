@@ -101,6 +101,9 @@
   min-height: 0;
   display: grid;
   grid-template-columns: 268px minmax(0, 1fr) 312px;
+  /* `minmax(0, 1fr)` and not the implicit `auto`: an auto row grows to fit the log's 200 lines, which
+     pushes the panel's own footer off the bottom of the screen instead of scrolling the log. */
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
   padding: 16px 24px 14px;
 }
@@ -659,43 +662,68 @@
 }
 
 
+/* The phone gets a scrolling page with the hand pinned to the floor: the enemies are moved to the
+   top so the first screenful is 对手 + 手牌, and everything else is a scroll away. */
 @media (max-width: 900px) {
   .bd { height: auto; min-height: 100dvh; overflow: visible; }
-  .bd-top { padding: 13px 14px 12px; gap: 14px; }
-  .bd-title { font-size: 22px; letter-spacing: 4px; }
-  .bd-title small { display: block; margin: 5px 0 0; }
-  .bd-sub { display: none; }
-  .bd-facts { gap: 16px; }
-  .bd-tools { width: 100%; }
-  .bd-btn { flex: 1; justify-content: center; padding: 9px 10px; letter-spacing: 1px; }
+  .bd-top { padding: 10px 12px 9px; gap: 8px; align-items: center; }
+  .bd-kicker { font-size: 9px; letter-spacing: 2px; margin-bottom: 4px; }
+  .bd-title { font-size: 20px; letter-spacing: 4px; }
+  .bd-title small, .bd-sub { display: none; }
+  .bd-facts { gap: 13px; }
+  .bd-fact i { font-size: 9px; letter-spacing: 1.4px; }
+  .bd-fact b { font-size: 17px; }
+  .bd-tools { width: 100%; gap: 5px; }
+  .bd-btn { flex: 1; justify-content: center; padding: 7px 8px; font-size: 11.5px; letter-spacing: .5px; }
 
-  .bd-stage { display: block; padding: 12px 12px 24px; }
-  .bd-player-panel, .bd-log { margin-bottom: 12px; }
-  .bd-player-panel { gap: 11px; }
-  .bd-panel-note { margin-top: 4px; }
+  .bd-stage { display: flex; flex-direction: column; gap: 10px; padding: 10px; }
+  /* The enemy first: on a phone the first screen should show what you are fighting, and the hand
+     rides at the bottom of it. The panel and the log are one short scroll away. */
+  .bd-field { order: -1; }
+  .bd-player-panel { gap: 9px; padding: 11px 12px; }
+  .bd-panel-head { padding-bottom: 7px; }
+  .bd-panel-head h2 { font-size: 18px; letter-spacing: 3px; }
+  .bd-panel-note { display: none; }
+  .bd-pill { font-size: 11.5px; padding: 3px 7px; }
+  .bd-pile b { font-size: 17px; }
 
   /* The two rows that grow sideways stay sideways — they scroll instead of wrapping. */
-  .bd-enemy-row { justify-content: flex-start; padding: 4px 2px 8px; }
-  .bd-enemy { width: 168px; }
-  .bd-enemy-art { height: clamp(130px, 30vh, 200px); }
+  .bd-enemy-row { justify-content: flex-start; padding: 2px; }
+  .bd-enemy { width: 156px; }
+  .bd-enemy-art { height: clamp(104px, 16vh, 160px); }
+  .bd-intent { font-size: 11.5px; padding: 3px 7px; }
   .bd-enemy-note { display: none; }
+  .bd-enemy-name { font-size: 17px; letter-spacing: 2px; }
 
-  /* The hand is the one thing that must never be off-screen, so it sticks to the floor. */
+  /* The log keeps its last few lines on screen; the whole of it is a desktop luxury. */
+  .bd-log { max-height: 210px; padding: 9px 10px; }
+  .bd-log-head { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding-bottom: 8px; }
+  .bd-log-head h2 { font-size: 13px; letter-spacing: 2px; }
+  .bd-log-head h2 small { display: none; }
+  .bd-end-turn { width: auto; flex: 1 1 130px; padding: 8px 11px; font-size: 13px; letter-spacing: 2px; }
+  .bd-log-body { max-height: 128px; padding: 7px 2px; }
+  .bd-log-note { display: none; }
+
+  /* Full-size cards cost 344px of a 844px screen; scaled they cost 248 and still read. */
   .bd-hand-row {
     position: sticky;
     bottom: 0;
     z-index: 20;
     justify-content: flex-start;
-    padding: 14px 4px 12px;
-    background: linear-gradient(0deg, rgba(8, 13, 16, .97) 62%, rgba(8, 13, 16, 0));
+    padding: 10px 6px 8px;
+    overflow-y: hidden;
+    background: linear-gradient(0deg, rgba(8, 13, 16, .99) 68%, rgba(8, 13, 16, 0));
   }
-  .bd-hand-card + .bd-hand-card { margin-left: -74px; }
-  .bd-hand-empty { padding: 60px 0; }
+  .bd-hand-card { transform: scale(.72); transform-origin: 50% 100%; margin-top: -96px; }
+  .bd-hand-card + .bd-hand-card { margin-left: -88px; }
+  .bd-hand-empty { padding: 40px 0; }
 
-  .bd-log-body { max-height: 40vh; }
   .bd-over-card { padding: 24px 20px; }
   .bd-over-card h2 { font-size: 25px; letter-spacing: 6px; }
+  .bd-modal-inner { padding: 16px; }
   .bd-tour-bubble { left: 12px !important; right: 12px; width: auto !important; }
+  .bd-tour-title { font-size: 19px; letter-spacing: 3px; }
+  .bd-tour-body { font-size: 12.5px; line-height: 1.9; }
 }
 
 @media (prefers-reduced-motion: reduce) {

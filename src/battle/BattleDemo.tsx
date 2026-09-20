@@ -577,11 +577,12 @@ export default function BattleDemo() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selector, tour]);
 
-  // The log follows the fight, but never yanks the panel if the reader has scrolled up to think.
+  // The log follows the fight — until the reader scrolls up to think, at which point it stays put
+  // rather than yanking the panel away from them.
+  const stick = useRef(true);
   useEffect(() => {
     const node = logRef.current;
-    if (!node) return;
-    if (node.scrollHeight - node.scrollTop - node.clientHeight < 90) node.scrollTop = node.scrollHeight;
+    if (node && stick.current) node.scrollTop = node.scrollHeight;
   }, [state.log.length]);
 
   const enemyFx = useMemo(() => {
@@ -694,7 +695,10 @@ export default function BattleDemo() {
             结束回合<ChevronRight size={15} strokeWidth={1.8} />
           </button>
         </div>
-        <div className="bd-log-body" ref={logRef}>
+        <div className="bd-log-body" ref={logRef} onScroll={event => {
+          const node = event.currentTarget;
+          stick.current = node.scrollHeight - node.scrollTop - node.clientHeight < 60;
+        }}>
           {state.log.map(line => <p key={line.id} className={`bd-log-line ${line.tone}`}>{line.text}</p>)}
         </div>
         <p className="bd-log-note">意图 · 伤害 · 状态，全部按发生顺序落在这里。</p>
@@ -741,7 +745,9 @@ export default function BattleDemo() {
     </div>}
 
     {step && <>
-      <div className="bd-tour-shield" onClick={event => event.stopPropagation()} />
+      {/* Steps the player only has to read swallow the clicks; the two that ask for an action
+          (打出一张牌 / 结束回合) leave the board live, or the gate could never be satisfied. */}
+      {!step.gate && <div className="bd-tour-shield" />}
       {box ? <>
         <div className="bd-tour-mask" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} />
         <div className="bd-tour-ring" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} />
