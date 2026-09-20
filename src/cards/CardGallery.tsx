@@ -1,7 +1,7 @@
 import { useMemo, useState, type CSSProperties } from 'react';
 import { CARD_SOUNDS, sound } from '../audio';
 import { CardBack, CardFace, CardFlip } from './CardFace';
-import { CARDS, CARD_BY_ID, DECKS, DECK_BY_ID, KEYWORDS, MAIN_SHARE, TIERS, tierCounts, type CardDefinition, type DeckId, type TierId } from './index';
+import { CARDS, CARD_BY_ID, DECKS, DECK_BY_ID, KEYWORDS, MAIN_SHARE, PATTERN_LABEL, TIERS, tierCounts, type CardDefinition, type DeckId, type PatternId, type TierId } from './index';
 import { CARD_QUERY } from './art';
 import './gallery.css';
 
@@ -14,6 +14,7 @@ export default function CardGallery() {
   const [tier, setTier] = useState<TierId | 'all'>('all');
   const [type, setType] = useState<string>('all');
   const [keyword, setKeyword] = useState<string>('all');
+  const [pattern, setPattern] = useState<PatternId | 'all'>('all');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<CardDefinition | null>(null);
   const [main, setMain] = useState<DeckId>('blade');
@@ -26,7 +27,8 @@ export default function CardGallery() {
     (tier === 'all' || card.tier === tier) &&
     (type === 'all' || card.type === type) &&
     (keyword === 'all' || card.keywords.includes(keyword as never)) &&
-    (!query || (card.name + card.text + card.lore).includes(query))), [deck, tier, type, keyword, query]);
+    (pattern === 'all' || card.pattern === pattern) &&
+    (!query || (card.name + card.text + card.lore).includes(query))), [deck, tier, type, keyword, pattern, query]);
 
   const spread = useMemo(() => {
     const counts = Object.fromEntries(TIERS.map(t => [t.id, 0])) as Record<TierId, number>;
@@ -82,6 +84,7 @@ export default function CardGallery() {
             <div><dt>携带</dt><dd>{active.size} 张</dd></div>
             <div><dt>种类</dt><dd>{active.cards.length} 种</dd></div>
             <div><dt>中立</dt><dd>{active.cards.filter(entry => CARD_BY_ID.get(entry.id)!.deck === 'neutral').length} 种</dd></div>
+            <div><dt>形状</dt><dd>{new Set(active.cards.map(entry => CARD_BY_ID.get(entry.id)!.pattern)).size} 种</dd></div>
           </dl>
           <div className="cg-spread">{TIERS.map(t => chosen[t.id] ? <span key={t.id} style={{ '--tier': t.accent, flexGrow: chosen[t.id] } as CSSProperties} title={`${t.name} ${chosen[t.id]} 张`}><i style={{ background: t.accent }} />{t.name} {chosen[t.id]}</span> : null)}</div>
           <div className="cg-copies">残烬层每种 3 张（{chosen.cinder} 张），其余每种 1 张（{active.size - chosen.cinder} 张）</div>
@@ -120,7 +123,8 @@ export default function CardGallery() {
       <div className="cg-hand">
         <div className="cg-hand-pile" title={`${mainDeck.name} 牌堆`}><div className="cg-hand-back" style={{ backgroundImage: `url(/assets/cards/back-${mainDeck.id}.webp)` }} /><span>{mainDeck.size} 张</span></div>
         <div className="cg-hand-row">
-          {hand.map(item => <CardFlip key={item.key} card={item.card} deck={DECK_BY_ID.get(item.card.deck === 'neutral' ? mainDeck.id : item.card.deck)!} revealed={item.revealed} />)}
+          {hand.map(item => <CardFlip key={item.key} card={item.card} revealed={item.revealed}
+            deck={DECK_BY_ID.get(item.card.deck === 'neutral' ? mainDeck.id : item.card.deck as DeckId)!} />)}
           {!hand.length && <p className="cg-hand-empty">手牌区是空的。</p>}
         </div>
       </div>
@@ -139,16 +143,27 @@ export default function CardGallery() {
     </section>
 
     <section className="cg-keywords">
-      <h2>共享机制<small>SHARED KEYWORDS</small></h2>
-      <div>{KEYWORDS.map(k => <button key={k.id} className={keyword === k.id ? 'on' : ''} onClick={() => setKeyword(keyword === k.id ? 'all' : k.id)}>
-        <b>{k.name}</b><span>{DECK_BY_ID.get(k.owner)!.name}</span><p>{k.rule}</p>
+      <h2>流派资源<small>ARCHETYPE RESOURCES</small><span className="cg-h2-note">每副牌组产出一个、消耗另一个的</span></h2>
+      <div>{KEYWORDS.filter(k => k.kind === 'resource').map(k => <button key={k.id} className={keyword === k.id ? 'on' : ''} onClick={() => setKeyword(keyword === k.id ? 'all' : k.id)}>
+        <b>{k.name}</b><span>{k.owner ? DECK_BY_ID.get(k.owner)!.name : ''}</span><p>{k.rule}</p>
+      </button>)}</div>
+    </section>
+
+    <section className="cg-keywords">
+      <h2>通用机制<small>UNIVERSAL MECHANICS</small><span className="cg-h2-note">任何牌组都能用——这才是让每张牌不一样的东西</span></h2>
+      <div>{KEYWORDS.filter(k => k.kind === 'mechanic').map(k => <button key={k.id} className={keyword === k.id ? 'on' : ''} onClick={() => setKeyword(keyword === k.id ? 'all' : k.id)}>
+        <b>{k.name}</b><span>{CARDS.filter(c => c.keywords.includes(k.id)).length} 张</span><p>{k.rule}</p>
       </button>)}</div>
     </section>
 
     <section className="cg-filters">
       <div className="cg-types"><button className={type === 'all' ? 'on' : ''} onClick={() => setType('all')}>全部</button>{TYPE_ORDER.map(t => <button key={t} className={type === t ? 'on' : ''} onClick={() => setType(t)}>{TYPE_LABEL[t]}</button>)}</div>
+      <label className="cg-patterns">形状 <select value={pattern} onChange={e => setPattern(e.target.value as PatternId | 'all')}>
+        <option value="all">全部形状</option>
+        {(Object.keys(PATTERN_LABEL) as PatternId[]).map(id => <option key={id} value={id}>{PATTERN_LABEL[id]}（{CARDS.filter(c => c.pattern === id).length}）</option>)}
+      </select></label>
       <label className="cg-search"><input placeholder="搜索牌名、规则或风味文本…" value={query} onChange={e => setQuery(e.target.value)} /></label>
-      <div className="cg-spread-mini">{TIERS.map(t => <span key={t.id} style={{ '--tier': t.accent } as CSSProperties}>{t.name} <b>{spread[t.id]}</b></span>)}<span className="cg-total">共 <b>{shown.length}</b> 张</span></div>
+      <div className="cg-spread-mini">{TIERS.map(t => <span key={t.id} style={{ '--tier': t.accent } as CSSProperties}>{t.name} <b>{spread[t.id]}</b></span>)}<span className="cg-total">共 <b>{shown.length}</b> 张 · <b>{new Set(shown.map(c => c.pattern)).size}</b> 种形状</span></div>
     </section>
 
     <section className="cg-grid">{shown.map(card => <button key={card.id} className="cg-slot" onPointerEnter={() => sound('hover', audioOn)} onClick={() => { sound('select', audioOn); setOpen(card); }} aria-label={`查看 ${card.name}`}><CardFace card={card} /></button>)}</section>
@@ -165,6 +180,7 @@ export default function CardGallery() {
             <div><dt>稀有度</dt><dd>{TIERS.find(t => t.id === open.tier)!.name}（掉落 {TIERS.find(t => t.id === open.tier)!.weight}%）</dd></div>
             <div><dt>费用</dt><dd>{open.cost >= 0 ? open.cost : '不可直接打出'}</dd></div>
             <div><dt>类型</dt><dd>{TYPE_LABEL[open.type]}</dd></div>
+            <div><dt>形状</dt><dd>{PATTERN_LABEL[open.pattern]}</dd></div>
             <div><dt>机制</dt><dd>{open.keywords.length ? open.keywords.map(k => KEYWORDS.find(w => w.id === k)!.name).join(' · ') : '无'}</dd></div>
             {open.bridge && <div><dt>跨组联动</dt><dd>{DECK_BY_ID.get(open.bridge)!.name}</dd></div>}
             <div><dt>封面取材</dt><dd>{CARD_QUERY[open.id] ?? '—'}</dd></div>

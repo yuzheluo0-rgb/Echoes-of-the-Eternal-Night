@@ -147,3 +147,7 @@
 .cg-sfx button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 3px; font-size: 11px; letter-spacing: 1.4px; color: #a9b6ae; }
 .cg-sfx button:hover { color: #f4e8ca; border-color: rgba(212, 189, 135, .5); }
 .cg-sfx-toggle.on { color: #d9c48c; border-color: rgba(212, 189, 135, .45); }
+
+.cg-patterns { display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 1.2px; color: var(--dim); }
+.cg-patterns select { max-width: 210px; }
+.cg-h2-note { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 10px; letter-spacing: 1px; color: #7f9189; margin-left: 14px; }
