@@ -1,0 +1,325 @@
+/* Card faces. The photograph is the whole cover; everything else is an overlay, so the art is never
+   boxed into a window and a hundred different photos still read as one deck.
+   Rarity is expressed three ways at once — border brightness, name size, and how much the card is
+   allowed to move — so tier is legible from across the table, not only up close. */
+
+.cq {
+  --accent: #8a7f6c;
+  --deck: #8a7f6c;
+  --edge: #5d564a;
+  --glow: 0 0 0 rgba(0, 0, 0, 0);
+  --rx: 0deg;
+  --ry: 0deg;
+  --glow-x: 50%;
+  --glow-y: 50%;
+  width: 236px;
+  height: 344px;
+  flex-shrink: 0;
+  position: relative;
+  font-family: 'Noto Serif SC', 'Songti SC', 'STZhongsong', serif;
+  /* The lift lives in a variable so hovering adds to the pointer tilt instead of overwriting it. */
+  --lift: 0;
+  transform: perspective(1000px) translateY(calc(var(--lift) * -10px)) rotateX(var(--rx)) rotateY(var(--ry)) scale(calc(1 + var(--lift) * .04));
+  transform-style: preserve-3d;
+  transition: transform .4s cubic-bezier(.16, 1, .3, 1), filter .4s;
+  will-change: transform;
+}
+.cq-compact { width: 150px; height: 219px; }
+
+.cq-inner {
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0b0f13;
+  border: 1px solid var(--edge);
+  box-shadow: var(--glow), 0 10px 26px rgba(0, 0, 0, .55);
+  isolation: isolate;
+  transition: box-shadow .4s, border-color .4s;
+}
+
+/* The premium frame, in three layers: an inset metal bevel just inside the edge, a hairline that
+   catches the light, and a foil grain over the whole face. Together they are what stops a
+   photograph from reading as a photograph pasted onto a rectangle. */
+.cq-bevel {
+  position: absolute;
+  inset: 3px;
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 4;
+  border: 1px solid rgba(255, 255, 255, .07);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, .13), transparent 22%, transparent 78%, rgba(255, 255, 255, .08)) border-box;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, .12),
+    inset 0 -1px 0 rgba(0, 0, 0, .6);
+}
+.cq-foil {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  opacity: .1;
+  mix-blend-mode: overlay;
+  background-image:
+    repeating-linear-gradient(115deg, rgba(255, 255, 255, .5) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(25deg, rgba(0, 0, 0, .5) 0 1px, transparent 1px 4px);
+}
+.cq-pointer-glow {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .3s;
+  background: radial-gradient(220px circle at var(--glow-x) var(--glow-y), color-mix(in srgb, var(--accent) 26%, transparent), transparent 62%);
+  mix-blend-mode: screen;
+}
+.cq:hover .cq-pointer-glow { opacity: 1; }
+.cq-art {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: 50% 42%;
+  filter: saturate(.98) contrast(1.05) brightness(.94);
+  transform: scale(1.02);
+  transition: transform .5s cubic-bezier(.16, 1, .3, 1), filter .4s;
+}
+/* Two dark bands rather than one flat wash: the top keeps the cost orb readable, the bottom carries
+   the text panel, and the middle of the photograph is left alone. */
+.cq-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(6, 10, 14, .74) 0%, rgba(6, 10, 14, .08) 20%, rgba(6, 10, 14, 0) 40%),
+    linear-gradient(0deg, rgba(5, 8, 12, .95) 0%, rgba(5, 8, 12, .9) 32%, rgba(5, 8, 12, .3) 50%, rgba(5, 8, 12, 0) 66%);
+}
+.cq:hover .cq-art { transform: scale(1.07); filter: saturate(1.05) contrast(1.08) brightness(.9); }
+
+/* --- cost and tier ------------------------------------------------------- */
+.cq-cost {
+  position: absolute;
+  left: 9px;
+  top: 9px;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 500;
+  color: #f4e7c9;
+  background: radial-gradient(circle at 35% 30%, #2b3a44, #0d161c 72%);
+  border: 1px solid var(--edge);
+  border-radius: 50%;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, .8), 0 2px 8px rgba(0, 0, 0, .6);
+  text-shadow: 0 1px 3px #000;
+}
+.cq-tier {
+  position: absolute;
+  right: 10px;
+  top: 13px;
+  font-size: 10px;
+  letter-spacing: 2.4px;
+  color: var(--accent);
+  text-shadow: 0 1px 6px #000, 0 0 12px #000;
+  opacity: .95;
+}
+
+/* --- name, type, rules --------------------------------------------------- */
+.cq-body {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0 13px 12px;
+}
+/* The name sits on its own engraved plate: a dark bevelled strip with a lit top edge and a shadowed
+   bottom one, so it reads as stamped metal rather than as text dropped on a photo. */
+.cq-name {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 3px;
+  line-height: 1.2;
+  padding: 5px 10px;
+  border-left: 2px solid var(--accent);
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(100deg, rgba(8, 12, 16, .82), rgba(8, 12, 16, .3) 88%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .09), inset 0 -1px 0 rgba(0, 0, 0, .55);
+  color: #efe3c6;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .9), 0 0 16px rgba(0, 0, 0, .85);
+}
+.cq-name > span {
+  --name-color: #efe3c6;
+  background: linear-gradient(180deg, #fffaf0 4%, var(--name-color) 54%, color-mix(in srgb, var(--name-color) 34%, #000) 132%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .85));
+}
+.cq-type {
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 9px;
+  letter-spacing: 1.6px;
+  color: #93a89f;
+  margin-bottom: 7px;
+}
+.cq-text {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.62;
+  color: #cdd6cd;
+  text-shadow: 0 1px 3px #000;
+  min-height: 38px;
+}
+.cq-keywords { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.cq-keywords > span {
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 9px;
+  letter-spacing: .6px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+}
+.cq-keywords > .cq-bridge { color: var(--deck); border-color: color-mix(in srgb, var(--deck) 40%, transparent); background: color-mix(in srgb, var(--deck) 14%, transparent); }
+
+/* --- ornaments ----------------------------------------------------------- */
+.cq-corner { position: absolute; width: 15px; height: 15px; border: 1px solid var(--accent); opacity: .5; }
+.cq-corner.tl { left: 5px; top: 5px; border-right: 0; border-bottom: 0; border-radius: 6px 0 0 0; }
+.cq-corner.tr { right: 5px; top: 5px; border-left: 0; border-bottom: 0; border-radius: 0 6px 0 0; }
+.cq-corner.bl { left: 5px; bottom: 5px; border-right: 0; border-top: 0; border-radius: 0 0 0 6px; }
+.cq-corner.br { right: 5px; bottom: 5px; border-left: 0; border-top: 0; border-radius: 0 0 6px 0; }
+.cq:hover { --lift: 1; z-index: 5; }
+.cq:hover .cq-inner { border-color: color-mix(in srgb, var(--accent) 85%, #fff 12%); }
+
+.cq-sheen {
+  position: absolute;
+  inset: -40%;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, .16) 48%, transparent 58%);
+  opacity: 0;
+  pointer-events: none;
+}
+.cq:hover .cq-sheen { opacity: 1; animation: cq-sweep .9s ease-out; }
+@keyframes cq-sweep { from { transform: translateX(-42%); } to { transform: translateX(42%); } }
+
+/* --- rarity tiers -------------------------------------------------------- */
+/* 残烬 — the fire is nearly out. Flat, quiet, nothing moves. */
+.cq-cinder { --edge: #574f43; --glow: 0 0 0 rgba(0, 0, 0, 0); }
+.cq-cinder .cq-name { font-size: 15px; } .cq-cinder .cq-name > span { --name-color: #ddd2ba; }
+.cq-cinder .cq-art { filter: saturate(.72) contrast(1.02) brightness(.84); }
+
+/* 微光 — a wick catching. A little light comes off the border. */
+.cq-glimmer { --edge: #7f938f; --glow: 0 0 14px color-mix(in srgb, var(--accent) 22%, transparent); }
+.cq-glimmer .cq-name { font-size: 16px; } .cq-glimmer .cq-name > span { --name-color: #e6e6dc; }
+.cq-glimmer .cq-art { filter: saturate(.92) contrast(1.04) brightness(.9); }
+
+/* 明焰 — a real fire. The border glows and the card catches the light when you touch it. */
+.cq-blaze { --edge: #c89a5c; --glow: 0 0 20px color-mix(in srgb, var(--accent) 34%, transparent); }
+.cq-blaze .cq-name { font-size: 17.5px; } .cq-blaze .cq-name > span { --name-color: var(--accent); }
+.cq-blaze .cq-inner::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  box-shadow: inset 0 0 26px color-mix(in srgb, var(--accent) 20%, transparent);
+  pointer-events: none;
+}
+
+/* 长明 — a fire that does not go out. It breathes, and it sheds embers. */
+.cq-everburning { --edge: #e0be7d; --glow: 0 0 30px color-mix(in srgb, var(--accent) 42%, transparent); }
+.cq-everburning .cq-name { font-size: 19.5px; letter-spacing: 3.6px; } .cq-everburning .cq-name > span { --name-color: #f4dda6; }
+.cq-everburning .cq-inner { animation: cq-breathe 3.6s ease-in-out infinite; }
+.cq-everburning .cq-inner::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  box-shadow: inset 0 0 34px color-mix(in srgb, var(--accent) 26%, transparent);
+  pointer-events: none;
+}
+@keyframes cq-breathe {
+  0%, 100% { box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 30%, transparent), 0 10px 26px rgba(0, 0, 0, .55); }
+  50% { box-shadow: 0 0 40px color-mix(in srgb, var(--accent) 48%, transparent), 0 10px 26px rgba(0, 0, 0, .55); }
+}
+
+/* 星陨 — a piece of the sky. Prismatic, restless, the only tier with a colour that is not the deck's. */
+.cq-starfall { --edge: #8ec8f0; --glow: 0 0 38px color-mix(in srgb, var(--accent) 50%, transparent); }
+.cq-starfall .cq-name { font-size: 22px; letter-spacing: 4px; } .cq-starfall .cq-name > span { --name-color: #eaf6ff; }
+.cq-starfall .cq-inner { animation: cq-breathe 2.8s ease-in-out infinite; }
+.cq-starfall .cq-tier { color: #cfe9ff; }
+.cq-starfall .cq-art { filter: saturate(1.14) contrast(1.08) brightness(.96); }
+
+.cq-holo {
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: .3;
+  background: conic-gradient(from 0deg, #ff6bd6, #6bffd0, #6bb4ff, #ffd76b, #ff6bd6);
+  animation: cq-spin 7s linear infinite;
+  mask: linear-gradient(150deg, #000 0%, transparent 34%, transparent 62%, #000 100%);
+  -webkit-mask: linear-gradient(150deg, #000 0%, transparent 34%, transparent 62%, #000 100%);
+}
+@keyframes cq-spin { to { filter: hue-rotate(360deg); } }
+
+/* --- particles ----------------------------------------------------------- */
+.cq-motes { position: absolute; inset: 0; pointer-events: none; overflow: hidden; border-radius: 10px; }
+.cq-motes i {
+  position: absolute;
+  bottom: -6px;
+  left: calc(6% + var(--mote) * 9.2%);
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 7px 1px color-mix(in srgb, var(--accent) 80%, transparent);
+  opacity: 0;
+  animation: cq-rise calc(3.4s + var(--mote) * .34s) linear infinite;
+  animation-delay: calc(var(--mote) * -.62s);
+}
+@keyframes cq-rise {
+  0% { opacity: 0; transform: translateY(0) scale(.6); }
+  16% { opacity: .95; }
+  80% { opacity: .5; }
+  100% { opacity: 0; transform: translateY(-330px) translateX(calc((var(--mote) - 5) * 2.4px)) scale(1); }
+}
+
+/* --- back ---------------------------------------------------------------- */
+.cq-back .cq-art { filter: saturate(.7) contrast(1.05) brightness(.44); }
+.cq-back-veil { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, transparent 12%, rgba(4, 7, 10, .82) 78%); }
+.cq-back-plate { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; padding: 0 20px; text-align: center; }
+.cq-back-plate h3 { margin: 0; font-size: 21px; font-weight: 400; letter-spacing: 7px; color: #e8dcbe; text-shadow: 0 2px 10px #000; padding-left: 7px; }
+.cq-back-plate small { font-family: 'Segoe UI', sans-serif; font-size: 8px; letter-spacing: 3.2px; color: color-mix(in srgb, var(--deck) 80%, #fff); }
+.cq-back-rule { width: 62%; height: 1px; background: linear-gradient(90deg, transparent, var(--deck), transparent); opacity: .55; }
+
+.cq-selected .cq-inner { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent), var(--glow); }
+
+/* --- flicker ------------------------------------------------------------- */
+/* Firelight never holds steady. Only the top two tiers flicker, and only by a few percent — enough
+   that the eye reads them as burning rather than as badly compressed. */
+@keyframes cq-flicker {
+  0%, 38%, 46%, 62%, 70%, 100% { opacity: 1; }
+  41% { opacity: .78; }
+  66% { opacity: .86; }
+  88% { opacity: .93; }
+}
+@keyframes cq-firelight {
+  0%, 100% { filter: saturate(.98) contrast(1.05) brightness(.92); }
+  31% { filter: saturate(1.04) contrast(1.07) brightness(1); }
+  58% { filter: saturate(.94) contrast(1.03) brightness(.86); }
+  79% { filter: saturate(1.02) contrast(1.06) brightness(.96); }
+}
+.cq-everburning .cq-bevel, .cq-starfall .cq-bevel { animation: cq-flicker calc(3.1s + var(--accent-len, 0s)) ease-in-out infinite; }
+.cq-everburning .cq-art, .cq-starfall .cq-art { animation: cq-firelight 6.1s ease-in-out infinite; }
+.cq-starfall .cq-bevel { animation-duration: 2.3s; }
+.cq:hover .cq-inner { animation-play-state: paused; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cq-inner, .cq-art, .cq-holo, .cq-motes i, .cq-sheen, .cq-bevel { animation: none !important; transition: none !important; }
+  .cq-motes { display: none; }
+  .cq { transform: none; }
+}
