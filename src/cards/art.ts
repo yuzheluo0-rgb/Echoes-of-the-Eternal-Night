@@ -141,10 +141,16 @@ export const CARD_QUERY: Record<string, string> = {
   'neutral-10': 'afterglow sunset dramatic sky',
 };
 
-/** A deck's back is one image, reused by every card in that deck. */
+/**
+ * A deck's back is one image, reused by every card in that deck — a back is meant to be uniform, and
+ * it is the only thing a player sees before the card is drawn. The brief was cosmic and prismatic
+ * rather than another dark texture, so each back is a mineral or celestial form that suits its
+ * archetype: shattered glass for the blade, a nebula for the flame, ice for the wall, and a
+ * kaleidoscope for the hall of mirrors.
+ */
 export const BACK_QUERY: Record<string, string> = {
-  blade: 'blacksmith anvil dark forge',
-  flame: 'bonfire sparks night dark',
-  bone: 'ancient stone wall dark',
-  mirror: 'ornate mirror dark room',
+  blade: 'shattered glass shards macro blue',
+  flame: 'nebula galaxy orange pink stars',
+  bone: 'ice crystal macro dark blue',
+  mirror: 'kaleidoscope prism light refraction',
 };

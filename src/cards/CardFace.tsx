@@ -93,4 +93,21 @@ export function CardBack({ deck, compact }: { deck: Deck; compact?: boolean }) {
   </article>;
 }
 
+/**
+ * A card being drawn: it arrives face down and turns over once it has landed in hand. Two layers
+ * back to back, so the flip is a real half-turn rather than a cross-fade — the edge of the card
+ * actually goes past you, which is what makes a draw feel like a draw.
+ *
+ * `revealed` is driven by the caller, not by a timer in here, so the battle layer can keep the
+ * timing in step with its own animation queue.
+ */
+export function CardFlip({ card, deck, revealed, delay = 0 }: { card: CardDefinition; deck: Deck; revealed: boolean; delay?: number }) {
+  return <div className={`cq-flip ${revealed ? 'is-flipped' : ''}`} style={{ '--flip-delay': `${delay}ms` } as CSSProperties}>
+    <div className="cq-flip-inner">
+      <div className="cq-flip-face cq-flip-back"><CardBack deck={deck} /></div>
+      <div className="cq-flip-face cq-flip-front"><CardFace card={card} /></div>
+    </div>
+  </div>;
+}
+
 export { RANK };

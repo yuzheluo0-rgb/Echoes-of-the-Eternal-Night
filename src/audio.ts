@@ -1,7 +1,21 @@
 /** Layered local sound design with cathedral convolution, no external audio requests. */
 import { WorldSoundscape } from './world/WorldSoundscape';
 import type { Biome } from './world/worldData';
-export type SoundKind = 'hover' | 'select' | 'draw' | 'strike' | 'flame' | 'shield' | 'death' | 'bell' | 'combo' | 'win';
+export type SoundKind = 'hover' | 'select' | 'draw' | 'shuffle' | 'play' | 'strike' | 'flame' | 'shield' | 'death' | 'bell' | 'combo' | 'win';
+
+/** One card sliding off the top of a deck: paper has almost no body, so the whole sound is a short
+ *  band of filtered noise with a fast attack. Two bands, the second slightly later and brighter — a
+ *  card is two surfaces leaving each other, not one. */
+function slide(ctx: AudioContext, delay: number, amplitude: number, spread = 1) {
+  noise(ctx, 2400 * spread, .16, amplitude, 'bandpass', delay);
+  noise(ctx, 3900 * spread, .10, amplitude * .55, 'bandpass', delay + .022);
+}
+export const CARD_SOUNDS: { kind: SoundKind; label: string; note: string }[] = [
+  { kind: 'shuffle', label: '洗牌', note: '把弃牌堆洗回抽牌堆' },
+  { kind: 'draw', label: '抽牌', note: '从牌堆顶滑出一张' },
+  { kind: 'select', label: '选牌', note: '拿起 / 查看一张牌' },
+  { kind: 'play', label: '出牌', note: '把牌拍在桌上' },
+];
 let context: AudioContext | undefined;
 let output: GainNode;
 let reverb: ConvolverNode;
@@ -65,8 +79,21 @@ export function sound(kind: SoundKind, enabled: boolean) {
   try {
     const ctx = audio(); void ctx.resume();
     if (kind === 'hover') { tone(ctx, 940, 810, .08, .009); return; }
-    if (kind === 'select') { noise(ctx, 2100, .10, .06); tone(ctx, 540, 340, .14, .04, 0, 'triangle'); return; }
-    if (kind === 'draw') { for (let i = 0; i < 3; i++) noise(ctx, 1700 + i * 120, .15, .10, 'bandpass', i * .07); return; }
+    // Picking a card up: a light tap with a little wood under it, short enough to fire on every
+    // press without turning into a drone when the player is clicking through a hand.
+    if (kind === 'select') { slide(ctx, 0, .030, 1.15); tone(ctx, 620, 400, .09, .022, .004, 'triangle'); return; }
+    if (kind === 'draw') { slide(ctx, 0, .058); return; }
+    // Shuffling: the same slide, a dozen times, rattling at an uneven tempo. Evenly spaced clicks
+    // read as a machine; the jitter is what makes it sound like two hands.
+    if (kind === 'shuffle') {
+      let at = 0;
+      for (let i = 0; i < 13; i++) { slide(ctx, at, .026 + Math.random() * .016, .82 + Math.random() * .5); at += .042 + Math.random() * .048; }
+      noise(ctx, 700, .28, .022, 'lowpass', .05);
+      return;
+    }
+    // Playing a card: it lands. A paper slap for the surface, a low thump for the table underneath,
+    // and a short bright tick for the corner hitting first.
+    if (kind === 'play') { noise(ctx, 1500, .13, .16, 'bandpass'); noise(ctx, 320, .11, .13, 'lowpass'); tone(ctx, 190, 74, .13, .085); tone(ctx, 3100, 2200, .045, .030, .002, 'triangle'); return; }
     if (kind === 'strike') { noise(ctx, 3200, .12, .33, 'highpass'); tone(ctx, 130, 42, .19, .22); tone(ctx, 1730, 730, .12, .035, .015, 'triangle'); return; }
     if (kind === 'flame') { noise(ctx, 660, .42, .48, 'lowpass'); noise(ctx, 3400, .16, .08); tone(ctx, 85, 30, .28, .17); return; }
     if (kind === 'shield') { [554.37, 830.61, 1108.73].forEach((f, i) => tone(ctx, f, f, .55, .055 / (i + 1), i * .01)); noise(ctx, 1600, .10, .07); return; }

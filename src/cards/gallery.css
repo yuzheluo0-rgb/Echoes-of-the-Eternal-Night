@@ -122,3 +122,28 @@
   .cg-modal-inner { flex-direction: column; align-items: center; max-height: 90vh; overflow-y: auto; }
   .cg-detail { width: auto; }
 }
+
+/* --- draw demo ----------------------------------------------------------- */
+.cg-draw-demo { margin-top: 30px; border-top: 1px solid var(--line); padding-top: 22px; display: grid; grid-template-columns: minmax(260px, 330px) 1fr; gap: 26px; align-items: start; }
+.cg-draw-head h2 { font-size: 17px; letter-spacing: 3px; color: #e7dcc0; }
+.cg-draw-head h2 small { font-family: 'Segoe UI', sans-serif; font-size: 8px; letter-spacing: 2.6px; color: var(--dim); margin-left: 12px; }
+.cg-draw-head p { font-size: 11.5px; line-height: 1.95; color: #93a49c; margin: 13px 0 16px; }
+.cg-draw-actions { display: flex; gap: 9px; }
+.cg-draw-button { padding: 10px 22px; border: 1px solid rgba(212, 189, 135, .6); border-radius: 3px; background: rgba(212, 189, 135, .1); color: #f4e8ca; font-size: 12px; letter-spacing: 2px; }
+.cg-draw-button:hover { background: rgba(212, 189, 135, .2); }
+.cg-draw-clear { padding: 10px 16px; border: 1px solid var(--line); border-radius: 3px; font-size: 11px; letter-spacing: 1.6px; color: #9dada5; }
+.cg-hand { display: flex; gap: 20px; align-items: center; overflow-x: auto; padding-bottom: 12px; }
+.cg-hand-pile { position: relative; flex-shrink: 0; width: 96px; height: 140px; }
+.cg-hand-back { position: absolute; inset: 0; border-radius: 6px; border: 1px solid rgba(190, 175, 130, .35); background-size: cover; background-position: center; box-shadow: 0 8px 22px rgba(0, 0, 0, .55); opacity: .85; }
+.cg-hand-pile span { position: absolute; bottom: -20px; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--dim); letter-spacing: 1.4px; }
+.cg-hand-row { display: flex; gap: 14px; align-items: center; min-height: 360px; }
+.cg-hand-empty { color: #6d7d77; font-size: 11.5px; letter-spacing: 1.5px; }
+@media (max-width: 900px) { .cg-draw-demo { grid-template-columns: 1fr; } }
+
+/* --- sound effects ------------------------------------------------------- */
+.cg-sfx { margin-top: 20px; }
+.cg-sfx-label { display: block; font-size: 9px; letter-spacing: 2.4px; color: var(--dim); margin-bottom: 9px; }
+.cg-sfx > div { display: flex; gap: 5px; flex-wrap: wrap; }
+.cg-sfx button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 3px; font-size: 11px; letter-spacing: 1.4px; color: #a9b6ae; }
+.cg-sfx button:hover { color: #f4e8ca; border-color: rgba(212, 189, 135, .5); }
+.cg-sfx-toggle.on { color: #d9c48c; border-color: rgba(212, 189, 135, .45); }

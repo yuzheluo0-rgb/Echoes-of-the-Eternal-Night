@@ -1,5 +1,6 @@
 import { useMemo, useState, type CSSProperties } from 'react';
-import { CardBack, CardFace } from './CardFace';
+import { CARD_SOUNDS, sound } from '../audio';
+import { CardBack, CardFace, CardFlip } from './CardFace';
 import { CARDS, CARD_BY_ID, DECKS, DECK_BY_ID, KEYWORDS, MAIN_SHARE, TIERS, tierCounts, type CardDefinition, type DeckId, type TierId } from './index';
 import { CARD_QUERY } from './art';
 import './gallery.css';
@@ -17,6 +18,8 @@ export default function CardGallery() {
   const [open, setOpen] = useState<CardDefinition | null>(null);
   const [main, setMain] = useState<DeckId>('blade');
   const [sub, setSub] = useState<DeckId>('bone');
+  const [hand, setHand] = useState<{ card: CardDefinition; key: number; revealed: boolean }[]>([]);
+  const [audioOn, setAudioOn] = useState(true);
 
   const shown = useMemo(() => CARDS.filter(card =>
     (deck === 'all' || card.deck === deck) &&
@@ -34,6 +37,28 @@ export default function CardGallery() {
   const active = deck === 'all' ? null : DECK_BY_ID.get(deck)!;
   const chosen = active ? tierCounts(active.id) : null;
   const mainDeck = DECK_BY_ID.get(main)!, subDeck = DECK_BY_ID.get(sub)!;
+
+  /** Draws for real: the main deck supplies 80% of the cards and the sub deck the rest, exactly as
+   *  `drawSource` splits it in battle. A drawn card lands face down and turns over a beat later. */
+  function draw() {
+    const fromSub = Math.random() >= MAIN_SHARE;
+    const source = fromSub ? subDeck : mainDeck;
+    const entry = source.cards[Math.floor(Math.random() * source.cards.length)];
+    const key = Date.now() + Math.random();
+    sound('draw', audioOn);
+    setHand(current => [{ card: CARD_BY_ID.get(entry.id)!, key, revealed: false }, ...current].slice(0, 6));
+    window.setTimeout(() => setHand(current => current.map(item => item.key === key ? { ...item, revealed: true } : item)), 430);
+  }
+  /** Playing a card takes it out of hand and puts it down on the table. */
+  function play() {
+    if (!hand.length) return;
+    sound('play', audioOn);
+    setHand(current => current.slice(0, -1));
+  }
+  function shuffle() {
+    sound('shuffle', audioOn);
+    window.setTimeout(() => setHand([]), 260);
+  }
 
   return <div className="cg">
     <header className="cg-top">
@@ -77,6 +102,30 @@ export default function CardGallery() {
       </article>
     </section>
 
+    <section className="cg-draw-demo">
+      <div className="cg-draw-head">
+        <h2>抽牌<small>DRAWING A CARD</small></h2>
+        <p>牌抽到手上之前是背面朝上的，落进手里才翻成正面。点下面的按钮从当前的主/副牌组抽一张试试。</p>
+        <div className="cg-draw-actions">
+          <button className="cg-draw-button" onClick={draw}>抽一张</button>
+          <button className="cg-draw-clear" onClick={play} disabled={!hand.length}>打出一张</button>
+          <button className="cg-draw-clear" onClick={shuffle} disabled={!hand.length}>洗回牌堆</button>
+        </div>
+        <div className="cg-sfx">
+          <span className="cg-sfx-label">音效试听</span>
+          <div>{CARD_SOUNDS.map(item => <button key={item.kind} title={item.note} onClick={() => sound(item.kind, audioOn)}>{item.label}</button>)}
+            <button className={`cg-sfx-toggle ${audioOn ? 'on' : ''}`} onClick={() => { setAudioOn(!audioOn); sound('select', !audioOn); }}>{audioOn ? '音效开' : '音效关'}</button></div>
+        </div>
+      </div>
+      <div className="cg-hand">
+        <div className="cg-hand-pile" title={`${mainDeck.name} 牌堆`}><div className="cg-hand-back" style={{ backgroundImage: `url(/assets/cards/back-${mainDeck.id}.webp)` }} /><span>{mainDeck.size} 张</span></div>
+        <div className="cg-hand-row">
+          {hand.map(item => <CardFlip key={item.key} card={item.card} deck={DECK_BY_ID.get(item.card.deck === 'neutral' ? mainDeck.id : item.card.deck)!} revealed={item.revealed} />)}
+          {!hand.length && <p className="cg-hand-empty">手牌区是空的。</p>}
+        </div>
+      </div>
+    </section>
+
     <section className="cg-prob">
       <h2>稀有度与出现概率<small>RARITY &amp; DROP WEIGHT</small></h2>
       <div className="cg-prob-row">{TIERS.map(t => <button key={t.id} className={tier === t.id ? 'on' : ''} style={{ '--tier': t.accent } as CSSProperties} onClick={() => setTier(tier === t.id ? 'all' : t.id)}>
@@ -102,7 +151,7 @@ export default function CardGallery() {
       <div className="cg-spread-mini">{TIERS.map(t => <span key={t.id} style={{ '--tier': t.accent } as CSSProperties}>{t.name} <b>{spread[t.id]}</b></span>)}<span className="cg-total">共 <b>{shown.length}</b> 张</span></div>
     </section>
 
-    <section className="cg-grid">{shown.map(card => <button key={card.id} className="cg-slot" onClick={() => setOpen(card)} aria-label={`查看 ${card.name}`}><CardFace card={card} /></button>)}</section>
+    <section className="cg-grid">{shown.map(card => <button key={card.id} className="cg-slot" onPointerEnter={() => sound('hover', audioOn)} onClick={() => { sound('select', audioOn); setOpen(card); }} aria-label={`查看 ${card.name}`}><CardFace card={card} /></button>)}</section>
     {!shown.length && <p className="cg-empty">没有符合条件的牌。</p>}
 
     {open && <div className="cg-modal" role="dialog" aria-label={open.name} onClick={e => { if (e.target === e.currentTarget) setOpen(null); }}>
