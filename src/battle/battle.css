@@ -550,6 +550,8 @@
   animation: fx-float 1.25s cubic-bezier(.2, .7, .3, 1) both;
   animation-delay: var(--fx-delay, 0ms);
 }
+/* The panel's own numbers land in its middle; the enemy's land on its chest. */
+.bd-player-panel .fx-float { top: 52%; }
 .fx-float.block { font-size: 22px; color: #d8ecf5; text-shadow: 0 3px 10px rgba(0, 0, 0, .85), 0 0 20px rgba(150, 210, 240, .5); }
 .fx-float.good { font-size: 22px; color: #ffe6ae; }
 .fx-float.bad { font-size: 22px; color: #f3a79c; }
@@ -609,6 +611,8 @@
 /* Clicks are swallowed everywhere; the spotlight is a hole in a shadow, and a shadow cannot be
    clicked, so everything under the hole stays live. */
 .bd-tour-shield { position: fixed; inset: 0; z-index: 60; }
+/* The tour dims the board, not the chrome: the header keeps 跳过引导 reachable at every step. */
+.bd.is-tour .bd-top { z-index: 64; }
 .bd-tour-mask {
   position: fixed;
   z-index: 61;
@@ -659,6 +663,18 @@
 @media (max-height: 860px) {
   .bd-hand-card { transform: scale(.86); transform-origin: 50% 100%; margin-top: -48px; }
   .bd-hand-row { padding-top: 12px; }
+}
+/* A 720-line laptop has to give up the flavour text before it gives up the health bars. */
+@media (max-height: 820px) {
+  .bd-enemy-art { height: clamp(118px, 20vh, 210px); }
+  .bd-enemy-note, .bd-panel-note { display: none; }
+  .bd-player-panel { gap: 10px; }
+  .bd-enemy-row { gap: 18px; }
+}
+@media (max-height: 780px) {
+  .bd-hand-card { transform: scale(.76); transform-origin: 50% 100%; margin-top: -83px; }
+  .bd-title { font-size: 23px; }
+  .bd-sub { display: none; }
 }
 
 

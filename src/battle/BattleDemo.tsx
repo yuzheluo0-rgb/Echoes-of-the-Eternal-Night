@@ -599,7 +599,7 @@ export default function BattleDemo() {
     .map(key => ({ key, value: state.powers[key] })).filter(entry => entry.value > 0);
   const piles = { draw: state.draw, discard: state.discard, exhaust: state.exhaust } as const;
 
-  return <div className="bd">
+  return <div className={`bd ${step ? 'is-tour' : ''}`}>
     <header className="bd-top">
       <div className="bd-brand">
         <p className="bd-kicker">{CHAPTER_1.name} · {encounter.kind}</p>
