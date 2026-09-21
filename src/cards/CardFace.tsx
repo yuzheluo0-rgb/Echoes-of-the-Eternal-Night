@@ -1,5 +1,6 @@
 import { useRef, type CSSProperties, type PointerEvent } from 'react';
 import { DECK_BY_ID, KEYWORD_BY_ID, TIER_BY_ID, TYPE_LABEL, type CardDefinition, type Deck } from './index';
+import { upgradeFor } from '../battle/upgrades.ts';
 import './cards.css';
 
 const RANK = { cinder: 0, glimmer: 1, blaze: 2, everburning: 3, starfall: 4 } as const;
@@ -40,12 +41,36 @@ function useTilt() {
   };
 }
 
-export function CardFace({ card, selected, compact }: { card: CardDefinition; selected?: boolean; compact?: boolean }) {
+/**
+ * A card face.
+ *
+ * `upgraded` prints the **打磨**d version of the card: the rules text comes from `upgrades.ts`, the
+ * same table the engine adds its deltas from, and the face says 已打磨 rather than leaving the player
+ * to spot the difference.
+ *
+ * It defaults to `false` and the gallery never passes it, which is right twice over: a card in the
+ * library has not been polished, and the two texts are the same string in that case anyway. The
+ * important half is the other one — **the face must never disagree with the engine.** Before this
+ * existed the card printed its base text in every screen, so a 打磨'd 砺石 read 「抽 1 张牌」 while
+ * drawing 2. `upgrades.ts` says it outright: when its `text` and its deltas disagree, the text is
+ * what the player read.
+ */
+export function CardFace({ card, selected, compact, upgraded, polishing }: {
+  card: CardDefinition; selected?: boolean; compact?: boolean;
+  /** Print the 打磨'd rules text and the 已打磨 mark. */
+  upgraded?: boolean;
+  /** Just polished, in the picker — the mark lands with a flare rather than simply appearing. */
+  polishing?: boolean;
+}) {
   const tier = TIER_BY_ID.get(card.tier)!, deck = DECK_BY_ID.get(card.deck as never);
   const motes = MOTES[card.tier] ?? 0, tilt = useTilt();
+  // `?? card.text` is not defensive padding: an upgraded card with no row in `upgrades.ts` cannot
+  // exist — `upgradeCard` refuses to upgrade it — but if one ever did, printing the base text is the
+  // safe direction, and `upgrades.test.ts` is what actually holds the two lists together.
+  const text = upgraded ? (upgradeFor(card.id, true)?.text ?? card.text) : card.text;
   return <article
     ref={tilt.ref} onPointerMove={tilt.onPointerMove} onPointerLeave={tilt.onPointerLeave}
-    className={`cq cq-${card.tier} cq-deck-${card.deck} ${selected ? 'cq-selected' : ''} ${compact ? 'cq-compact' : ''}`}
+    className={`cq cq-${card.tier} cq-deck-${card.deck} ${selected ? 'cq-selected' : ''} ${compact ? 'cq-compact' : ''} ${upgraded ? 'cq-upgraded' : ''} ${polishing ? 'cq-polishing' : ''}`}
     style={{ '--accent': tier.accent, '--deck': deck?.accent ?? tier.accent } as CSSProperties}
     data-card={card.id}>
     <div className="cq-inner">
@@ -54,9 +79,14 @@ export function CardFace({ card, selected, compact }: { card: CardDefinition; se
       <div className="cq-cost" aria-label={`费用 ${card.cost}`}>{card.cost >= 0 ? card.cost : '—'}</div>
       <div className="cq-tier">{tier.name}</div>
       <div className="cq-body">
-        <h3 className="cq-name"><span>{card.name}</span></h3>
+        <h3 className="cq-name"><span>{card.name}</span>
+          {/* On the name's own row, pushed to the right edge of it — the card is already carrying a
+              cost disc top-left, a tier label top-right and four corner brackets, so the mark goes
+              where there is a line and not where there is a corner. The name shrinks instead. */}
+          {upgraded && <i className="cq-upmark">已打磨</i>}
+        </h3>
         <div className="cq-type">{TYPE_LABEL[card.type]}{deck ? ` · ${deck.name}` : ' · 中立'}</div>
-        <p className="cq-text">{card.text}</p>
+        <p className="cq-text">{text}</p>
         <div className="cq-keywords">{card.keywords.map(id => <span key={id} title={KEYWORD_BY_ID.get(id)!.rule}>{KEYWORD_BY_ID.get(id)!.name}</span>)}
           {card.bridge && <span className="cq-bridge" title={`与「${DECK_BY_ID.get(card.bridge)!.name}」联动`}>↔ {DECK_BY_ID.get(card.bridge)!.name}</span>}</div>
       </div>

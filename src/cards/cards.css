@@ -138,6 +138,9 @@
    bottom one, so it reads as stamped metal rather than as text dropped on a photo. */
 .cq-name {
   margin: 0 0 6px;
+  /* Flex so 已打磨 can sit at the right end of the name's own plate. The name shrinks; the mark
+     does not, because a truncated 「已打…」 is worse than a shorter name. */
+  display: flex; align-items: center; gap: 8px;
   font-size: 15px;
   font-weight: 500;
   letter-spacing: 3px;
@@ -150,6 +153,7 @@
   color: #efe3c6;
   text-shadow: 0 1px 0 rgba(0, 0, 0, .9), 0 0 16px rgba(0, 0, 0, .85);
 }
+.cq-name > span, .cq-upmark { flex: 0 1 auto; min-width: 0; }
 .cq-name > span {
   --name-color: #efe3c6;
   background: linear-gradient(180deg, #fffaf0 4%, var(--name-color) 54%, color-mix(in srgb, var(--name-color) 34%, #000) 132%);
@@ -157,6 +161,34 @@
   background-clip: text;
   color: transparent;
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .85));
+}
+/* 已打磨 — the mark, on the name plate's right end. Struck rather than written: a hairline gold rule
+   above and the letters tight, so it reads as something stamped into the plate. */
+.cq-upmark {
+  flex: 0 0 auto; margin-left: auto;
+  font-style: normal; font-size: 8.5px; font-weight: 500; letter-spacing: 1.6px;
+  padding: 2px 5px 1px; border-top: 1px solid rgba(232, 200, 122, .62);
+  color: #f0d79a;
+  text-shadow: 0 1px 3px #000, 0 0 10px rgba(232, 200, 122, .45);
+}
+/* The polished rules text. Gold, but a step down from the name's near-white — it has to be legible
+   over a photograph and it is still a paragraph, not a headline. */
+.cq-upgraded .cq-text { color: #eddaa4; text-shadow: 0 1px 4px #000, 0 0 14px rgba(200, 160, 70, .22); }
+/* Just polished: the mark arrives as an edge being drawn, not as a label fading in. Transform and
+   opacity only, so the flash sits on the compositor and cannot fight the tilt. */
+.cq-polishing .cq-upmark { animation: cq-strike .62s cubic-bezier(.2, .8, .2, 1) both; }
+.cq-polishing .cq-inner::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(240, 215, 154, .9), inset 0 0 34px rgba(232, 200, 122, .45);
+  animation: cq-forge .62s ease-out both;
+}
+@keyframes cq-strike {
+  0% { opacity: 0; transform: scaleX(.2) translateX(14px); }
+  45% { opacity: 1; transform: scaleX(1.18) translateX(0); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes cq-forge {
+  0% { opacity: 0; } 22% { opacity: 1; } 100% { opacity: .55; }
 }
 .cq-type {
   font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
