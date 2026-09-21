@@ -1,0 +1,149 @@
+/* 遗物总览页. Prefixed `rg-` so it cannot collide with `cards.css` (`cq-`) or `gallery.css` (`cg-`),
+   both of which are on the same bundle. Its own world: nothing here reaches into the map or the
+   battle stylesheets. */
+
+.rg {
+  --ink: #d9d3c0;
+  --dim: #8b9a94;
+  --gold: #d4bd87;
+  --line: rgba(180, 170, 130, .16);
+  min-height: 100dvh;
+  padding: 40px 28px 72px;
+  background: radial-gradient(ellipse at 50% -10%, #1d2a30 0%, #121a1e 46%, #0a0f12 100%);
+  color: var(--ink);
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+}
+.rg h1, .rg h2, .rg h3 { font-family: 'Noto Serif SC', 'Songti SC', 'STZhongsong', serif; font-weight: 400; margin: 0; }
+.rg p { margin: 0; }
+.rg button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+/* ------------------------------------------------------------------- header */
+
+.rg-top {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 34px; align-items: start;
+  max-width: 1500px; margin: 0 auto 34px; padding-bottom: 22px; border-bottom: 1px solid var(--line);
+}
+.rg-kicker { font-size: 9px; letter-spacing: 4px; color: #b8a678; margin-bottom: 10px; }
+.rg-top h1 { font-size: 34px; letter-spacing: 8px; color: #ece1c4; }
+.rg-top h1 small { font-size: 12px; letter-spacing: 2px; color: var(--dim); margin-left: 14px; }
+.rg-sub { font-size: 13px; line-height: 2.05; color: #93a49c; margin-top: 14px; max-width: 82ch; }
+.rg-sub b { color: #e8cf94; font-weight: 400; }
+.rg-facts { display: flex; gap: 30px; margin: 0; }
+.rg-facts div { display: flex; flex-direction: column; gap: 6px; }
+.rg-facts dt { font-size: 9px; letter-spacing: 2.4px; color: #7f9189; }
+.rg-facts dd { margin: 0; font-size: 27px; font-family: Georgia, 'Songti SC', serif; color: #ece1c4; }
+
+/* --------------------------------------------------------------- the slots */
+
+.rg-slots {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;
+  max-width: 1500px; margin: 0 auto 34px;
+}
+.rg-slot {
+  padding: 18px 20px; border: 1px solid var(--line); border-radius: 5px;
+  background: linear-gradient(140deg, rgba(26, 39, 44, .78), rgba(14, 21, 26, .82));
+}
+.rg-slot h2 { font-size: 17px; letter-spacing: 3px; color: #ece3c9; display: flex; align-items: baseline; gap: 10px; }
+.rg-slot h2 small { font-size: 9px; letter-spacing: 2.6px; color: #7f9189; font-family: 'Segoe UI', sans-serif; }
+.rg-slot p { font-size: 12.5px; line-height: 1.95; color: #93a49c; margin-top: 11px; }
+.rg-slot p b { color: #e8cf94; font-weight: 400; }
+.rg-slot.main { border-color: rgba(212, 189, 135, .42); }
+.rg-slot.sub { border-color: rgba(150, 175, 190, .3); }
+.rg-slot.any { border-color: rgba(140, 170, 150, .3); }
+
+/* -------------------------------------------------------------- the ladder */
+
+.rg-ladder { max-width: 1500px; margin: 0 auto 30px; }
+.rg-ladder-title { font-size: 20px; letter-spacing: 4px; color: #ece1c4; display: flex; align-items: baseline; gap: 12px; }
+.rg-ladder-title small { font-size: 9px; letter-spacing: 3px; color: #7f9189; font-family: 'Segoe UI', sans-serif; }
+.rg-ladder-note { font-size: 12.5px; line-height: 2; color: #93a49c; margin: 12px 0 18px; max-width: 90ch; }
+.rg-ladder-note b { color: #e8cf94; font-weight: 400; }
+.rg-rungs { list-style: none; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 0; }
+.rg-rung {
+  display: flex; gap: 11px; padding: 14px 15px;
+  border: 1px solid color-mix(in srgb, var(--tier) 34%, transparent); border-radius: 4px;
+  background: color-mix(in srgb, var(--tier) 7%, transparent);
+}
+.rg-rung-num {
+  flex: none; width: 22px; height: 22px; display: grid; place-items: center;
+  font-size: 11px; font-family: Georgia, 'Songti SC', serif; color: #0b1114;
+  background: var(--tier); border-radius: 2px;
+}
+.rg-rung h3 { font-size: 16px; letter-spacing: 3px; color: var(--tier); display: flex; flex-direction: column; gap: 3px; }
+.rg-rung h3 small { font-size: 9.5px; letter-spacing: 1.4px; color: #7f9189; font-family: 'Segoe UI', sans-serif; }
+.rg-rung p { font-size: 11.5px; line-height: 1.8; color: #93a49c; margin-top: 7px; }
+
+/* ------------------------------------------------------------------ filters */
+
+.rg-tiers { display: flex; flex-wrap: wrap; gap: 7px; max-width: 1500px; margin: 0 auto 22px; }
+.rg-tiers button {
+  padding: 8px 15px; font-size: 12px; letter-spacing: 1.6px; color: #a9b6ae;
+  border: 1px solid var(--line); border-radius: 3px;
+  transition: color .2s, border-color .2s, background .2s;
+}
+.rg-tiers button:hover { color: #f4e8ca; border-color: color-mix(in srgb, var(--tier, #d4bd87) 55%, transparent); }
+.rg-tiers button.on {
+  color: color-mix(in srgb, var(--tier, #d4bd87) 72%, white);
+  border-color: color-mix(in srgb, var(--tier, #d4bd87) 60%, transparent);
+  background: color-mix(in srgb, var(--tier, #d4bd87) 13%, transparent);
+}
+
+/* --------------------------------------------------------------------- grid */
+
+.rg-grid {
+  display: flex; flex-wrap: wrap; gap: 16px;
+  max-width: 1500px; margin: 0 auto;
+}
+.rg-slot-card { padding: 0; display: block; }
+.rg-empty { color: var(--dim); padding: 40px 0; }
+
+/* -------------------------------------------------------------------- modal */
+
+.rg-modal {
+  position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 24px;
+  background: rgba(5, 9, 12, .82); backdrop-filter: blur(7px);
+  animation: rg-fade .3s ease-out both;
+}
+@keyframes rg-fade { from { opacity: 0; } to { opacity: 1; } }
+.rg-modal-inner {
+  position: relative; display: flex; gap: 26px; align-items: flex-start;
+  max-width: 760px; width: 100%; padding: 26px;
+  border: 1px solid rgba(190, 175, 130, .3); border-radius: 5px;
+  background: linear-gradient(140deg, #1b2a30, #101a20);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .7);
+}
+.rg-modal-copy { min-width: 0; padding-right: 26px; }
+.rg-modal-copy h3 { font-size: 26px; letter-spacing: 5px; color: #ece1c4; display: flex; align-items: baseline; gap: 12px; }
+.rg-modal-copy h3 small { font-size: 11px; letter-spacing: 3px; color: #b8a678; font-family: 'Segoe UI', sans-serif; }
+.rg-modal-lore { font-size: 13px; line-height: 2; color: #93a49c; margin: 14px 0 20px; }
+.rg-modal-stats { display: flex; flex-direction: column; gap: 13px; margin: 0; }
+.rg-modal-stats div { display: flex; gap: 12px; align-items: baseline; }
+.rg-modal-stats dt { flex: none; width: 58px; font-size: 9.5px; letter-spacing: 1.8px; color: #7f9189; }
+.rg-modal-stats dd { margin: 0; font-size: 12.5px; line-height: 1.9; color: #d5ddd6; }
+.rg-modal-close {
+  position: absolute; right: 12px; top: 12px; width: 30px; height: 30px;
+  font-size: 15px; color: #93a49c; border-radius: 50%;
+}
+.rg-modal-close:hover { color: #f0e4c4; background: rgba(255, 255, 255, .07); }
+
+/* ---------------------------------------------------------- small screens */
+
+@media (max-width: 1200px) {
+  .rg-rungs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .rg { padding: 24px 14px 52px; }
+  .rg-top { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .rg-top h1 { font-size: 24px; letter-spacing: 5px; }
+  .rg-slots { grid-template-columns: minmax(0, 1fr); }
+  .rg-rungs { grid-template-columns: minmax(0, 1fr); }
+  .rg-grid { gap: 11px; justify-content: center; }
+  .rg-modal-inner { flex-direction: column; align-items: center; padding: 20px 16px; }
+  .rg-modal-copy { padding-right: 0; }
+  .rg-facts { gap: 22px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rg, .rg * { animation: none !important; transition: none !important; }
+}

@@ -1,0 +1,187 @@
+/* 遗物卡. Its own world, like `cards.css` and `battle.css`: nothing here is reachable from the other
+   two stylesheets, and nothing in them can reach in. Every class is prefixed `rl-`.
+
+   The card is a 三国杀-style equipment card rather than a playing card: the object fills the frame,
+   a ribbon across the top names its rung of the ladder, and the rule is printed underneath. What
+   separates it from `cq` at a glance is the **double rule** — two nested hairlines, the outer one
+   heavier — which is what makes a thing read as *carried* rather than *held in hand*. */
+
+.rl {
+  --tier: #b6c3b2;
+  --rx: 0deg;
+  --ry: 0deg;
+  position: relative;
+  width: 240px;
+  height: 380px;
+  border-radius: 4px;
+  transform: perspective(900px) rotateX(var(--rx)) rotateY(var(--ry));
+  transform-style: preserve-3d;
+  transition: transform .35s cubic-bezier(.2, .9, .3, 1), box-shadow .35s;
+  will-change: transform;
+}
+.rl-compact { width: 168px; height: 266px; }
+.rl-inner {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #0d1418;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .62);
+}
+
+/* The object, filling the card. Same choice the playing cards made: one photograph behind
+   everything keeps seventy different objects reading as one set. */
+.rl-art {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  filter: saturate(.92) contrast(1.04);
+}
+/* Weighted to the bottom, because that is where every word on the card lives. */
+.rl-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(0deg, rgba(6, 10, 13, .96) 0%, rgba(6, 10, 13, .9) 38%, rgba(6, 10, 13, .34) 62%, rgba(6, 10, 13, .12) 100%),
+    radial-gradient(ellipse at 50% 8%, transparent 40%, rgba(6, 10, 13, .5) 100%);
+}
+
+/* --- the equipment frame: two nested hairlines, the outer one heavier --- */
+.rl-rule-outer, .rl-rule-inner { position: absolute; pointer-events: none; border-radius: 3px; }
+.rl-rule-outer { inset: 5px; border: 1.5px solid color-mix(in srgb, var(--tier) 62%, transparent); }
+.rl-rule-inner { inset: 10px; border: 1px solid color-mix(in srgb, var(--tier) 26%, transparent); }
+.rl-corner {
+  position: absolute;
+  width: 13px; height: 13px;
+  border: 2px solid var(--tier);
+  pointer-events: none;
+  opacity: .85;
+}
+.rl-corner.tl { top: 5px; left: 5px; border-right: 0; border-bottom: 0; border-radius: 4px 0 0 0; }
+.rl-corner.tr { top: 5px; right: 5px; border-left: 0; border-bottom: 0; border-radius: 0 4px 0 0; }
+.rl-corner.bl { bottom: 5px; left: 5px; border-right: 0; border-top: 0; border-radius: 0 0 0 4px; }
+.rl-corner.br { bottom: 5px; right: 5px; border-left: 0; border-top: 0; border-radius: 0 0 4px 0; }
+
+/* --- the ribbon: which rung of the ladder this came off --- */
+.rl-ribbon {
+  position: absolute;
+  top: 15px; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.rl-tier {
+  padding: 3px 13px;
+  font-size: 11.5px; letter-spacing: 4px;
+  font-family: 'Noto Serif SC', 'Songti SC', 'STZhongsong', serif;
+  color: #0b1114;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tier) 88%, white), var(--tier));
+  border-radius: 2px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .55);
+}
+/* The word 「遗物」 sits beside the ribbon in tier colour, so the card says what it *is* as well as
+   how rare it is — a playing card has no such plate because a playing card is never ambiguous. */
+.rl-kind {
+  font-size: 10px; letter-spacing: 3px; color: color-mix(in srgb, var(--tier) 80%, white);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, .9);
+}
+
+/* --- the text block ---
+   A fixed height, top-aligned, so every card's name sits at the same height as its neighbours'.
+   Laid out bottom-anchored instead, a long 副槽 line pushes its name up and a row of cards reads as
+   a ragged staircase. Lines that overflow are clamped rather than allowed to spill. */
+.rl-body {
+  position: absolute; left: 16px; right: 16px; bottom: 15px;
+  height: 172px; display: flex; flex-direction: column; justify-content: flex-start;
+}
+.rl-compact .rl-body { height: 124px; }
+.rl-name {
+  font-family: 'Noto Serif SC', 'Songti SC', 'STZhongsong', serif;
+  font-weight: 400;
+  font-size: 25px;
+  letter-spacing: 4px;
+  line-height: 1.2;
+  color: #f2e8cf;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, .95), 0 0 26px rgba(0, 0, 0, .8);
+  margin: 0 0 8px;
+}
+.rl-name span { border-bottom: 1px solid color-mix(in srgb, var(--tier) 45%, transparent); padding-bottom: 5px; }
+.rl-text {
+  font-size: 12px; line-height: 1.75; color: #d5ddd6; margin: 11px 0 0;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, .95);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+}
+/* The lesser slot, held quieter — dimmer rule, smaller type, a 「副槽」 tag doing the labelling. */
+.rl-sub {
+  display: flex; gap: 7px; margin-top: 9px; padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--tier) 22%, transparent);
+}
+.rl-sub-tag {
+  flex: none; font-size: 9px; letter-spacing: 1.6px; line-height: 1.9;
+  color: color-mix(in srgb, var(--tier) 72%, white);
+}
+.rl-sub p {
+  font-size: 11px; line-height: 1.7; color: #93a49c; margin: 0;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+}
+
+/* --- light --- */
+.rl-sheen {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: linear-gradient(115deg, transparent 34%, rgba(255, 255, 255, .17) 47%, transparent 60%);
+  transition: opacity .4s;
+}
+.rl:hover .rl-sheen { opacity: 1; }
+.rl-pointer-glow {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(circle at var(--glow-x, 50%) var(--glow-y, 50%),
+    color-mix(in srgb, var(--tier) 30%, transparent), transparent 55%);
+  transition: opacity .35s;
+}
+.rl:hover .rl-pointer-glow { opacity: 1; }
+.rl:hover { box-shadow: 0 26px 60px rgba(0, 0, 0, .7), 0 0 46px color-mix(in srgb, var(--tier) 22%, transparent); }
+
+.rl-motes { position: absolute; inset: 0; pointer-events: none; overflow: hidden; border-radius: 4px; }
+.rl-motes i {
+  position: absolute; bottom: 12%; left: calc(8% + var(--mote) * 7.6%);
+  width: 3px; height: 3px; border-radius: 50%;
+  background: color-mix(in srgb, var(--tier) 80%, white);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--tier) 70%, transparent);
+  animation: rl-rise calc(5s + var(--mote) * .37s) linear infinite;
+  animation-delay: calc(var(--mote) * -.63s);
+}
+@keyframes rl-rise {
+  0% { transform: translateY(0) scale(.6); opacity: 0; }
+  18% { opacity: .95; }
+  82% { opacity: .7; }
+  100% { transform: translateY(-300px) scale(1); opacity: 0; }
+}
+/* 绝响 gets an iridescent wash — the one rung that is allowed to look like it is not quite a
+   photograph of a real object. */
+.rl-holo {
+  position: absolute; inset: 0; pointer-events: none; border-radius: 4px; mix-blend-mode: color-dodge;
+  background: linear-gradient(115deg,
+    rgba(255, 120, 90, .16), rgba(255, 210, 120, .14), rgba(120, 220, 255, .16), rgba(200, 140, 255, .14));
+  animation: rl-shift 7s ease-in-out infinite;
+}
+@keyframes rl-shift {
+  0%, 100% { opacity: .5; }
+  50% { opacity: .95; }
+}
+
+/* ---------------------------------------------------------------- small screens */
+
+@media (max-width: 900px) {
+  .rl { width: 200px; height: 320px; }
+  .rl-name { font-size: 21px; letter-spacing: 3px; }
+  .rl-text { font-size: 11.5px; }
+  .rl-sub p { font-size: 10.5px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rl, .rl *, .rl *::before, .rl *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .rl { transform: none; }
+  .rl-motes { display: none; }
+}
