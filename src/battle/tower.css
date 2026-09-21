@@ -1,0 +1,267 @@
+/* 爬塔地图. Its own world, like `cards.css` / `gallery.css` / `relics.css` — every class is `tw-`
+   prefixed and nothing here reaches into the other stylesheets.
+
+   The visual grammar is the *world map's*, not the battle page's: this is the same game seen from
+   outside a fight, so it uses the nocturne tokens (--gold #d9bc80, --ink #eee3cc), the 9px/3.4px
+   kicker flanked by 25×1px gradient rules, the rotated-diamond motif, and 2–3px radii. The battle
+   page's larger type and its flat panels belong to a fight, not to a map. */
+
+.tw {
+  --gold: #d9bc80;
+  --gold-bright: #f0dcae;
+  --ink: #eee3cc;
+  --dim: #b4ad9d;
+  --line: #c7a8682b;
+  position: relative;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  /* The *page* scrolls, not the tower's column. Scrolling the column put its scrollbar in the middle
+     of the screen, between the tower and the panel, because that column now ends there. */
+  overflow-y: auto;
+  background: #11181e;
+  color: var(--ink);
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+}
+.tw h1, .tw h2 { font-family: 'Noto Serif SC', 'Songti SC', 'STZhongsong', serif; font-weight: 400; margin: 0; }
+.tw p { margin: 0; }
+.tw button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+/* ------------------------------------------------------------------ the backdrop */
+
+/* `fixed`, not `absolute`. The root scrolls now, and an absolutely-positioned backdrop sizes to the
+   *first* viewport-height of the content — so scrolling the tower exposed bare page below it. Fixed
+   also means the backdrop holds still while the tower travels over it, which is the effect the
+   scrolling was after in the first place. */
+.tw-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; background: #0a0f12; }
+/* Two stacked plates, cross-faded. A `background-image` cannot be transitioned, and a hard cut
+   between two photographs reads as a glitch rather than as the place changing. */
+.tw-plate {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+  opacity: 0; transition: opacity .8s cubic-bezier(.4, 0, .6, 1);
+}
+.tw-plate.on { opacity: 1; }
+/* The photograph is a *place*, not a picture — the tower is drawn on top of it in 1px gold hairlines
+   and 13px type, and neither survives a mid-bright frame. First try shaded to ~0.45 in the middle
+   and the wolf's chest came straight through the nodes. So: one flat scrim across everything, then
+   the directional passes on top of that, which together put the middle around 0.78. */
+/* 0.45 in the middle was too bright (the wolf's chest came through the nodes); 0.92 was so dark the
+   twelve photographs may as well not exist. ~0.84 is the point where the place is legible as a
+   *place* and the gold hairlines still read over it. */
+.tw-shade {
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(180deg, rgba(7, 12, 16, .96) 0%, rgba(7, 12, 16, .76) 14%, rgba(7, 12, 16, .72) 58%, rgba(7, 12, 16, .97) 100%),
+    radial-gradient(ellipse at 50% 46%, rgba(9, 14, 18, .44) 0%, rgba(5, 9, 12, .88) 100%);
+}
+/* And a second, wider vignette that only bites at the edges, so the tower's outer columns fall away
+   instead of fighting the corners of the photograph. */
+.tw-shade::after {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 50%, transparent 38%, rgba(5, 9, 12, .72) 100%);
+}
+.tw-grain {
+  position: absolute; inset: 0; opacity: .042; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+/* The opening cinematic's four corner brackets — the game's way of framing a full-screen plate. */
+.tw-edge {
+  position: absolute; inset: 22px; pointer-events: none;
+  border: 0 solid #b4a88742;
+  background:
+    linear-gradient(#b4a88742, #b4a88742) left top / 27px 1px no-repeat,
+    linear-gradient(#b4a88742, #b4a88742) left top / 1px 27px no-repeat,
+    linear-gradient(#b4a88742, #b4a88742) right top / 27px 1px no-repeat,
+    linear-gradient(#b4a88742, #b4a88742) right top / 1px 27px no-repeat,
+    linear-gradient(#b4a88742, #b4a88742) left bottom / 27px 1px no-repeat,
+    linear-gradient(#b4a88742, #b4a88742) left bottom / 1px 27px no-repeat,
+    linear-gradient(#b4a88742, #b4a88742) right bottom / 27px 1px no-repeat,
+    linear-gradient(#b4a88742, #b4a88742) right bottom / 1px 27px no-repeat;
+}
+
+/* ---------------------------------------------------------------------- header */
+
+/* Sticky, because the page scrolls now. Its measured height is published as `--tw-head` so the panel
+   below can stick *under* it rather than behind it. */
+.tw-top {
+  position: sticky; top: 0; z-index: 6;
+  display: flex; align-items: flex-end; gap: 30px;
+  padding: 22px 34px 16px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(9, 14, 18, .96), rgba(9, 14, 18, .82));
+  backdrop-filter: blur(14px);
+}
+.tw-kicker {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 9px; font-weight: 500; letter-spacing: 3.4px; color: #bead82; margin-bottom: 8px;
+}
+.tw-kicker > span { height: 1px; width: 25px; background: linear-gradient(90deg, transparent, #b5a37a77); }
+.tw-kicker > span:last-child { transform: rotate(180deg); }
+.tw-top h1 { font-size: 30px; letter-spacing: 11px; color: var(--ink); }
+
+.tw-stats { display: flex; gap: 26px; margin: 0 0 4px auto; }
+.tw-stats div { display: flex; flex-direction: column; gap: 4px; }
+.tw-stats dt { font-size: 9px; letter-spacing: 2.4px; color: var(--dim); }
+.tw-stats dd { margin: 0; font-size: 22px; color: var(--ink); }
+.tw-stats dd i { font-size: 11px; font-style: normal; color: var(--dim); }
+/* Numerals in the roman face, the same one the world map counts in. */
+.tw-stats dd, .tw-row, .tw-card-kicker { font-family: 'Cormorant Garamond', Georgia, serif; }
+
+.tw-leave {
+  margin-bottom: 4px; padding: 9px 16px; font-size: 11.5px; letter-spacing: 2px;
+  color: #cbb87f; border: 1px solid var(--line); border-radius: 2px;
+  transition: color .2s, border-color .2s;
+}
+.tw-leave:hover { color: var(--gold-bright); border-color: #c7a8686b; }
+
+/* ----------------------------------------------------------------------- tower */
+
+/* The tower keeps its own column so the panel is a real panel rather than something floating over
+   the right-hand columns — an overlay would hide the floors it is describing. */
+.tw-main {
+  position: relative; z-index: 2; flex: 1;
+  display: grid; grid-template-columns: minmax(0, 1fr) 440px;
+  align-items: start;
+}
+.tw-view { position: relative; overflow: visible; }
+.tw-stage { position: relative; margin: 0 auto; }
+
+.tw-links { position: absolute; inset: 0; overflow: visible; }
+.tw-link { stroke: #c7a86833; stroke-width: 1; }
+/* Walked edges are lit, and the edges that lead somewhere right now are lit brighter still — the
+   route you took and the route you may take are the two things the map has to say. */
+.tw-link.walked { stroke: #d9bc80aa; stroke-width: 1.5; }
+.tw-link.live { stroke: #f0dcae; stroke-width: 1.5; stroke-dasharray: 5 5; animation: tw-crawl 1.4s linear infinite; }
+@keyframes tw-crawl { to { stroke-dashoffset: -20; } }
+
+.tw-node {
+  position: absolute; width: 40px; height: 40px;
+  display: grid; place-items: center;
+  transform: translate(-50%, 50%);
+  transition: transform .25s cubic-bezier(.2, 1.4, .4, 1), opacity .3s;
+}
+/* The diamond pin, borrowed straight from the world map's `.site-pin`. */
+.tw-pin {
+  position: absolute; width: 30px; height: 30px;
+  background: #c7c8a611; border: 1px solid #bdd0b12e; border-radius: 2px;
+  transform: rotate(45deg);
+  transition: background .25s, border-color .25s, box-shadow .25s;
+}
+.tw-glyph { position: relative; font-size: 13px; line-height: 1; opacity: .8; }
+.tw-row {
+  position: absolute; bottom: -11px; left: 50%; transform: translateX(-50%);
+  font-size: 10px; color: #6d7a75; letter-spacing: .5px;
+}
+
+/* Everything not reachable is dimmed, so the next decision is the only bright thing on screen. */
+.tw-node:disabled { opacity: .38; cursor: default; }
+.tw-node.seen .tw-pin { border-color: #bdd0b122; background: #c7c8a60a; }
+.tw-node.seen .tw-glyph { opacity: .45; }
+.tw-node.here .tw-pin { background: color-mix(in srgb, var(--tone) 26%, transparent); border-color: color-mix(in srgb, var(--tone) 70%, transparent); }
+.tw-node.reachable { cursor: pointer; }
+.tw-node.reachable .tw-pin {
+  border-color: color-mix(in srgb, var(--tone) 60%, transparent);
+  background: color-mix(in srgb, var(--tone) 16%, transparent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--tone) 45%, transparent);
+  animation: tw-beacon 2.4s ease-out infinite;
+}
+.tw-node.reachable:hover { transform: translate(-50%, 50%) scale(1.18); }
+.tw-node.reachable:hover .tw-pin { background: color-mix(in srgb, var(--tone) 34%, transparent); border-color: var(--tone); }
+.tw-node.reachable .tw-glyph { opacity: 1; }
+.tw-node.here .tw-row, .tw-node.reachable .tw-row { color: #b8a678; }
+@keyframes tw-beacon {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tone) 42%, transparent); }
+  70% { box-shadow: 0 0 0 14px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+/* The boss is the one node allowed to be bigger than the rest. */
+.tw-node.boss .tw-pin { width: 38px; height: 38px; border-radius: 3px; }
+.tw-node.boss .tw-glyph { font-size: 16px; }
+
+/* ---------------------------------------------------------------- info panel */
+
+/* A full-height column rather than a card in the corner: this is where the floor explains itself, and
+   a 268px box could not hold a portrait big enough to recognise or a line of type long enough to
+   read. Fixed width so the tower's column does not shift as the content changes length. */
+/* Sticky under the header, so it stays put while the tower scrolls past it. `--tw-head` is the
+   header's measured height, published by the component — the header wraps on narrow screens and a
+   hard-coded number would be wrong there. */
+.tw-panel {
+  position: sticky; top: var(--tw-head, 96px);
+  /* A fixed height, not a max: the panel is a column, and its footer has to sit at the bottom of
+     that column rather than wherever the content happens to end. */
+  height: calc(100dvh - var(--tw-head, 96px) - 42px);
+  display: flex; flex-direction: column; gap: 0;
+  padding: 28px 26px 22px 22px;
+  border-left: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(10, 16, 21, .82), rgba(7, 11, 15, .92));
+  backdrop-filter: blur(18px);
+  overflow-y: auto;
+}
+@supports not (backdrop-filter: blur(2px)) {
+  .tw-panel { background: linear-gradient(180deg, #0b1218f2, #070b0ff7); }
+}
+.tw-panel-idle { font-size: 14px; line-height: 2; color: #7f8d88; margin-top: 4px; }
+
+.tw-panel-kicker { font-size: 10.5px; letter-spacing: 3px; color: #b8a678; margin-bottom: 11px; }
+.tw-panel h2 { font-size: 36px; letter-spacing: 6px; line-height: 1.25; color: var(--ink); }
+.tw-panel-blurb { font-size: 14.5px; line-height: 2; color: #a9b8ae; margin-top: 16px; }
+
+.tw-panel-units { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 26px; }
+.tw-panel-units figure { margin: 0; width: 122px; }
+.tw-panel-units img {
+  width: 122px; height: 122px; object-fit: cover; display: block; border-radius: 2px;
+  border: 1px solid #bdd0b13d; filter: brightness(.94) saturate(.92);
+  box-shadow: 0 6px 22px #02070a66;
+}
+.tw-panel-units figcaption { margin-top: 9px; display: flex; align-items: baseline; gap: 7px; }
+.tw-panel-units figcaption b { font-size: 14.5px; font-weight: 400; letter-spacing: 1px; color: #d8d2c0; }
+.tw-panel-units figcaption i { font-size: 12.5px; font-style: normal; color: #8d9a94; }
+
+.tw-panel-teach {
+  margin-top: 26px; padding-left: 14px; border-left: 2px solid rgba(212, 189, 135, .45);
+}
+.tw-panel-teach span { display: block; font-size: 9.5px; letter-spacing: 3px; color: #b8a678; margin-bottom: 7px; }
+.tw-panel-teach p { font-size: 13.5px; line-height: 2; color: #a9b8ae; }
+
+.tw-panel-foot { margin: auto 0 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.tw-panel-foot div { display: flex; gap: 11px; align-items: baseline; }
+.tw-panel-foot div + div { margin-top: 9px; }
+.tw-panel-foot dt { flex: none; width: 36px; font-size: 9.5px; letter-spacing: 2.4px; color: #7f8d88; }
+.tw-panel-foot dd { margin: 0; font-size: 13.5px; color: #cbbfa4; }
+
+.tw-hint {
+  position: relative; z-index: 3;
+  padding: 10px 34px 14px; text-align: center;
+  font-size: 11px; letter-spacing: 2px; color: #8d9a94;
+}
+
+/* -------------------------------------------------------------- small screens */
+
+@media (max-width: 900px) {
+  .tw-top { flex-wrap: wrap; gap: 14px; padding: 14px 16px 12px; }
+  .tw-top h1 { font-size: 22px; letter-spacing: 6px; }
+  .tw-stats { gap: 18px; margin-left: 0; }
+  .tw-stats dd { font-size: 18px; }
+  .tw-leave { margin-left: auto; }
+  /* The panel drops under the tower rather than beside it: on a phone a 392px column beside a
+     7-column tower would leave the map a sliver. */
+  .tw-main { grid-template-columns: minmax(0, 1fr); }
+  /* Not sticky here: it is a block under the tower, not a column beside it, and sticking it would
+     cover the map it is describing. */
+  .tw-panel { position: static; height: auto; border-left: 0; border-top: 1px solid var(--line); padding: 16px 16px 14px; }
+  .tw-panel h2 { font-size: 22px; letter-spacing: 3px; }
+  .tw-panel-blurb { font-size: 12.5px; margin-top: 10px; }
+  .tw-panel-units { margin-top: 14px; gap: 10px; }
+  .tw-panel-units figure, .tw-panel-units img { width: 72px; }
+  .tw-panel-units img { height: 72px; }
+  .tw-panel-teach { margin-top: 14px; }
+  .tw-panel-foot { margin-top: 14px; }
+  .tw-hint { padding: 8px 16px 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tw *, .tw *::before, .tw *::after { animation: none !important; transition: none !important; }
+}
