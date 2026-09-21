@@ -24,27 +24,55 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
-  BookOpen, ChevronRight, Eye, Flame, Layers, RotateCcw, Shield, Skull, Sparkles, Swords, Volume2, VolumeX, Zap,
+  ArrowLeftRight, BookOpen, ChevronLeft, ChevronRight, Eye, Flame, Layers, RotateCcw, Shield, Skull,
+  Sparkles, Swords, Volume2, VolumeX, Zap,
 } from 'lucide-react';
 import { sound, type SoundKind } from '../audio';
-import { CardFace } from '../cards/CardFace';
-import { CARD_BY_ID } from '../cards/index.ts';
-import { CHAPTER_1 } from './chapter.ts';
+import { CardBack, CardFace } from '../cards/CardFace';
+import { CARD_BY_ID, DECKS, type DeckId } from '../cards/index.ts';
+import { CHAPTER_1, chapterDeck } from './chapter.ts';
 import {
-  canPlay, cardCost, cardName, cardRules, endTurn, intentFor, intentText, livingEnemies, playCard, startBattle,
-  type BattleCard, type BattleState,
+  KINDLING_DISCOUNT, PLAYER_MAX_HP, canPlay, cardCost, cardName, cardRules, endTurn, enemyName,
+  intentFor, intentText, livingEnemies, playCard, startBattle, type BattleCard, type BattleState,
 } from './engine.ts';
-import { ENCOUNTERS, ENEMY_BY_ID } from './enemies.ts';
+import { ENEMY_BY_ID, MUTATION_BY_ID, type Encounter } from './enemies.ts';
+import { RelicFace } from '../relics/RelicFace';
+import { RELIC_BY_ID, TIER_BY_ID, type RelicDefinition } from '../relics/relics.ts';
+import {
+  availableRelics, creditProgress, loadProgress, saveProgress, type RelicProgress,
+} from '../relics/unlocks.ts';
+import {
+  canEnterNode, campfire, chooseCard, claimRelic, claimReward, deckFor, discardRelic, dismissCard, enterNode, repairCard,
+  nodeAt, offerDraw, resolveEvent, rollOffer, rollPendingReward, swapRelics,
+} from './run.ts';
+import { REWARD_BY_ID } from './rewards.ts';
+import { eventForNode, type EventOption } from './events.ts';
+import { CampfireScreen, CardPicker, EventScreen, RewardScreen, type CampfirePick } from './NodeScreen.tsx';
+import { ALL_ENCOUNTERS, ENCOUNTER_BY_ID } from './enemies.ts';
+import { BOSS_ROW } from './map.ts';
+import TowerMapView from './TowerMap.tsx';
+import {
+  HEAL_MAX, HEAL_MIN, RUN_ENCOUNTERS, battleSeed, clearRun, finishBattle, isChapterCleared,
+  loadRun, newRun, saveRun, swapDecks,
+  type BattleOutcome, type ChapterRun,
+} from './run.ts';
 import {
   RANK_COLOR, RANK_LABEL, STATUS_GOOD, STATUS_LABEL, STATUS_RULE,
   type EnemyState, type Intent, type StatusId,
 } from './types.ts';
 import './battle.css';
 
-const ENCOUNTER_ID = 'ch1-1';
-const DECK_ID = 'blade';
 /** Set once the tour has been seen through or skipped, so it never comes back on its own. */
 const TOUR_KEY = 'eternal-night-battle-tutorial-v1';
+
+/** The deck the chapter opens on. The pair is locked at that point; only 主/副 moves after it. */
+const OPENING_FORMS: { main: DeckId; sub: DeckId; blurb: string }[] = [
+  { main: 'blade', sub: 'bone', blurb: '以断罪之刃为主：低费多段攻击堆余烬，长明壁垒只掺一层墙与反震做底。' },
+  { main: 'bone', sub: 'blade', blurb: '以长明壁垒为主：把格挡当燃料磨死对手，断罪之刃只掺几张余烬牌做引信。' },
+];
+
+const deckName = (id: DeckId) => DECKS.find(deck => deck.id === id)?.name ?? id;
+const deckAccent = (id: DeckId) => DECKS.find(deck => deck.id === id)?.accent ?? '#d4bd87';
 
 /** The statuses the player can carry. All of them are shown; the ones at zero stay quiet. */
 const PLAYER_STATUSES: StatusId[] = ['ember', 'edge', 'rampart', 'reflection', 'retaliate', 'bank', 'drained', 'shrouded'];
@@ -101,8 +129,6 @@ export interface FxEvent {
 const HIT_LINE = /^「(.+?)」 → (.+?)：(\d+) 点伤害（格挡 (\d+)，生命 −(\d+)）。$/;
 const BURN_LINE = /^灼烧 · (.+?) 受到 (\d+) 点伤害/;
 const DEATH_LINE = /^(.+?) 消散。$/;
-
-const enemyName = (enemy: EnemyState): string => ENEMY_BY_ID.get(enemy.id)?.name ?? enemy.id;
 
 /** Which unit a hit line landed on. The log prints names, and two 影狼 share one, so the hit is
  *  charged against whichever of them still has unaccounted damage left. */
@@ -243,7 +269,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'player',
     title: '生命、格挡、能量',
-    body: '左边是你。格挡先于生命被打掉，而且回合结束时会全部清零——除非你有「壁垒」，每层能留下 1 点。能量每回合回满 3 点，出牌全靠它。',
+    body: '左边是你。格挡先于生命被打掉，而且回合结束时会全部清零——除非你有「壁垒」，每层能留下 1 点。能量每回合回满 3 点，出牌全靠它。能量旁边亮着的那个「−1」是引火：本回合你打出的第一张牌少花 1 点，打出去之后就熄灭。',
     target: '.bd-player-panel',
   },
   {
@@ -409,15 +435,22 @@ function JunkFace({ card }: { card: BattleCard }) {
 // ------------------------------------------------------------------- the page
 
 export default function BattleDemo() {
-  const encounter = ENCOUNTERS.find(entry => entry.id === ENCOUNTER_ID)!;
-  const [seed, setSeed] = useState(7);
-  const [state, setState] = useState<BattleState>(() => startBattle(ENCOUNTER_ID, DECK_ID, 7));
+  // The run is the page's spine. `state` is null whenever the player is not mid-fight, and which of
+  // the three screens is showing is *derived* from these two rather than tracked beside them — a
+  // separate `screen` flag could disagree with the state it describes, and did in an earlier draft.
+  const [run, setRun] = useState<ChapterRun | null>(loadRun);
+  const [state, setState] = useState<BattleState | null>(null);
+  const [outcome, setOutcome] = useState<BattleOutcome | null>(null);
+  // Meta-progression, not run state: beating 头狼 widens the pool for the *next* run, which is why it
+  // lives beside the run rather than inside it.
+  const [progress, setProgress] = useState<RelicProgress>(loadProgress);
   const [picked, setPicked] = useState<string | null>(null);
   const [audioOn, setAudioOn] = useState(true);
   const [fx, setFx] = useState<{ seq: number; events: FxEvent[] }>({ seq: 0, events: [] });
   const [hurt, setHurt] = useState(0);
   const [pile, setPile] = useState<'draw' | 'discard' | 'exhaust' | null>(null);
-  const [tour, setTour] = useState<number | null>(() => (tourSeen() ? null : 0));
+  // Never auto-opens from storage: it belongs to the run's first fight, and the run decides.
+  const [tour, setTour] = useState<number | null>(null);
 
   const seq = useRef(0);
   const timers = useRef<number[]>([]);
@@ -425,9 +458,25 @@ export default function BattleDemo() {
   const gate = useRef({ logSeq: 0, turn: 0 });
   const logRef = useRef<HTMLDivElement>(null);
 
-  const living = livingEnemies(state);
-  const target = living.find(enemy => enemy.uid === state.targetUid) ?? living[0];
-  const ended = state.phase === 'won' || state.phase === 'lost';
+  // While a fight is on screen this must be the encounter being *fought*; otherwise it is whatever
+  // is standing on the floor the run is on. Winning advances the run immediately, so asking the run
+  // would relabel the finished fight with the name of the one after it.
+  const floor = run ? nodeAt(run) : undefined;
+  const encounter: Encounter | undefined = state
+    ? ALL_ENCOUNTERS.find(entry => entry.id === state.encounterId)
+    : run?.currentFight ? ALL_ENCOUNTERS.find(entry => entry.id === run.currentFight) : undefined;
+  /**
+   * Fights are the floors that stop at the preparation screen. A floor whose fight is already in
+   * `cleared` is *done* — that is what sends the player back to the tower after a win instead of
+   * leaving them standing on the node they just finished.
+   */
+  const inFight = !!floor
+    && (floor.kind === 'combat' || floor.kind === 'elite' || floor.kind === 'boss')
+    && !!run?.currentFight
+    && !run.cleared.includes(run.currentFight);
+  const living = state ? livingEnemies(state) : [];
+  const target = state ? (living.find(enemy => enemy.uid === state.targetUid) ?? living[0]) : undefined;
+  const ended = state ? state.phase === 'won' || state.phase === 'lost' : false;
 
   // Every effect and every sound is scheduled off the same event list, so the picture and the noise
   // always agree about when a hit happened.
@@ -469,7 +518,7 @@ export default function BattleDemo() {
   /** Play a hand card. A target is required by the fiction but not by the engine, so an omitted one
    *  falls through to whatever the field already has selected. */
   const play = useCallback((card: BattleCard, targetUid?: string) => {
-    if (!canPlay(state, card.uid)) { sound('select', audioOn); return; }
+    if (!state || !canPlay(state, card.uid)) { sound('select', audioOn); return; }
     try {
       const next = playCard(state, card.uid, targetUid);
       sound('play', audioOn);
@@ -479,22 +528,22 @@ export default function BattleDemo() {
   }, [state, audioOn, commit]);
 
   function onCard(card: BattleCard) {
-    if (!canPlay(state, card.uid)) { sound('select', audioOn); return; }
+    if (!state || !canPlay(state, card.uid)) { sound('select', audioOn); return; }
     if (picked === card.uid) { play(card, target?.uid); return; }
     sound('select', audioOn);
     setPicked(card.uid);
   }
 
   function onEnemy(enemy: EnemyState) {
-    if (enemy.dead) return;
-    setState(current => ({ ...current, targetUid: enemy.uid }));
+    if (!state || enemy.dead) return;
+    setState(current => (current ? { ...current, targetUid: enemy.uid } : current));
     sound('select', audioOn);
     const card = state.hand.find(entry => entry.uid === picked);
     if (card && canPlay(state, card.uid)) play(card, enemy.uid);
   }
 
   function onEndTurn() {
-    if (ended) return;
+    if (!state || ended) return;
     sound('select', audioOn);
     try {
       const next = endTurn(state);
@@ -503,22 +552,201 @@ export default function BattleDemo() {
     } catch { /* Same as above. */ }
   }
 
-  function restart() {
-    const nextSeed = seed + 1;
-    const fresh = startBattle(ENCOUNTER_ID, DECK_ID, nextSeed);
+  /** Clears the per-fight furniture. Every path between fights goes through here. */
+  function resetFx() {
     for (const timer of timers.current) window.clearTimeout(timer);
     window.clearTimeout(fxTimer.current);
     timers.current = [];
-    setSeed(nextSeed);
-    setState(fresh);
     setFx({ seq: seq.current, events: [] });
     setPicked(null);
     setPile(null);
     setHurt(0);
+  }
+
+  /** Open the fight the floor is holding: carried HP, the run's deck, the 主/副 pile. */
+  function beginFight(next: ChapterRun) {
+    // Rolled when the player stepped onto the floor, not here — the preparation screen has been
+    // showing this fight's briefing since then, and re-rolling now would make the screen a lie.
+    const encounterId = next.currentFight;
+    if (!encounterId) return;
+    const fresh = startBattle(encounterId, next.main, battleSeed(next, encounterId),
+      { hp: next.hp, sub: next.sub, relics: next.relics, cards: deckFor('r', next) });
+    resetFx();
+    setState(fresh);
+    setOutcome(null);
     // A fresh battle is a fresh gate: without this, a tour sitting on 「结束回合」 would count the
     // new battle's first turn as the action it was waiting for.
     gate.current = { logSeq: fresh.logSeq, turn: fresh.turn };
+    // The tour belongs to the run's opening fight, and to a player who has not seen it.
+    if (next.cleared.length === 0 && !tourSeen()) setTour(0);
     sound('shuffle', audioOn);
+  }
+
+  function startChapter(main: DeckId, sub: DeckId) {
+    // `newRun` lays the tower down itself — a run always has a map, so there is no window in which
+    // one exists without the other.
+    const next = newRun(main, sub, Math.trunc(Date.now() % 100000));
+    saveRun(next);
+    setRun(next);
+    setOutcome(null);
+    setState(null);
+    sound('bell', audioOn);
+  }
+
+  /**
+   * Step onto a floor.
+   *
+   * Nothing is resolved here but the treasure roll — a campfire and an event both *ask* something,
+   * and their screens read the floor the run is standing on. Resolving them on arrival would mean
+   * deciding for the player before they had seen the question.
+   */
+  function enterFloor(nodeId: string) {
+    if (!run?.map) return;
+    const node = run.map.byId.get(nodeId);
+    if (!node || !canEnterNode(run, nodeId)) return;
+
+    let next = enterNode(run, nodeId);
+    // 宝箱 is a reward roll like any other, so the chest can hold coin, a card, a relic or something
+    // stranger — and the table decides, not the node type.
+    if (node.kind === 'treasure') next = rollPendingReward(next);
+    saveRun(next);
+    setRun(next);
+    sound(node.kind === 'rest' ? 'bell' : 'select', audioOn);
+  }
+
+  /** Claim the reward a victory or a chest rolled. */
+  function claimRolledReward() {
+    if (!run) return;
+    const next = claimReward(run);
+    saveRun(next); setRun(next);
+  }
+
+  /**
+   * Answer a campfire. 焚牌 and 打磨 hand off to the card picker rather than settling here.
+   *
+   * They still **settle the floor**, though, and that has to happen at the click rather than in
+   * `chooseCard`. The campfire promises 「无论选哪个，这一层就过去了」 — but the two card branches only
+   * ever set `cardTask`, and the picker is drawn *over* the campfire rather than instead of it. So
+   * clearing the task dropped the player back onto the three choices they had already answered, free
+   * to take a second one: burn a card *and* rest, from one night. `campfire()` does this itself for
+   * 休息; the other two have to do it where they are built.
+   */
+  function answerCampfire(choice: CampfirePick) {
+    if (!run) return;
+    // The campfire says 焚牌; the run calls that task `remove`. Same thing, and the rename keeps the
+    // run's vocabulary about the deck rather than about one screen's wording.
+    const next: ChapterRun = choice === 'rest'
+      ? campfire(run, { kind: 'rest' })
+      : {
+        ...run, cardTask: choice === 'burn' ? 'remove' : 'polish',
+        resolved: run.at, rewardDue: undefined,
+      };
+    saveRun(next); setRun(next);
+    if (choice === 'rest') sound('bell', audioOn);
+  }
+
+  /**
+   * Commit an answered event.
+   *
+   * This is the *second* half of the exchange — `EventScreen` shows the outcome line first and calls
+   * back on 继续. Resolving it on the click instead would set `run.resolved`, which is what takes the
+   * event screen off the page, so the outcome would be written and never read.
+   */
+  function commitEvent(option: EventOption) {
+    if (!run) return;
+    const next = resolveEvent(run, option);
+    saveRun(next); setRun(next);
+  }
+
+  /** Answer whatever card the run is waiting on: a pick, a burn, a polish or a copy. */
+  function answerCard(index: number | null) {
+    if (!run) return;
+    // 打磨 is the one task that settles in two steps: the deck changes now and the picker turns into a
+    // reveal of the card that changed. `repairCard` applies the choice without ending the task;
+    // `onDismiss`, from the reveal's 继续, is what ends it.
+    const next = run.cardTask === 'polish' && index !== null
+      ? repairCard(run, index)
+      : chooseCard(run, index);
+    saveRun(next); setRun(next);
+  }
+
+  /** Swap which half of the locked pair leads. The only deck decision a run allows after it starts. */
+  function swapFormation() {
+    if (!run) return;
+    const next = swapDecks(run);
+    saveRun(next);
+    setRun(next);
+    sound('select', audioOn);
+  }
+
+  /** Retry the current fight from the top. Safe to spam: the seed and the HP are both fixed. */
+  function restart() {
+    if (!run) return;
+    beginFight(run);
+  }
+
+  /** Leave a fight and go back to the preparation screen. The run is untouched, so nothing is lost —
+   *  and nothing is gained, because the shuffle is seeded per encounter. `outcome` is deliberately
+   *  kept: it is what tells the prep screen how much the campfire just gave back. */
+  function backToPrep() {
+    sound('select', audioOn);
+    resetFx();
+    setState(null);
+  }
+
+  /** Turn the owed draw into an actual offer. */
+  function claimDraw(relicId: string, placeIn: 'main' | 'sub') {
+    if (!run) return;
+    const next = claimRelic(run, relicId, placeIn);
+    setRun(next);
+    saveRun(next);
+  }
+
+  function swapRelicSlots() {
+    if (!run) return;
+    sound('select', audioOn);
+    const next = swapRelics(run);
+    setRun(next); saveRun(next);
+  }
+
+  function dropRelic(slot: 'main' | 'sub') {
+    if (!run) return;
+    sound('select', audioOn);
+    const next = discardRelic(run, slot);
+    setRun(next); saveRun(next);
+  }
+
+  // A victory owes a reward. Rolled here for the same reason the draw is: it advances the run's
+  // stream, and a render-time roll would re-roll on every render.
+  useEffect(() => {
+    if (!run || !run.rewardDue || run.pendingReward) return;
+    // A win owes its reward *after* the fight has been settled, so this only fires from the map.
+    if (state) return;
+    const next = rollPendingReward(run);
+    setRun(next);
+    saveRun(next);
+  }, [run, state]);
+
+  // A graded victory owes a relic draw. The offer is rolled *here* rather than during render: it
+  // advances the run's stream, and a render-time roll would re-roll every time the component did.
+  useEffect(() => {
+    if (!run || state || run.pendingDraw || !run.drawDue || !run.nextSlot) return;
+    const { run: rolled, options } = rollOffer(run, availableRelics(progress));
+    if (!options.length) return;
+    const next = offerDraw(rolled, options.map(relic => relic.id), run.nextSlot, run.drawDue);
+    setRun(next);
+    saveRun(next);
+  }, [run, state, progress]);
+
+  /** Leave the run and go back to the opening screen — the exit for both a cleared chapter and a
+   *  dead one. Nothing is kept: the next chapter starts from a fresh formation and a fresh seed. */
+  function leaveRun() {
+    clearRun();
+    resetFx();
+    setRun(null);
+    setState(null);
+    setOutcome(null);
+    sound('bell', audioOn);
   }
 
   function endTour() {
@@ -526,6 +754,7 @@ export default function BattleDemo() {
     setTour(null);
   }
   function startTour() {
+    if (!state) return;
     try { localStorage.removeItem(TOUR_KEY); } catch { /* Fine. */ }
     gate.current = { logSeq: state.logSeq, turn: state.turn };
     setTour(0);
@@ -534,7 +763,7 @@ export default function BattleDemo() {
   // The two gated steps: they advance when the engine log says the player did the thing, never on a
   // timer. Watching the log (rather than a counter) means ending a turn cannot strand the tour.
   useEffect(() => {
-    if (tour === null) return;
+    if (tour === null || !state) return;
     const step = TOUR_STEPS[tour];
     if (!step?.gate || ended) return;
     if (step.gate === 'play') {
@@ -550,6 +779,25 @@ export default function BattleDemo() {
     if (ended && tour !== null) endTour();
   }, [ended, tour]);
 
+  // Settle the fight into the run the moment it ends, exactly once: `outcome` being set is what both
+  // puts up the result panel and stops this effect from running again on the next render.
+  useEffect(() => {
+    if (!run || !state || outcome) return;
+    if (state.phase !== 'won' && state.phase !== 'lost') return;
+    const settled = finishBattle(run, state);
+    setOutcome(settled);
+    if (settled.won) {
+      setRun(settled.run);
+      saveRun(settled.run);
+      // A graded win may unlock relics for good. Idempotent, so a replayed fight cannot farm it.
+      const widened = creditProgress(progress, state.encounterId);
+      if (widened !== progress) { setProgress(widened); saveProgress(widened); }
+    } else {
+      // The run is dead. Drop the save so a reload cannot resume a chapter that was already lost.
+      clearRun();
+    }
+  }, [run, state, outcome]);
+
   // Entering a step re-arms the gate and measures the spotlight. Deliberately keyed on the step
   // alone: re-measuring on every log line would re-arm the gate with the very action it is waiting
   // for, and the tour would never move.
@@ -557,7 +805,7 @@ export default function BattleDemo() {
   const step = tour === null ? null : TOUR_STEPS[tour];
   const selector = step?.target;
   useLayoutEffect(() => {
-    gate.current = { logSeq: state.logSeq, turn: state.turn };
+    if (state) gate.current = { logSeq: state.logSeq, turn: state.turn };
     if (!selector) { setBox(null); return; }
     // One element per comma-separated part — `.bd-hand-card` lights the *first* card, while
     // `.bd-hand-row, .bd-enemy-row` lights both rows as one block.
@@ -580,10 +828,11 @@ export default function BattleDemo() {
   // The log follows the fight — until the reader scrolls up to think, at which point it stays put
   // rather than yanking the panel away from them.
   const stick = useRef(true);
+  const logLength = state?.log.length ?? 0;
   useEffect(() => {
     const node = logRef.current;
     if (node && stick.current) node.scrollTop = node.scrollHeight;
-  }, [state.log.length]);
+  }, [logLength]);
 
   const enemyFx = useMemo(() => {
     const map = new Map<string, FxEvent[]>();
@@ -594,6 +843,58 @@ export default function BattleDemo() {
     return map;
   }, [fx]);
   const playerFx = useMemo(() => fx.events.filter(event => event.side === 'player'), [fx]);
+  const audioToggle = () => { setAudioOn(current => !current); sound('select', !audioOn); };
+
+  // Everything above this line is a hook, so the two non-fight screens can return early.
+  if (!run) return <ChapterIntro audioOn={audioOn} onAudio={audioToggle} onStart={startChapter} />;
+
+  // --- the screens that take the whole frame, in the order they can be outstanding ----------------
+  // A card choice is the tail of a reward, so it comes first; the reward it came from is already
+  // spent by then. Then the reward itself, then the relic draw, then the floor's own question.
+  if (run.cardTask) {
+    return <CardPicker task={run.cardTask} run={run} options={run.cardOptions ?? []}
+      onChoose={index => answerCard(index)}
+      // 打磨 leaves the picker open for one beat after the card has changed — see POLISH_BEAT.
+      onDismiss={() => { const next = dismissCard(run); saveRun(next); setRun(next); }}
+      onPass={run.cardTask === 'pick' ? () => answerCard(null) : undefined}
+      audioOn={audioOn} />;
+  }
+  if (run.pendingReward) {
+    const reward = REWARD_BY_ID.get(run.pendingReward);
+    if (reward) {
+      return <RewardScreen reward={reward} run={run} onClaim={claimRolledReward} audioOn={audioOn}
+        from={run.rewardDue ? '战斗胜利' : '这一层'} />;
+    }
+  }
+  if (floor && run.resolved !== run.at) {
+    if (floor.kind === 'rest') return <CampfireScreen run={run} onPick={answerCampfire} audioOn={audioOn} />;
+    if (floor.kind === 'event') {
+      // `key` — the screen holds the half-answered option in local state, so climbing to the next
+      // 奇遇 has to hand it a fresh one rather than leave it showing the last floor's answer.
+      return <EventScreen key={floor.id} event={eventForNode(floor.id)} run={run}
+        onContinue={commitEvent} audioOn={audioOn} />;
+    }
+  }
+
+  // The tower is the hub. A fight is the only thing that takes you off it, and the relic draw is
+  // the only thing that interrupts it.
+  if (!inFight || !encounter) {
+    return <div className="tw-host">
+      <TowerMapView run={run} encounters={ENCOUNTER_BY_ID} onEnter={enterFloor} />
+      {run.pendingDraw && <div className="bd-over">
+        <div className="bd-map-draw">
+          <RelicDraw run={run} options={run.pendingDraw.options} slot={run.pendingDraw.slot}
+            onClaim={claimDraw} audioOn={audioOn} />
+        </div>
+      </div>}
+    </div>;
+  }
+
+  if (!state) {
+    return <BattlePrep run={run} outcome={outcome} audioOn={audioOn} onAudio={audioToggle}
+      onSwap={swapFormation} onFight={() => beginFight(run)} onClaimDraw={claimDraw}
+      onSwapRelics={swapRelicSlots} onDropRelic={dropRelic} />;
+  }
 
   const powers = (Object.keys(POWER_LABEL) as (keyof typeof state.powers)[])
     .map(key => ({ key, value: state.powers[key] })).filter(entry => entry.value > 0);
@@ -608,11 +909,15 @@ export default function BattleDemo() {
       </div>
       <div className="bd-facts">
         <span className="bd-fact"><i>回合</i><b>{state.turn}</b></span>
-        <span className="bd-fact"><i>牌组</i><b>断罪之刃</b></span>
+        <span className="bd-fact" title={`主牌组 ${deckName(run.main)} · 副牌组 ${deckName(run.sub)}`}>
+          <i>牌组</i><b>{deckName(run.main)}</b>
+        </span>
+        <span className="bd-fact"><i>生命</i><b>{state.player.hp}</b></span>
         <span className="bd-fact"><i>能量</i><b>{state.player.energy}</b></span>
       </div>
       <div className="bd-tools">
-        <button className="bd-btn" onClick={restart}><RotateCcw size={14} strokeWidth={1.7} />重新开始</button>
+        <button className="bd-btn" onClick={backToPrep}><ChevronLeft size={14} strokeWidth={1.7} />战前准备</button>
+        <button className="bd-btn" onClick={restart}><RotateCcw size={14} strokeWidth={1.7} />重开本场</button>
         <button className="bd-btn" onClick={tour === null ? startTour : endTour}>
           <BookOpen size={14} strokeWidth={1.7} />{tour === null ? '重看引导' : '跳过引导'}
         </button>
@@ -637,6 +942,12 @@ export default function BattleDemo() {
               <i key={i} className={`bd-pip ${i < state.player.energy ? 'on' : ''}`} />)}
           </span>
           <b className="bd-energy-num">{state.player.energy}<i>/{state.player.energyPerTurn}</i></b>
+          {/* 引火 lives next to the pips rather than on the cards: it belongs to the *turn*, not to
+              any one card, and the player has to spend it on whichever card they lead with. */}
+          <span className={`bd-kindling ${state.playedThisTurn > 0 ? 'spent' : ''}`}
+            title={`引火 · 本回合第一张牌费用 −${KINDLING_DISCOUNT}${state.playedThisTurn > 0 ? '（本回合已用）' : '（尚未使用）'}`}>
+            −{KINDLING_DISCOUNT}
+          </span>
         </div>
         <div className="bd-pills"><StatusPills statuses={state.player.statuses} all /></div>
         {powers.length > 0 && <div className="bd-powers">
@@ -658,6 +969,7 @@ export default function BattleDemo() {
           {state.enemies.map(enemy => {
             const def = ENEMY_BY_ID.get(enemy.id);
             const rank = def?.rank ?? 'normal';
+            const mutation = enemy.mutation ? MUTATION_BY_ID.get(enemy.mutation) : undefined;
             const on = target?.uid === enemy.uid && !enemy.dead;
             return <article key={enemy.uid} data-uid={enemy.uid}
               className={`bd-enemy ${on ? 'on' : ''} ${enemy.dead ? 'is-dead' : ''}`}>
@@ -672,12 +984,18 @@ export default function BattleDemo() {
               </button>
               <div className="bd-enemy-foot">
                 <div className="bd-enemy-line">
-                  <h3 className="bd-enemy-name" style={{ color: RANK_COLOR[rank] }}>{def?.name ?? enemy.id}</h3>
-                  <span className="bd-rank">{RANK_LABEL[rank]}</span>
+                  {/* A 异变 recolours the whole name, so "that one is different" reads before the
+                      words do — the player has to notice it in the half-second they spend scanning. */}
+                  <h3 className="bd-enemy-name" style={{ color: mutation ? mutation.tone : RANK_COLOR[rank] }}>
+                    {mutation && <i className="bd-mutation">{mutation.prefix}</i>}
+                    {def?.name ?? enemy.id}
+                  </h3>
+                  <span className="bd-rank">{mutation ? '异变' : RANK_LABEL[rank]}</span>
                 </div>
                 <HealthBar hp={enemy.hp} maxHp={enemy.maxHp} block={enemy.block} tone="enemy" id={enemy.uid} />
                 <div className="bd-enemy-pills"><EnemyPills enemy={enemy} /></div>
-                {def && <p className="bd-enemy-note">{def.note}</p>}
+                {mutation && <p className="bd-enemy-note" style={{ color: mutation.tone }}>异变 · {mutation.note}</p>}
+                {def && !mutation && <p className="bd-enemy-note">{def.note}</p>}
               </div>
               <FxLayer events={enemyFx.get(enemy.uid) ?? []} />
             </article>;
@@ -706,17 +1024,24 @@ export default function BattleDemo() {
     </main>
 
     {/* The hand gets the whole floor to itself: five full-size cards do not fit in the middle column,
-        and a hand you have to scroll to read is not a hand. */}
-    <div className="bd-hand-row">
+        and a hand you have to scroll to read is not a hand. The relics live at the left end of that
+        same floor — they are the other half of 「what you are carrying」, and down here they get to be
+        the actual cards rather than a name in a box. */}
+    <div className="bd-floor">
+      <BattleRelics run={run} />
+      <div className="bd-hand-row">
       {state.hand.map(card => {
         const face = CARD_BY_ID.get(card.cardId);
         const playable = canPlay(state, card.uid);
         return <button key={card.uid} className={`bd-hand-card ${picked === card.uid ? 'on' : ''} ${playable ? '' : 'off'}`}
           onClick={() => onCard(card)} aria-disabled={!playable} aria-label={`打出 ${cardName(card.cardId)}`}>
-          {face ? <CardFace card={face} selected={picked === card.uid} /> : <JunkFace card={card} />}
+          {face
+            ? <CardFace card={face} selected={picked === card.uid} upgraded={card.upgraded} />
+            : <JunkFace card={card} />}
         </button>;
       })}
       {!state.hand.length && <p className="bd-hand-empty">手牌是空的。</p>}
+      </div>
     </div>
 
     {pile && <div className="bd-modal" role="dialog" aria-label="牌堆" onClick={event => { if (event.target === event.currentTarget) setPile(null); }}>
@@ -725,7 +1050,8 @@ export default function BattleDemo() {
           <small>{piles[pile].length} 张 · 顺序即抽取顺序</small></h3>
         <div className="bd-modal-list">
           {piles[pile].map(card => <span key={card.uid} className="bd-modal-card">
-            <b>{cardName(card.cardId)}</b><i>{cardCost(card.cardId) >= 0 ? `${cardCost(card.cardId)} 费` : '不可打出'}</i>
+            <b>{cardName(card.cardId)}</b>{card.upgraded && <em className="bd-modal-plus">已打磨</em>}
+            <i>{cardCost(card.cardId) >= 0 ? `${cardCost(card.cardId)} 费` : '不可打出'}</i>
           </span>)}
           {!piles[pile].length && <p className="bd-modal-empty">这里什么都没有。</p>}
         </div>
@@ -733,14 +1059,43 @@ export default function BattleDemo() {
       </div>
     </div>}
 
-    {ended && <div className="bd-over">
-      <div className={`bd-over-card ${state.phase}`}>
-        <p className="bd-over-kicker">{state.phase === 'won' ? 'VICTORY' : 'DEFEAT'}</p>
-        <h2>{state.phase === 'won' ? '火还亮着' : '火熄了'}</h2>
-        <p>{state.phase === 'won'
-          ? `${encounter.name} · ${state.turn} 个回合。草地上的灰会被夜里的风带走。`
-          : `${encounter.name} · 第 ${state.turn} 回合。营地里那簇火又暗了一分。`}</p>
-        <button className="bd-btn bd-over-btn" onClick={restart}><RotateCcw size={14} strokeWidth={1.7} />再来一次</button>
+    {outcome && <div className="bd-over">
+      <div className={`bd-over-card bd-spoils ${outcome.won ? 'won' : 'lost'}`}>
+        <p className="bd-over-kicker">
+          {!outcome.won ? 'DEFEAT' : outcome.chapterCleared ? 'CHAPTER I · CLEARED' : 'VICTORY'}
+        </p>
+        <h2>{!outcome.won ? '火熄了' : outcome.chapterCleared ? '长夜未尽' : '火还亮着'}</h2>
+        <p>{!outcome.won
+          ? `${encounter.name} · 第 ${state.turn} 回合。营地里那簇火又暗了一分。`
+          : outcome.chapterCleared
+            ? `${encounter.name} 倒在第 ${state.turn} 回合。守望者的火换了一个人来守——营地的第一个夜晚，过去了。`
+            : `${encounter.name} · ${state.turn} 个回合。草地上的灰会被夜里的风带走。`}</p>
+
+        {outcome.won && <>
+          <dl className="bd-spoils-stats">
+            {/* Post-heal, because that is what the next fight opens with — "剩余生命" would read as
+                the number the fight ended on, which is `state.player.hp` and a different value. */}
+            <div><dt>带进下一场</dt><dd>{outcome.run.hp}<i>/{state.player.maxHp}</i></dd></div>
+            <div><dt>{outcome.chapterCleared ? '最后一程' : '营火回血'}</dt>
+              <dd className="good">+{outcome.heal}</dd></div>
+            <div><dt>进度</dt><dd>{outcome.run.cleared.length}<i>/{RUN_ENCOUNTERS.length}</i></dd></div>
+          </dl>
+          {outcome.healed < outcome.heal && <p className="bd-spoils-note">
+            营火给了 {outcome.heal} 点，但生命已到上限，实际只收回 {outcome.healed} 点。
+          </p>}
+        </>}
+
+        {!outcome.won && <p className="bd-spoils-note">
+          这一章到此为止。火熄了就得重新点——新的牌序，新的血量，从头再来。
+        </p>}
+
+        <div className="bd-spoils-actions">
+          {outcome.won && !outcome.chapterCleared
+            ? <button className="bd-btn bd-over-btn" onClick={backToPrep}>
+                进入下一场<ChevronRight size={15} strokeWidth={1.8} /></button>
+            : <button className="bd-btn bd-over-btn" onClick={leaveRun}>
+                {outcome.chapterCleared ? '回到开场' : '重新挑战本章'}<RotateCcw size={14} strokeWidth={1.7} /></button>}
+        </div>
       </div>
     </div>}
 
@@ -758,6 +1113,319 @@ export default function BattleDemo() {
     </>}
 
     {hurt > 0 && <span className="bd-flash" key={hurt} />}
+  </div>;
+}
+
+// ------------------------------------------------------------------- relics
+
+
+/**
+ * The two slots on the battle floor, at the left of the hand.
+ *
+ * **Full card faces**, not name plates — down here there is room for them, and a relic is read the
+ * same way a card in hand is. The 主/副 tag is what says which half of the printed card is live, so
+ * the face itself does not have to change between slots.
+ *
+ * Read-only: the loadout is decided on the preparation screen, and a fight in progress is the wrong
+ * place to change what you walked in with.
+ */
+function BattleRelics({ run }: { run: ChapterRun }) {
+  return <div className="bd-hand-relics">
+    {(['main', 'sub'] as const).map(slot => {
+      const relic = run.relics[slot] ? RELIC_BY_ID.get(run.relics[slot]!) : undefined;
+      return <div key={slot} className={`bd-hand-relic ${relic ? '' : 'is-empty'}`}>
+        <div className="bd-hand-relic-scale">
+          {relic
+            ? <RelicFace relic={relic} />
+            : <span className="bd-hand-relic-blank"><i>{slot === 'main' ? '主遗物' : '副遗物'}</i>空</span>}
+        </div>
+        <span className="bd-hand-relic-tag">{slot === 'main' ? '主' : '副'}</span>
+      </div>;
+    })}
+  </div>;
+}
+
+/**
+ * The two slots, as boxes.
+ *
+ * On the preparation screen they are **worked, not just read**: a relic can be swapped between the
+ * slots or thrown away. Carrying a relic is otherwise a decision made once and never revisited —
+ * you could see that 断刃's tax was hurting you and have no way to put it down.
+ */
+function RelicSlots({ run, onSwap, onDrop, audioOn }: {
+  run: ChapterRun; onSwap?: () => void; onDrop?: (slot: 'main' | 'sub') => void; audioOn?: boolean;
+}) {
+  const editable = !!(onSwap && onDrop);
+  const held = !!(run.relics.main || run.relics.sub);
+  return <div className="bd-relic-slots">
+    {(['main', 'sub'] as const).map(slot => {
+      const relic = run.relics[slot] ? RELIC_BY_ID.get(run.relics[slot]!) : undefined;
+      const tier = relic ? TIER_BY_ID.get(relic.tier)! : undefined;
+      return <div key={slot} className={`bd-relic-slot ${relic ? 'filled' : 'empty'}`}
+        style={tier ? { '--tier': tier.accent } as CSSProperties : undefined}
+        title={relic ? `${relic.name}\n主槽：${relic.text}\n副槽：${relic.sub}` : undefined}>
+        <span>{slot === 'main' ? '主遗物' : '副遗物'}</span>
+        <b>{relic ? relic.name : '空'}</b>
+        {relic && <i>{tier!.name} · {slot === 'main' ? '完整效果' : '折扣效果'}</i>}
+        {editable && relic && <button className="bd-relic-drop" onClick={() => onDrop!(slot)}
+          onPointerEnter={() => sound('hover', audioOn ?? true)}>丢弃</button>}
+      </div>;
+    })}
+    {editable && held && <button className="bd-relic-swap" onClick={onSwap}
+      onPointerEnter={() => sound('hover', audioOn ?? true)}>
+      <ArrowLeftRight size={13} strokeWidth={1.8} />调换主副
+    </button>}
+  </div>;
+}
+
+/**
+ * The draw. Three relics face down; turn one over and it goes into a slot.
+ *
+ * The flip is a real half-turn rather than a fade, for the same reason the card draw is — and the
+ * burst that goes off on the turn is in the relic's own tier colour, so the *rarity* lands before the
+ * name does. The other two stay face down and are never seen: what you did not pick is not
+ * information the game owes you.
+ */
+function RelicDraw({ run, options, slot, onClaim, audioOn }: {
+  run: ChapterRun; options: string[]; slot: 'main' | 'sub';
+  onClaim: (relicId: string, placeIn: 'main' | 'sub') => void; audioOn: boolean;
+}) {
+  const [flipped, setFlipped] = useState<string | null>(null);
+  const [burst, setBurst] = useState(0);
+  const chosen = flipped ? RELIC_BY_ID.get(flipped) : undefined;
+
+  function turn(id: string) {
+    if (flipped) return;
+    setFlipped(id);
+    setBurst(seq => seq + 1);
+    sound('relic', audioOn);
+  }
+
+  return <section className="bd-draw">
+    <div className="bd-draw-head">
+      <h2>{slot === 'main' ? '主遗物' : '副遗物'}<small>{slot === 'main' ? 'MAIN RELIC' : 'SUB RELIC'}</small></h2>
+    </div>
+    <p className="bd-draw-note">
+      {slot === 'main'
+        ? '打赢了这一场，营地给你一次翻东西的机会。三件里挑一件，装进主遗物槽，拿它完整的效果。'
+        : '副遗物槽也开了。这里挑到的一件只给折扣效果——但折扣总比空着强。'}
+    </p>
+    <div className="bd-draw-row">
+      {options.map(id => {
+        const relic = RELIC_BY_ID.get(id);
+        if (!relic) return null;
+        const tier = TIER_BY_ID.get(relic.tier)!;
+        const isFlipped = flipped === id;
+        return <button key={id} className={`bd-draw-card ${isFlipped ? 'is-flipped' : ''} ${flipped && !isFlipped ? 'is-dimmed' : ''}`}
+          style={{ '--tier': tier.accent } as CSSProperties}
+          onPointerEnter={() => { if (!flipped) sound('hover', audioOn); }}
+          onClick={() => turn(id)} aria-label={isFlipped ? relic.name : '未翻开的遗物'}>
+          <span className="bd-draw-inner">
+            <span className="bd-draw-face bd-draw-back"><i /></span>
+            <span className="bd-draw-face bd-draw-front">
+              <RelicFace relic={relic} />
+              {isFlipped && <span key={burst} className="bd-draw-burst" style={{ '--tier': tier.accent } as CSSProperties} />}
+            </span>
+          </span>
+        </button>;
+      })}
+    </div>
+    {chosen
+      ? <>
+        <p className="bd-draw-hint">
+          装进哪个槽由你决定：<b>主槽</b>给卡面上半部分的完整效果，<b>副槽</b>只给下半部分的折扣效果。
+          目标槽已有东西的话，旧的会被换下来。
+        </p>
+        <div className="bd-draw-actions">
+          {(['main', 'sub'] as const).map(target => {
+            const current = run.relics[target] ? RELIC_BY_ID.get(run.relics[target]!) : undefined;
+            return <button key={target} className="bd-btn bd-fight-btn"
+              onClick={() => { sound('relic-set', audioOn); onClaim(chosen.id, target); }}>
+              装入{target === 'main' ? '主' : '副'}遗物槽
+              {current && <i className="bd-draw-replace">替换 {current.name}</i>}
+            </button>;
+          })}
+        </div>
+      </>
+      : <p className="bd-draw-hint">点一张翻开。</p>}
+  </section>;
+}
+
+// --------------------------------------------------------------- the two screens
+
+/** A small, self-contained audio switch — the fight's header owns the real one, but these screens
+ *  need a way back to silence too. */
+function PrepAudio({ audioOn, onAudio }: { audioOn: boolean; onAudio: () => void }) {
+  return <button className={`bd-btn bd-sound ${audioOn ? 'on' : ''}`} aria-pressed={audioOn} onClick={onAudio}>
+    {audioOn ? <Volume2 size={14} strokeWidth={1.7} /> : <VolumeX size={14} strokeWidth={1.7} />}音效
+  </button>;
+}
+
+/**
+ * The chapter's front door. The pair is locked the moment the player commits, so this is the last
+ * point at which the two decks are still a choice rather than a fact.
+ */
+function ChapterIntro({ audioOn, onAudio, onStart }: {
+  audioOn: boolean; onAudio: () => void; onStart: (main: DeckId, sub: DeckId) => void;
+}) {
+  return <div className="bd bd-prep">
+    <div className="bd-prep-inner">
+      <header className="bd-prep-head">
+        <p className="bd-prep-kicker">{CHAPTER_1.subtitle}</p>
+        <h1 className="bd-prep-title">{CHAPTER_1.name}</h1>
+        <p className="bd-prep-copy">
+          五场战斗，一条命。血量从这里带出去就一直带到底，每打赢一场营火会替你回一点。
+          这一章不会换牌组——但每一场开打前，你都可以决定让哪一副走在前面。
+        </p>
+        <div className="bd-prep-tools"><PrepAudio audioOn={audioOn} onAudio={onAudio} /></div>
+      </header>
+
+      <section className="bd-forms">
+        {OPENING_FORMS.map(form => {
+          const mainSize = chapterDeck(form.main).length;
+          const pile = chapterDeck(form.main, form.sub);
+          const deck = DECKS.find(entry => entry.id === form.main)!;
+          return <article key={form.main} className="bd-form" style={{ '--deck': deckAccent(form.main) } as CSSProperties}>
+            <CardBack deck={deck} compact />
+            <div className="bd-form-copy">
+              <p className="bd-form-kicker">主牌组</p>
+              <h2>{deck.name}<small>{deck.subtitle}</small></h2>
+              <p>{form.blurb}</p>
+              <p className="bd-form-pile">
+                开打时 <b>{pile.length}</b> 张：{deck.name} {mainSize} 张，外加 {deckName(form.sub)} 的 {pile.length - mainSize} 张。
+              </p>
+              <button className="bd-btn bd-form-start" onPointerEnter={() => sound('hover', audioOn)}
+                onClick={() => onStart(form.main, form.sub)}>
+                以此开局<ChevronRight size={15} strokeWidth={1.8} />
+              </button>
+            </div>
+          </article>;
+        })}
+      </section>
+    </div>
+  </div>;
+}
+
+/**
+ * Between fights. This is where the two decisions a run actually offers live: whether to swap 主/副,
+ * and whether to walk into the next fight at all — so the encounter is shown in full, portraits
+ * included, before anything is committed.
+ */
+function BattlePrep({ run, outcome, audioOn, onAudio, onSwap, onFight, onClaimDraw, onSwapRelics, onDropRelic }: {
+  run: ChapterRun; outcome: BattleOutcome | null; audioOn: boolean;
+  onAudio: () => void; onSwap: () => void; onFight: () => void;
+  onClaimDraw: (relicId: string, placeIn: 'main' | 'sub') => void;
+  onSwapRelics: () => void; onDropRelic: (slot: 'main' | 'sub') => void;
+}) {
+  // The fight is the one the *floor* is holding, not "the next one in the chapter". This screen used
+  // to ask `currentEncounter`, which walks the linear list — so standing on the boss floor it
+  // announced 失落的商队, and the boss looked like it had been skipped.
+  const encounter = run.currentFight ? ENCOUNTER_BY_ID.get(run.currentFight) : undefined;
+  /** Which floor of the tower this is, out of how many. The chapter is a climb now, not a list. */
+  const floorRow = run.at ? (run.map.byId.get(run.at)?.row ?? 0) : 0;
+  const main = DECKS.find(deck => deck.id === run.main)!;
+  const sub = DECKS.find(deck => deck.id === run.sub)!;
+  const pile = chapterDeck(run.main, run.sub);
+  const cleared = isChapterCleared(run);
+  const lastOutcome = outcome;
+
+  return <div className="bd bd-prep">
+    <div className="bd-prep-inner">
+      <header className="bd-prep-head">
+        <p className="bd-prep-kicker">{CHAPTER_1.subtitle}</p>
+        <h1 className="bd-prep-title">{CHAPTER_1.name}</h1>
+        <div className="bd-progress" aria-label={`第 ${floorRow} 层，共 ${BOSS_ROW} 层`}>
+          <span className="bd-progress-step now">{floorRow}</span>
+          <b className="bd-progress-num">层<i>/{BOSS_ROW}</i></b>
+          <span className="bd-progress-note">
+            已走过 {run.path.length} 层 · 已击败 {run.cleared.length} 场
+          </span>
+        </div>
+        <div className="bd-prep-tools"><PrepAudio audioOn={audioOn} onAudio={onAudio} /></div>
+      </header>
+
+      {cleared
+        ? <p className="bd-prep-copy">这一章的五个夜晚都过去了。</p>
+        : encounter && <>
+          <section className="bd-brief">
+            <div className="bd-brief-copy">
+              <p className="bd-brief-kicker">第 {floorRow} 层 · {encounter.kind}</p>
+              <h2>{encounter.name}</h2>
+              <p className="bd-brief-blurb">{encounter.blurb}</p>
+              {encounter.teach && <p className="bd-brief-teach"><i>这一场要你回答</i>{encounter.teach}</p>}
+            </div>
+            <div className="bd-brief-units">
+              {encounter.units.map(unit => {
+                const def = ENEMY_BY_ID.get(unit.id);
+                const [low, high] = unit.count;
+                return <figure key={unit.id} className="bd-brief-unit">
+                  <img src={`/assets/monsters/${unit.id}.webp`} alt="" loading="lazy" />
+                  <figcaption>
+                    {def?.name ?? unit.id}
+                    {/* The briefing promises kinds, not numbers — the count is a range and says so. */}
+                    <i className="bd-brief-count">{low === high ? `×${low}` : `${low}–${high} 只`}</i>
+                  </figcaption>
+                </figure>;
+              })}
+            </div>
+          </section>
+        </>}
+
+      {/* A draw that is owed takes over the screen. Everything else on the preparation page is
+          something to read; this is the one thing on it that is a decision. */}
+      {run.pendingDraw && <RelicDraw run={run} options={run.pendingDraw.options}
+        slot={run.pendingDraw.slot} onClaim={onClaimDraw} audioOn={audioOn} />}
+
+      <section className="bd-runbar">
+        <div className="bd-run-hp">
+          <p className="bd-run-label">带进这一场的生命</p>
+          <HealthBar hp={run.hp} maxHp={PLAYER_MAX_HP} block={0} tone="player" />
+          {lastOutcome?.won && <p className="bd-run-heal">
+            上一场营火回血 <b>+{lastOutcome.heal}</b>
+            {lastOutcome.healed < lastOutcome.heal && <i>（生命已满，实收 {lastOutcome.healed}）</i>}
+          </p>}
+          {!lastOutcome && <p className="bd-run-heal">本章第一次开打，满血出发。</p>}
+        </div>
+
+        <div className="bd-run-decks" style={{ '--deck': deckAccent(run.main), '--deck-sub': deckAccent(run.sub) } as CSSProperties}>
+          <p className="bd-run-label">本章锁定的牌组</p>
+          {/* The backs are shown, not just the names: 「主牌组 · 断罪之刃」 is a label, but the cover
+              is the thing you actually recognise across a table. */}
+          <div className="bd-run-pair">
+            <div className="bd-run-deck main">
+              <CardBack deck={main} compact />
+              <span>主牌组</span><i>{chapterDeck(run.main).length} 张</i>
+            </div>
+            <button className="bd-swap" onClick={onSwap} aria-label="调换主副牌组"
+              onPointerEnter={() => sound('hover', audioOn)}>
+              <ArrowLeftRight size={16} strokeWidth={1.8} />
+              <span>调换</span>
+            </button>
+            <div className="bd-run-deck sub">
+              <CardBack deck={sub} compact />
+              <span>副牌组</span><i>{pile.length - chapterDeck(run.main).length} 张</i>
+            </div>
+          </div>
+          <p className="bd-run-note">
+            副牌组只掺 {pile.length - chapterDeck(run.main).length} 张，是细的第二股流；合起来一副 {pile.length} 张。
+          </p>
+        </div>
+
+        <div className="bd-run-relics">
+          <p className="bd-run-label">身上的遗物</p>
+          <RelicSlots run={run} onSwap={onSwapRelics} onDrop={onDropRelic} audioOn={audioOn} />
+          <p className="bd-run-note">金币 {run.gold} · 可以调换主副，也可以把某一件丢掉</p>
+        </div>
+      </section>
+
+      <div className="bd-prep-go">
+        <button className="bd-btn bd-fight-btn" onClick={onFight} disabled={cleared || !!run.pendingDraw}
+          onPointerEnter={() => sound('hover', audioOn)}>
+          <Swords size={16} strokeWidth={1.8} />
+          {cleared ? '章节已完结' : run.pendingDraw ? '先挑一件遗物' : '开战'}
+        </button>
+      </div>
+    </div>
   </div>;
 }
 

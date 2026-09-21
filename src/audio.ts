@@ -1,7 +1,7 @@
 /** Layered local sound design with cathedral convolution, no external audio requests. */
 import { WorldSoundscape } from './world/WorldSoundscape';
 import type { Biome } from './world/worldData';
-export type SoundKind = 'hover' | 'select' | 'draw' | 'shuffle' | 'play' | 'strike' | 'flame' | 'shield' | 'death' | 'bell' | 'combo' | 'win';
+export type SoundKind = 'hover' | 'select' | 'draw' | 'shuffle' | 'play' | 'strike' | 'flame' | 'shield' | 'death' | 'bell' | 'combo' | 'win' | 'relic' | 'relic-set' | 'polish';
 
 /** One card sliding off the top of a deck: paper has almost no body, so the whole sound is a short
  *  band of filtered noise with a fast attack. Two bands, the second slightly later and brighter — a
@@ -15,6 +15,7 @@ export const CARD_SOUNDS: { kind: SoundKind; label: string; note: string }[] = [
   { kind: 'draw', label: '抽牌', note: '从牌堆顶滑出一张' },
   { kind: 'select', label: '选牌', note: '拿起 / 查看一张牌' },
   { kind: 'play', label: '出牌', note: '把牌拍在桌上' },
+  { kind: 'polish', label: '打磨', note: '营火边把一张牌磨得更好' },
 ];
 let context: AudioContext | undefined;
 let output: GainNode;
@@ -99,6 +100,32 @@ export function sound(kind: SoundKind, enabled: boolean) {
     if (kind === 'shield') { [554.37, 830.61, 1108.73].forEach((f, i) => tone(ctx, f, f, .55, .055 / (i + 1), i * .01)); noise(ctx, 1600, .10, .07); return; }
     if (kind === 'death') { noise(ctx, 750, .7, .15, 'lowpass'); tone(ctx, 78, 25, .6, .09); return; }
     if (kind === 'bell') { [164.81, 329.63, 452.0, 656.5, 876.4].forEach((f, i) => tone(ctx, f, f * .998, 3 - i * .35, .12 / (i + 1))); tone(ctx, 58, 43, .55, .13); return; }
+    // A relic turning face up: glass and metal rather than paper. A rising triad with a shimmer over
+    // it, so the reveal reads as *an object* and not as one more card being drawn.
+    if (kind === 'relic') {
+      [392, 523.25, 659.25].forEach((f, i) => tone(ctx, f, f * 1.002, .9, .05 / (i * .4 + 1), i * .07));
+      noise(ctx, 4200, .5, .05, 'highpass');
+      return;
+    }
+    // Clicking into the slot: the same triad an octave down, with the body of something heavy
+    // settling. Deliberately shorter than the reveal, because it is the second half of one gesture.
+    if (kind === 'relic-set') {
+      tone(ctx, 196, 146.83, .7, .09);
+      tone(ctx, 392, 392, .5, .04, .02);
+      noise(ctx, 420, .18, .09, 'lowpass');
+      return;
+    }
+    // 打磨: a blade drawn across a whetstone. The grinding is the sound, so it is the body — three
+    // scrapes at a hand's tempo rather than one, because the act is repeated strokes and a single
+    // one would read as a card being dealt. The fifth over it is what makes it *finish*: an interval
+    // rising to a held note, so the last thing the player hears is the edge, not the stone.
+    if (kind === 'polish') {
+      for (let i = 0; i < 3; i++) noise(ctx, 1500 + i * 260, .2, .085, 'bandpass', i * .14);
+      noise(ctx, 300, .5, .07, 'lowpass');
+      tone(ctx, 587.33, 587.33, .75, .045, .36);
+      tone(ctx, 880, 880, .85, .035, .42);
+      return;
+    }
     if (kind === 'combo' || kind === 'win') {
       const notes = kind === 'win' ? [164.81, 196, 246.94, 329.63] : [110, 164.81, 220, 329.63];
       notes.forEach((f, i) => tone(ctx, f, f, 1.5, .045, i * .085));

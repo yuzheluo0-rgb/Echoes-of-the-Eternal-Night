@@ -1,0 +1,181 @@
+/* 节点界面 —— 战利品 / 营火 / 奇遇 / 选牌.
+   Every class is `nd-` prefixed and nothing here reaches into the battle or tower stylesheets.
+
+   THE TYPE IS THE DESIGN. These screens exist to be read at a glance — a reward you have to lean in
+   for is a reward nobody reads, and the first version reused the battle page's panel scale (12.5px
+   labels, 13px body) which was fine for a status panel and wrong for a decision. So: 46px title,
+   18px body, 22px on the buttons, and the card faces at full size rather than as names in a list. */
+
+.nd {
+  --gold: #d9bc80;
+  --ink: #eee3cc;
+  --dim: #a8b3ab;
+  --line: #c7a86833;
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  display: grid; place-items: center;
+  padding: 34px 24px;
+  /* No scrim of its own: `.nd-shade` already darkens the plate, and stacking the two left the
+     photograph invisible — the backdrop may as well not have been fetched. */
+  background: rgba(5, 9, 12, .5);
+  animation: nd-fade .35s ease-out both;
+  overflow-y: auto;
+}
+@keyframes nd-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.nd-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; background: #090e12; }
+.nd-bg > span:first-child { position: absolute; inset: 0; background-size: cover; background-position: center; }
+/* Enough to read 46px type over, and no more — the picture is half the reason the screen exists. */
+.nd-bg .nd-shade {
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(180deg, rgba(6, 10, 14, .82) 0%, rgba(6, 10, 14, .62) 40%, rgba(6, 10, 14, .88) 100%),
+    radial-gradient(ellipse at 50% 45%, rgba(9, 14, 18, .3) 0%, rgba(4, 7, 10, .82) 100%);
+}
+
+.nd-panel {
+  position: relative; z-index: 1;
+  width: min(1180px, 100%);
+  padding: 46px 52px 40px;
+  border: 1px solid rgba(190, 175, 130, .34);
+  border-radius: 5px;
+  background: linear-gradient(150deg, rgba(22, 34, 40, .95), rgba(10, 16, 21, .97));
+  box-shadow: 0 40px 120px rgba(0, 0, 0, .72), inset 0 0 90px rgba(196, 160, 90, .05);
+  animation: nd-pop .45s cubic-bezier(.2, 1.3, .4, 1) both;
+}
+@keyframes nd-pop { from { transform: scale(.94) translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.nd-head { padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.nd-kicker { font-size: 12px; letter-spacing: 5px; color: #b8a678; margin-bottom: 14px; }
+.nd-title {
+  font-family: 'Noto Serif SC', 'Songti SC', 'STZhongsong', serif; font-weight: 400;
+  font-size: 46px; letter-spacing: 9px; line-height: 1.24; color: var(--ink); margin: 0;
+}
+.nd-body { padding: 28px 0 4px; }
+.nd-copy { font-size: 18px; line-height: 2.05; color: var(--dim); max-width: 78ch; }
+.nd-effect {
+  margin-top: 18px; padding-left: 18px; border-left: 3px solid rgba(212, 189, 135, .5);
+  font-size: 21px; line-height: 1.7; color: var(--gold);
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+}
+/* What an answer cost you, once you have paid it — set like a reward's effect line rather than like
+   the blurb above it, because it is the one sentence on the screen the player is reading for. */
+.nd-outcome {
+  margin-top: 0; padding-left: 18px; border-left: 3px solid rgba(212, 189, 135, .5);
+  font-size: 21px; line-height: 1.85; color: var(--gold);
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+}
+
+/* ------------------------------------------------------------------- choices */
+
+.nd-choices { display: grid; gap: 16px; margin-top: 30px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.nd-choice {
+  display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
+  padding: 24px 26px; text-align: left;
+  border: 1px solid var(--line); border-radius: 4px;
+  background: rgba(255, 255, 255, .022);
+  transition: border-color .22s, background .22s, transform .22s;
+}
+.nd-choice:not(.off):hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--tone, #d9bc80) 62%, transparent);
+  background: color-mix(in srgb, var(--tone, #d9bc80) 9%, transparent);
+}
+.nd-choice.off { opacity: .4; cursor: default; }
+.nd-choice-label {
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+  font-size: 24px; letter-spacing: 5px; color: var(--tone, var(--gold));
+}
+.nd-choice-hint { font-size: 15px; line-height: 1.85; color: var(--dim); }
+/* The price, when the floor's own prose does not name one. Sits below the hint and reads as a
+   footnote, so it annotates the choice instead of competing with it. */
+.nd-choice-cost {
+  margin-top: 2px; font-size: 13.5px; letter-spacing: 1.5px; color: rgba(212, 189, 135, .72);
+  font-variant-numeric: tabular-nums;
+}
+.nd-choice.off .nd-choice-cost { color: rgba(224, 138, 82, .85); }
+
+/* ------------------------------------------------------------------ actions */
+
+.nd-actions { display: flex; gap: 16px; align-items: center; margin-top: 32px; padding-top: 26px; border-top: 1px solid var(--line); }
+.nd-primary, .nd-ghost {
+  padding: 17px 46px; font-size: 20px; letter-spacing: 6px; border-radius: 3px;
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+  transition: background .22s, border-color .22s, color .22s;
+}
+.nd-primary {
+  color: #f6ecd2; border: 1px solid rgba(212, 189, 135, .62);
+  background: linear-gradient(110deg, rgba(130, 115, 75, .42), rgba(181, 151, 84, .3));
+  box-shadow: inset 0 0 30px rgba(212, 172, 86, .14);
+}
+.nd-primary:not(:disabled):hover { background: linear-gradient(110deg, rgba(150, 133, 87, .6), rgba(200, 168, 96, .44)); }
+.nd-primary:disabled { opacity: .4; cursor: default; }
+.nd-ghost { color: #8d9a94; border: 1px solid transparent; }
+.nd-ghost:hover { color: var(--ink); border-color: var(--line); }
+
+.nd-footer { margin-top: 22px; font-size: 13px; letter-spacing: 2.4px; color: #6f7d78; }
+.nd-footer i { font-style: normal; margin-left: 12px; color: #5d6a66; }
+
+/* -------------------------------------------------------------- card picker */
+
+.nd-cards {
+  display: flex; flex-wrap: wrap; gap: 20px; justify-content: center;
+  margin-top: 30px; padding: 4px;
+}
+.nd-card {
+  position: relative; padding: 0; border-radius: 4px;
+  transition: transform .25s cubic-bezier(.2, 1.3, .4, 1), box-shadow .25s;
+}
+/* The card face owns its own transform for the pointer tilt, so the lift goes on the wrapper. */
+.nd-card:hover { transform: translateY(-7px); }
+.nd-card.on { transform: translateY(-10px); box-shadow: 0 0 0 3px rgba(240, 220, 174, .75), 0 22px 60px rgba(0, 0, 0, .6); }
+/* 打磨's 已打磨 mark lives on the card face, on the name plate's right end — so this corner belongs
+   to the copy count alone. No `pointer-events: none` needed: the card is a button and this sits
+   inside it, so a click on the badge still picks the card, which is what the player meant. */
+.nd-card-count {
+  position: absolute; z-index: 3; padding: 4px 10px; border-radius: 2px;
+  font-size: 13px; letter-spacing: 1.4px;
+  background: rgba(8, 13, 17, .88); border: 1px solid rgba(212, 189, 135, .45); color: var(--gold);
+  right: 8px; top: 8px;
+}
+.nd-empty { font-size: 17px; color: #7f8d88; padding: 40px 0; }
+
+/* ---------------------------------------------------------------- the reveal */
+/* One card, alone in the middle, larger than it ever appears elsewhere — the only screen in the run
+   that exists purely to show the player what they just got. Nothing else is on it on purpose: the
+   card is the whole message, and any second element would be something to read instead of looking at.
+   The wrapper reserves the scaled height, since `transform` does not move anything in the layout. */
+.nd-reveal {
+  display: flex; justify-content: center;
+  padding: 26px 0 10px; min-height: calc(330px * 1.32 + 36px);
+  animation: nd-reveal-in .5s cubic-bezier(.2, .9, .25, 1) both;
+}
+.nd-reveal .cq { transform: scale(1.32); transform-origin: 50% 0; }
+@keyframes nd-reveal-in {
+  from { opacity: 0; transform: translateY(16px) scale(.94); }
+  to { opacity: 1; transform: none; }
+}
+
+/* -------------------------------------------------------------- small screens */
+
+@media (max-width: 900px) {
+  .nd { padding: 14px 10px; place-items: start center; }
+  .nd-panel { padding: 26px 20px 24px; }
+  .nd-title { font-size: 30px; letter-spacing: 5px; }
+  .nd-copy { font-size: 16px; }
+  .nd-effect, .nd-outcome { font-size: 17px; }
+  .nd-choices { grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 20px; }
+  .nd-choice { padding: 18px 18px; }
+  .nd-choice-label { font-size: 20px; letter-spacing: 3px; }
+  .nd-actions { flex-direction: column; align-items: stretch; }
+  .nd-primary, .nd-ghost { padding: 15px 20px; text-align: center; }
+  /* Full-size faces are 236px wide; two fit a phone at this scale and the text still reads. */
+  .nd-cards { gap: 12px; }
+  .nd-card { transform: scale(.72); transform-origin: 50% 0; margin-bottom: -92px; }
+  .nd-card:hover, .nd-card.on { transform: scale(.72) translateY(-6px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nd, .nd * { animation: none !important; transition: none !important; }
+}

@@ -37,7 +37,12 @@
     linear-gradient(0deg, rgba(6, 10, 13, .72), transparent);
 }
 .bd h1, .bd h2, .bd h3 { font-family: 'Noto Serif SC', 'Songti SC', 'STZhongsong', serif; font-weight: 400; margin: 0; }
-.bd button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+/* `:where()` keeps this reset at zero specificity. Written as `.bd button` it scored (0,1,1) and
+   silently beat every single-class rule below — `.bd-btn`'s border, `.bd-end-turn`'s gradient and
+   `.bd-tour-next`'s background were all written to show and none of them did; only the two-class
+   `.bd-sound.on` was specific enough to survive. A reset is meant to lose to the rules that follow
+   it, so it has to carry no weight at all. */
+.bd :where(button) { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
 .bd p { margin: 0; }
 
 /* ------------------------------------------------------------------ header */
@@ -183,6 +188,27 @@
 .bd-pile b { font-family: Georgia, serif; font-weight: 400; font-size: 20px; color: #e6d9b6; }
 .bd-pile:not(:disabled):hover { border-color: rgba(212, 189, 135, .5); background: rgba(212, 189, 135, .07); }
 .bd-pile:disabled { opacity: .35; }
+
+/* 引火 — the opening discount, worn as a badge beside the pips. Lit means the discount is still
+   there; dimmed means the first card of the turn has already been played and every card costs its
+   printed price again. */
+.bd-kindling {
+  display: inline-grid; place-items: center;
+  min-width: 28px; height: 19px; padding: 0 7px;
+  font-size: 11px; font-family: Georgia, 'Songti SC', serif;
+  color: #1a1206;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #f0dcae, #c08a3e);
+  box-shadow: 0 0 14px rgba(224, 180, 95, .5);
+  transition: color .3s, background .3s, box-shadow .3s, border-color .3s, opacity .3s;
+}
+.bd-kindling.spent {
+  color: #6d7d77;
+  background: none;
+  border: 1px dashed rgba(180, 170, 130, .28);
+  box-shadow: none;
+  opacity: .5;
+}
 
 /* ---------------------------------------------------------- health and block */
 
@@ -602,6 +628,11 @@
 .bd-modal-card { display: flex; align-items: baseline; gap: 8px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 3px; background: rgba(255, 255, 255, .028); }
 .bd-modal-card b { font-family: 'Noto Serif SC', serif; font-weight: 400; font-size: 14px; letter-spacing: 1.6px; color: #e2d7b8; }
 .bd-modal-card i { font-style: normal; font-size: 11px; color: var(--dim); }
+/* A list has no card face to carry the mark, so the deck's own listing says it in words. */
+.bd-modal-plus {
+  font-style: normal; font-size: 10px; letter-spacing: 1.2px; padding: 1px 5px;
+  border: 1px solid rgba(232, 200, 122, .45); border-radius: 2px; color: #e8c87a;
+}
 .bd-modal-empty { color: var(--dim); font-size: 13px; padding: 12px 0; }
 .bd-modal-close { position: absolute; right: 10px; top: 10px; width: 28px; height: 28px; border-radius: 50%; color: #93a49c; }
 .bd-modal-close:hover { color: #f0e4c4; background: rgba(255, 255, 255, .07); }
@@ -656,6 +687,270 @@
 .bd-tour-skip { font-size: 11.5px; letter-spacing: 1.4px; color: #7f9189; }
 .bd-tour-skip:hover { color: #d9c48c; }
 
+/* ----------------------------------------------- the chapter and its run */
+
+/* The two screens outside the fight — 开场 and 战前准备 — share one shell. `.bd` pins a fight to a
+   single viewport with the hand as its floor, but these are meant to be *read*, so they unpin and
+   scroll like an ordinary page. Everything here is still `bd-`-prefixed and still inside `.bd`, so
+   the design tokens, the floor gradient and the reduced-motion escape hatch all still apply. */
+.bd-prep { height: auto; min-height: 100dvh; overflow: visible; padding: 36px 20px 52px; }
+/* `margin: auto` rather than `justify-content: center`: the two agree while the content fits, and
+   once it does not, centred flex items overflow *both* ways and the top becomes unreachable. */
+.bd-prep-inner { width: min(1060px, 100%); margin: auto; display: flex; flex-direction: column; gap: 22px; }
+
+.bd-prep-head { position: relative; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+.bd-prep-kicker { font-size: 9px; letter-spacing: 4px; color: #b8a678; margin-bottom: 9px; }
+.bd-prep-title { font-size: 34px; letter-spacing: 8px; color: #ece1c4; }
+.bd-prep-copy { font-size: 13px; line-height: 2.05; color: #93a49c; margin-top: 13px; max-width: 76ch; }
+.bd-prep-tools { position: absolute; right: 0; top: 0; }
+.bd-prep-tools .bd-btn { padding: 7px 12px; }
+
+/* --- the opening choice: which half of the pair leads --- */
+.bd-forms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.bd-form {
+  display: flex; gap: 20px; padding: 20px;
+  border: 1px solid var(--line); border-radius: 5px;
+  background: linear-gradient(140deg, rgba(26, 39, 44, .78), rgba(14, 21, 26, .82));
+  transition: border-color .25s, box-shadow .25s;
+}
+.bd-form:hover { border-color: color-mix(in srgb, var(--deck) 55%, transparent); box-shadow: 0 20px 60px rgba(0, 0, 0, .5), 0 0 44px color-mix(in srgb, var(--deck) 12%, transparent); }
+.bd-form-copy { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.bd-form-kicker { font-size: 9px; letter-spacing: 3px; color: #b8a678; }
+.bd-form-copy h2 { font-size: 23px; letter-spacing: 5px; color: #ece3c9; }
+.bd-form-copy h2 small { display: block; font-size: 9px; letter-spacing: 2.4px; color: var(--deck); margin-top: 6px; }
+.bd-form-copy p { font-size: 12.5px; line-height: 1.95; color: #93a49c; }
+.bd-form-pile { color: #a9b8ae !important; }
+.bd-form-pile b { color: #f0dcae; font-family: Georgia, 'Songti SC', serif; font-size: 15px; }
+.bd-form-start { margin-top: auto; align-self: flex-start; padding: 9px 16px; color: #f4e8ca; border-color: color-mix(in srgb, var(--deck) 55%, transparent); background: color-mix(in srgb, var(--deck) 12%, transparent); }
+
+/* --- progress: five nights, one line --- */
+.bd-progress { display: flex; align-items: center; gap: 7px; margin-top: 14px; }
+.bd-progress-step {
+  width: 25px; height: 25px; display: grid; place-items: center;
+  font-size: 11px; font-family: Georgia, 'Songti SC', serif;
+  color: #6d7d77; border: 1px solid var(--line); border-radius: 3px;
+}
+.bd-progress-step.done { color: #12202a; background: linear-gradient(180deg, #e8cf95, #c08a3e); border-color: transparent; }
+.bd-progress-step.now { color: #f0dcae; border-color: rgba(212, 189, 135, .6); box-shadow: 0 0 16px rgba(196, 160, 90, .3); }
+.bd-progress-num { margin-left: 9px; font-size: 19px; font-family: Georgia, 'Songti SC', serif; color: #ece1c4; }
+.bd-progress-num i { font-size: 12px; color: #7f9189; font-style: normal; }
+
+/* --- the briefing: what is standing in front of you --- */
+.bd-brief {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 26px; align-items: center;
+  padding: 22px 24px; border: 1px solid var(--line); border-radius: 5px;
+  background: linear-gradient(140deg, rgba(26, 39, 44, .78), rgba(14, 21, 26, .82));
+}
+.bd-brief-kicker { font-size: 9px; letter-spacing: 3.4px; color: #b8a678; margin-bottom: 9px; }
+.bd-brief-copy h2 { font-size: 27px; letter-spacing: 6px; color: #ece1c4; }
+.bd-brief-blurb { font-size: 13px; line-height: 2; color: #93a49c; margin-top: 11px; max-width: 58ch; }
+.bd-brief-teach { font-size: 12.5px; line-height: 1.95; color: #a9b8ae; margin-top: 13px; border-left: 2px solid rgba(212, 189, 135, .45); padding-left: 12px; }
+.bd-brief-teach i { display: block; font-style: normal; font-size: 9px; letter-spacing: 3px; color: #b8a678; margin-bottom: 5px; }
+.bd-brief-units { display: flex; gap: 13px; }
+.bd-brief-unit { margin: 0; width: 96px; text-align: center; }
+.bd-brief-unit img {
+  width: 96px; height: 96px; object-fit: cover; display: block;
+  border: 1px solid var(--edge); border-radius: 3px;
+  filter: brightness(.94) saturate(.92);
+}
+.bd-brief-unit figcaption { font-size: 12px; letter-spacing: 1.4px; color: #d8d2c0; margin-top: 7px; }
+
+/* --- what the run is carrying: 生命 and the locked pair --- */
+.bd-runbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, .95fr); gap: 14px; }
+.bd-run-hp, .bd-run-decks, .bd-run-relics {
+  padding: 18px 20px; border: 1px solid var(--line); border-radius: 5px;
+  background: linear-gradient(140deg, rgba(26, 39, 44, .78), rgba(14, 21, 26, .82));
+}
+.bd-run-label { font-size: 9px; letter-spacing: 3px; color: #b8a678; margin-bottom: 12px; }
+.bd-run-heal { font-size: 12.5px; line-height: 1.9; color: #a9b8ae; margin-top: 12px; }
+.bd-run-heal b { color: #e8cf94; font-family: Georgia, 'Songti SC', serif; font-size: 16px; }
+.bd-run-heal i { font-style: normal; color: #7f9189; }
+
+.bd-run-pair { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; }
+.bd-run-deck {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 11px 13px;
+  border: 1px solid var(--line); border-radius: 4px; text-align: center;
+}
+/* The card face is `position: relative` with an absolutely-positioned inner, so a flex row would
+   quietly shrink it to nothing. It keeps its size. */
+.bd-run-deck .cq { flex: none; margin-bottom: 9px; }
+.bd-run-deck span { font-size: 9px; letter-spacing: 2.6px; color: #7f9189; }
+.bd-run-deck b { font-size: 16px; letter-spacing: 2.4px; font-weight: 400; }
+.bd-run-deck i { font-size: 11px; font-style: normal; color: #7f9189; }
+.bd-run-deck.main { border-color: color-mix(in srgb, var(--deck) 50%, transparent); background: color-mix(in srgb, var(--deck) 9%, transparent); }
+.bd-run-deck.main b { color: var(--deck); }
+/* Secondary, not illegible: at .78 the gold name sank into the background on a phone. */
+.bd-run-deck.sub { opacity: .88; }
+.bd-run-deck.sub b { color: var(--deck-sub); }
+
+.bd-swap {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 9px 11px; color: #cbb87f;
+  border: 1px solid rgba(212, 189, 135, .34); border-radius: 4px;
+  transition: color .2s, border-color .2s, background .2s;
+}
+.bd-swap span { font-size: 10px; letter-spacing: 1.6px; }
+.bd-swap:hover { color: #f4e8ca; border-color: rgba(212, 189, 135, .7); background: rgba(212, 189, 135, .1); }
+.bd-run-note { font-size: 11.5px; line-height: 1.85; color: #7f9189; margin-top: 12px; }
+
+.bd-prep-go { display: flex; justify-content: center; padding-top: 4px; }
+.bd-fight-btn {
+  padding: 13px 34px; font-size: 16px; letter-spacing: 6px; color: #f4e8ca;
+  border-color: rgba(212, 189, 135, .6); background: rgba(212, 189, 135, .14);
+}
+.bd-fight-btn:hover:not(:disabled) { background: rgba(212, 189, 135, .22); box-shadow: 0 0 40px rgba(196, 160, 90, .25); }
+.bd-fight-btn:disabled { opacity: .45; cursor: default; }
+
+/* --- the spoils panel, over the fight once it ends --- */
+.bd-spoils { width: min(470px, 92vw); }
+.bd-spoils-stats { display: flex; justify-content: center; gap: 30px; margin: 20px 0 6px; }
+.bd-spoils-stats div { display: flex; flex-direction: column; gap: 5px; }
+.bd-spoils-stats dt { font-size: 9px; letter-spacing: 2.4px; color: #7f9189; }
+.bd-spoils-stats dd { font-size: 25px; font-family: Georgia, 'Songti SC', serif; color: #ece1c4; margin: 0; }
+.bd-spoils-stats dd i { font-size: 12px; font-style: normal; color: #7f9189; }
+.bd-spoils-stats dd.good { color: #e8cf94; }
+.bd-spoils-note { font-size: 11.5px; line-height: 1.85; color: #7f9189; margin: 14px 0 0; }
+.bd-spoils-actions { margin-top: 22px; display: flex; justify-content: center; }
+.bd-spoils-actions .bd-over-btn { margin: 0; }
+
+/* --------------------------------------------------------------- relics */
+
+/* The draw. Three relics face down; the player turns one over and it goes into a slot. The flip is a
+   real half-turn — two faces back to back — for the same reason the card draw is: a cross-fade reads
+   as a picture changing, and a turn reads as a thing being revealed. */
+.bd-draw {
+  padding: 20px 22px; border: 1px solid rgba(212, 189, 135, .38); border-radius: 5px;
+  background: linear-gradient(140deg, rgba(32, 44, 46, .9), rgba(14, 21, 26, .92));
+  box-shadow: 0 0 50px rgba(196, 160, 90, .12) inset;
+}
+.bd-draw-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+.bd-draw-head h2 { font-size: 19px; letter-spacing: 4px; color: #ece1c4; }
+.bd-draw-head small { font-size: 9px; letter-spacing: 2.6px; color: #b8a678; font-family: 'Segoe UI', sans-serif; }
+.bd-draw-note { font-size: 12.5px; line-height: 1.9; color: #93a49c; margin: 9px 0 18px; }
+
+.bd-draw-row { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
+.bd-draw-card {
+  position: relative; width: 240px; height: 380px;
+  perspective: 1100px; padding: 0;
+  transition: transform .3s cubic-bezier(.2, .9, .3, 1);
+}
+.bd-draw-card:not(.is-flipped):hover { transform: translateY(-8px); }
+/* Dimmed, not gone: the two you did not pick are still choices you made, and at .38 they read as
+   blank space rather than as face-down relics. */
+.bd-draw-card.is-dimmed { opacity: .55; filter: saturate(.55); }
+.bd-draw-inner {
+  position: absolute; inset: 0; transform-style: preserve-3d;
+  transition: transform .72s cubic-bezier(.3, 1.1, .4, 1);
+}
+.bd-draw-card.is-flipped .bd-draw-inner { transform: rotateY(180deg); }
+.bd-draw-face { position: absolute; inset: 0; backface-visibility: hidden; }
+.bd-draw-front { transform: rotateY(180deg); }
+
+/* The back: no photograph, because there is nothing to photograph yet. Concentric rings in the
+   game's gold, which is what an unrevealed thing looks like everywhere else in this project. */
+.bd-draw-back {
+  display: grid; place-items: center; border-radius: 4px;
+  border: 1.5px solid rgba(212, 189, 135, .3);
+  background:
+    radial-gradient(circle at 50% 42%, rgba(224, 180, 95, .16), transparent 58%),
+    repeating-radial-gradient(circle at 50% 42%, rgba(212, 189, 135, .1) 0 1px, transparent 1px 13px),
+    linear-gradient(150deg, #1c2a30, #0e161a);
+}
+.bd-draw-back i {
+  display: block; width: 46px; height: 46px; border-radius: 50%;
+  border: 1px solid rgba(212, 189, 135, .5);
+  box-shadow: 0 0 26px rgba(224, 180, 95, .28), 0 0 60px rgba(224, 180, 95, .12);
+  animation: bd-pulse 3.4s ease-in-out infinite;
+}
+@keyframes bd-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+
+/* The burst that goes off the moment a relic turns over. */
+.bd-draw-burst {
+  position: absolute; inset: 0; pointer-events: none; border-radius: 4px;
+  background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--tier) 55%, transparent), transparent 62%);
+  animation: bd-burst .9s ease-out both;
+}
+@keyframes bd-burst { from { opacity: .95; transform: scale(.55); } to { opacity: 0; transform: scale(1.25); } }
+
+.bd-draw-actions { display: flex; gap: 12px; justify-content: center; margin-top: 20px; }
+.bd-draw-actions .bd-btn { padding: 11px 22px; }
+.bd-draw-hint { text-align: center; font-size: 12.5px; color: #93a49c; margin-top: 16px; }
+
+/* The two slots, in the preparation panel and again in the fight. */
+.bd-relic-slots { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.bd-relic-slot {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 12px; border: 1px dashed rgba(180, 170, 130, .3); border-radius: 4px;
+  text-align: center; min-height: 92px; justify-content: center;
+}
+.bd-relic-slot.filled { border-style: solid; border-color: color-mix(in srgb, var(--tier) 55%, transparent); background: color-mix(in srgb, var(--tier) 7%, transparent); }
+.bd-relic-slot > span { font-size: 9px; letter-spacing: 2.6px; color: #7f9189; }
+.bd-relic-slot b { font-size: 15px; letter-spacing: 2px; font-weight: 400; color: var(--tier, #b6c3b2); font-family: 'Noto Serif SC', 'Songti SC', serif; }
+.bd-relic-slot i { font-size: 10.5px; font-style: normal; color: #7f9189; }
+.bd-relic-slot.empty b { color: #5d6a66; font-size: 13px; }
+/* 丢弃 / 调换 — the two things you can do to a loadout between fights. Neither exists once the fight
+   has started, which is why the battle panel renders the same boxes without them. */
+.bd-relic-drop {
+  margin-top: 5px; padding: 3px 9px; font-size: 10.5px; letter-spacing: 1.4px;
+  color: #7f9189; border: 1px solid var(--line); border-radius: 2px;
+  transition: color .2s, border-color .2s;
+}
+.bd-relic-drop:hover { color: #e3948c; border-color: rgba(227, 148, 140, .5); }
+.bd-relic-swap {
+  grid-column: 1 / -1; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 7px; font-size: 11.5px; letter-spacing: 1.8px; color: #a9b6ae;
+  border: 1px solid var(--line); border-radius: 3px;
+  transition: color .2s, border-color .2s;
+}
+.bd-relic-swap:hover { color: #f4e8ca; border-color: rgba(212, 189, 135, .5); }
+.bd-draw-replace { display: block; margin-top: 3px; font-size: 10.5px; font-style: normal; letter-spacing: 1px; color: #93a49c; }
+
+/* The floor: the hand row, with the relic rail laid over its left end.
+   The rail cannot live *inside* `.bd-hand-row` — that row is `overflow-x: auto`, which forces
+   `overflow-y` to `auto` too, so anything hanging above its box is clipped. (And `overflow-y:
+   visible` next to `overflow-x: auto` is not a legal pair.) Wrapping the two in a positioned box
+   gives the rail somewhere to hang that is not the scroll container. */
+.bd-floor { position: relative; flex: none; }
+
+/* 战斗中：手牌那一行的最左边，用完整卡面。
+   Absolutely positioned so the hand stays centred — the relics are a fixed landmark on the floor,
+   not another item in the row that pushes the hand sideways when the second slot fills up. */
+.bd-hand-relics {
+  position: absolute; left: 16px; bottom: 10px; z-index: 3;
+  display: flex; gap: 14px; align-items: flex-end;
+}
+/* The card is scaled inside a fixed box: `.rl` owns its own `transform` for the pointer tilt, so the
+   scale has to live on a wrapper or the two would overwrite each other. */
+.bd-hand-relic { position: relative; width: 216px; height: 342px; }
+.bd-hand-relic-scale { position: absolute; inset: 0; transform: scale(.9); transform-origin: 0 0; }
+.bd-hand-relic-tag {
+  position: absolute; left: 8px; top: 8px; z-index: 2;
+  width: 22px; height: 22px; display: grid; place-items: center;
+  font-size: 12px; font-family: 'Noto Serif SC', 'Songti SC', serif; color: #0b1114;
+  background: linear-gradient(180deg, #e8cf95, #c08a3e); border-radius: 2px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .6);
+}
+/* An empty slot is a dashed hole the size of a card, so the floor's shape does not change when the
+   second relic arrives. */
+.bd-hand-relic-blank {
+  /* `place-items` centres the *items*; the rows themselves still sit at the top without
+     `align-content`, which is why the two lines first showed up against the upper edge. */
+  display: grid; place-items: center; align-content: center; gap: 9px; width: 240px; height: 380px;
+  border: 1px dashed rgba(180, 170, 130, .28); border-radius: 4px;
+  font-size: 20px; letter-spacing: 5px; color: #4c5a56;
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+  background: rgba(12, 19, 23, .5);
+}
+.bd-hand-relic-blank i { font-size: 9px; font-style: normal; letter-spacing: 3px; color: #3f4b48; }
+
+/* The tower is its own full screen; the relic draw opens over it rather than replacing it, because
+   the floor you are standing on is still the context for what you just found. */
+.tw-host { position: relative; }
+.bd-map-draw {
+  width: min(920px, 94vw); max-height: 92dvh; overflow-y: auto;
+  animation: bd-pop .5s cubic-bezier(.2, 1.4, .4, 1) both;
+}
+
 /* ------------------------------------------------------------ small screens */
 
 /* Short viewports: the cards keep their full size but give back the room they are not using, so the
@@ -663,6 +958,10 @@
 @media (max-height: 860px) {
   .bd-hand-card { transform: scale(.86); transform-origin: 50% 100%; margin-top: -48px; }
   .bd-hand-row { padding-top: 12px; }
+  /* The relic rail rides down with the hand it stands beside, or it would be the tallest thing on
+     the floor and set the row's height by itself. */
+  .bd-hand-relic { width: 198px; height: 313px; }
+  .bd-hand-relic-scale { transform: scale(.825); }
 }
 /* A 720-line laptop has to give up the flavour text before it gives up the health bars. */
 @media (max-height: 820px) {
@@ -675,6 +974,9 @@
   .bd-hand-card { transform: scale(.76); transform-origin: 50% 100%; margin-top: -83px; }
   .bd-title { font-size: 23px; }
   .bd-sub { display: none; }
+  .bd-hand-relic { width: 168px; height: 266px; }
+  .bd-hand-relic-scale { transform: scale(.7); }
+  .bd-hand-relic-tag { width: 18px; height: 18px; font-size: 10px; left: 6px; top: 6px; }
 }
 
 
@@ -734,12 +1036,44 @@
   .bd-hand-card + .bd-hand-card { margin-left: -88px; }
   .bd-hand-empty { padding: 40px 0; }
 
+  /* On a phone the hand row is sticky at the floor and covers a third of the screen, so the relics
+     come out of the overlay entirely and become a normal row above it. Deliberately NOT done by
+     letting the hand row wrap: the hand cards overlap via negative margins, which only hold within a
+     single line — wrapping stacked them into a staircase. */
+  .bd-floor { display: flex; flex-direction: column; }
+  .bd-hand-relics { position: static; order: -1; padding: 10px 8px 0; gap: 9px; }
+  .bd-hand-relic { width: 132px; height: 209px; }
+  .bd-hand-relic-scale { transform: scale(.55); }
+  .bd-hand-relic-tag { width: 16px; height: 16px; font-size: 10px; left: 5px; top: 5px; }
+
   .bd-over-card { padding: 24px 20px; }
   .bd-over-card h2 { font-size: 25px; letter-spacing: 6px; }
   .bd-modal-inner { padding: 16px; }
   .bd-tour-bubble { left: 12px !important; right: 12px; width: auto !important; }
   .bd-tour-title { font-size: 19px; letter-spacing: 3px; }
   .bd-tour-body { font-size: 12.5px; line-height: 1.9; }
+
+  /* The two run screens stack: the deck choice becomes one column, and the briefing puts its
+     portraits under the copy rather than beside it. */
+  .bd-prep { padding: 20px 12px 42px; }
+  .bd-prep-title { font-size: 24px; letter-spacing: 5px; }
+  .bd-prep-tools { position: static; margin-top: 13px; }
+  .bd-prep-copy { font-size: 12.5px; }
+  .bd-forms { grid-template-columns: minmax(0, 1fr); }
+  .bd-form { flex-direction: column; align-items: center; text-align: center; padding: 18px 16px; }
+  .bd-form-copy { align-items: center; }
+  .bd-form-start { align-self: center; }
+  .bd-brief { grid-template-columns: minmax(0, 1fr); padding: 18px 16px; }
+  .bd-brief-units { justify-content: center; flex-wrap: wrap; }
+  .bd-brief-unit, .bd-brief-unit img { width: 78px; }
+  .bd-brief-unit img { height: 78px; }
+  .bd-brief-copy h2 { font-size: 22px; letter-spacing: 4px; }
+  .bd-runbar { grid-template-columns: minmax(0, 1fr); }
+  .bd-run-pair { grid-template-columns: minmax(0, 1fr); }
+  .bd-swap { flex-direction: row; justify-content: center; gap: 8px; }
+  .bd-fight-btn { width: 100%; padding: 12px 20px; }
+  .bd-spoils-stats { gap: 20px; }
+  .bd-spoils-stats dd { font-size: 21px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

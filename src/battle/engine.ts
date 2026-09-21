@@ -35,12 +35,22 @@
  */
 
 import { CARD_BY_ID, DECK_IDS, type DeckId } from '../cards/index.ts';
-import { isDeckUnlocked, starterDeck } from './chapter.ts';
+import { chapterDeck, isDeckUnlocked } from './chapter.ts';
+import { RELIC_BY_ID } from '../relics/relics.ts';
 import { EMPTY_POWERS, effectFor, type BattlePowers, type EffectContext } from './effects.ts';
-import { ENCOUNTERS, ENEMY_BY_ID, JUNK, OATH, SCRIPTS } from './enemies.ts';
+import {
+  effectsFor, readModifier,
+  type RelicContext, type RelicFlag, type RelicModifierKey, type RelicSlot, type RelicTrigger,
+} from './relics.ts';
+import { upgradeFor, type Upgrade } from './upgrades.ts';
+import {
+  ALL_ENCOUNTERS, ENEMY_BY_ID, JUNK, MUTATIONS, MUTATION_BY_ID, MUTATION_CHANCE, MUTABLE_RANKS, OATH,
+  SCRIPTS, type Encounter,
+} from './enemies.ts';
 import {
   STATUS_GOOD, STATUS_LABEL,
-  type EnemyState, type Intent, type LogLine, type Phase, type PlayerState, type StatusId, type Trait,
+  type EnemyDefinition, type EnemyState, type Intent, type LogLine, type Phase, type PlayerState,
+  type StatusId, type Trait,
 } from './types.ts';
 
 export const PLAYER_MAX_HP = 60;
@@ -84,15 +94,50 @@ const OFF_DECK_CARDS: Record<string, { name: string; cost: number; text: string 
  */
 const KEEP_BLOCK_IDS = new Set(['stalker']);
 
-export interface BattleCard { uid: string; cardId: string }
+export interface BattleCard {
+  uid: string;
+  cardId: string;
+  /** 打磨过的副本。 The bonus lives on the *instance*, so a run can hold one polished 割线 and one
+   *  plain one — which is exactly what happens after a campfire. */
+  upgraded?: boolean;
+}
 
 export interface BattleState {
   version: 1;
   encounterId: string;
+  /** The main deck. When a run supplies a sub deck, `sub` carries the other half of the pair. */
   deck: DeckId;
+  /** The sub deck the pile was splashed from, if any. See `chapterDeck`. */
+  sub?: DeckId;
+  /**
+   * The two relics the run is carrying, by id. **Ids, never handlers** — every entry point
+   * `structuredClone`s the state, and a function would not survive the clone. Behaviour is looked up
+   * in `./relics.ts` the same way card behaviour is looked up in `./effects.ts`.
+   */
+  relics?: { main?: string; sub?: string };
+  /** Battle-scoped scratch space for relics: 「每场只生效三次」 and friends. Cleared with the battle. */
+  marks?: Record<string, number>;
+  /** Attack hits landed this battle, for 铁钉's 「每第 3 次命中」. */
+  hits?: number;
+  /**
+   * Per-card-instance cost deltas, keyed by `uid` — 「随机一张手牌费用 -1，本场战斗有效」.
+   * Keyed by instance rather than by card id so two copies of 割线 can end up costing different
+   * amounts, which is what actually happens when you play 焚书 twice.
+   */
+  costMarks?: Record<string, number>;
   seed: number;
-  /** The live LCG state — the only source of randomness in a battle. */
+  /** The live LCG state for **the card stream and nothing else**. See `spawnRng`. */
   rng: number;
+  /**
+   * A second, independent stream for encounter composition — how many of each monster turned up,
+   * what their HP rolled, and which of them mutated.
+   *
+   * It is deliberately not `rng`. Slay the Spire rolls a monster's HP when the *combat* is generated,
+   * before any deck exists, and keeping the two apart here buys the same thing: `rng` means exactly
+   * one thing ("the order cards come out in"), so a fight's shape never shifts because the shuffle
+   * happened to run first, and a test about 蓄火 cannot be knocked over by a wolf rolling 强健的.
+   */
+  spawnRng: number;
   /** Player turns taken. 1 on the opening turn. */
   turn: number;
   phase: Phase;
@@ -110,6 +155,10 @@ export interface BattleState {
   playedThisTurn: number;
   /** 淬刃: whether this turn's first attack card has already been played. */
   attackPlayed: boolean;
+  /** 断齿梳: whether this turn's first skill card has already been played. Cleared each turn. */
+  skillPlayedThisTurn?: boolean;
+  /** 铁匠锤: whether this battle's first power card has already been played. Never cleared. */
+  powerPlayedThisBattle?: boolean;
   /** 蓄火: set by `bank()`, read when the turn ends. */
   banking: boolean;
   uidSeq: number;
@@ -153,6 +202,47 @@ export function cardName(cardId: string): string {
 export function cardCost(cardId: string): number {
   return CARD_BY_ID.get(cardId)?.cost ?? OFF_DECK_CARDS[cardId]?.cost ?? -1;
 }
+
+/**
+ * 引火 — the first card of a turn costs 1 less, to a floor of 0. The fire is hottest when you first
+ * feed it.
+ *
+ * This exists because 3 energy is the right *base* and 4 is too much: at 4 the 断罪之刃 deck, whose
+ * cards average 0.68 energy, simply empties its hand and wastes a quarter of the energy it is given
+ * every turn. A flat discount instead lands between the two, and it lands there unevenly on purpose
+ * — it is worth a whole extra card to 长明壁垒 (every card of which costs at least 1) and close to
+ * nothing to 断罪之刃 (which leads with 0-cost cards anyway). The rule balances itself.
+ *
+ * It needs no new state: `playedThisTurn` already means exactly "is this the opening card".
+ */
+export const KINDLING_DISCOUNT = 1;
+
+/**
+ * What a card costs to play *right now*, which is what the UI must show and the engine must charge.
+ *
+ * `uid` is the card *instance*: relics can make one copy of a card cheaper than another, so the
+ * per-instance mark has to be part of the price. Callers that only have the id get the unmarked cost,
+ * which is the right answer for a card that is not in hand.
+ */
+export function cardCostNow(state: BattleState, cardId: string, uid?: string): number {
+  const base = cardCost(cardId);
+  // A card that cannot be played from hand (-1) is not discounted into playability.
+  if (base < 0) return base;
+  const card = CARD_BY_ID.get(cardId);
+  let cost = base + (uid ? state.costMarks?.[uid] ?? 0 : 0);
+
+  // 引火, deepened by 雷击木.
+  if (state.playedThisTurn === 0) cost -= KINDLING_DISCOUNT + relicModifier(state, 'kindling');
+
+  // Relic rules that discount the first card of a *kind*. These stack with 引火 rather than
+  // replacing it: one is about being the first card of the turn, the others about being the first
+  // skill or the first power, and a card can be both.
+  if (state.playedThisTurn === 0) cost += relicModifier(state, 'firstCardCost');
+  if (card?.type === 'skill' && !state.skillPlayedThisTurn) cost += relicModifier(state, 'firstSkillCost');
+  if (card?.type === 'power' && !state.powerPlayedThisBattle) cost += relicModifier(state, 'firstPowerCost');
+
+  return Math.max(0, cost);
+}
 function cardText(cardId: string): string {
   return CARD_BY_ID.get(cardId)?.text ?? OFF_DECK_CARDS[cardId]?.text ?? '';
 }
@@ -166,26 +256,56 @@ export function cardRules(cardId: string): string {
 
 // --------------------------------------------------------------- enemy traits
 
+/**
+ * The definition an enemy is *actually* running: its own, with its 异变 folded in.
+ *
+ * Everything that reads traits, `regenBlock` or keep-block has to come through here. Reading
+ * `ENEMY_BY_ID` directly would silently give a mutated enemy the base version of the very field its
+ * mutation set — 「披甲的」 would be a name and a colour and nothing else.
+ */
+function defOf(enemy: EnemyState): EnemyDefinition | undefined {
+  const base = ENEMY_BY_ID.get(enemy.id);
+  if (!base) return undefined;
+  const mutation = enemy.mutation ? MUTATION_BY_ID.get(enemy.mutation) : undefined;
+  if (!mutation) return base;
+  return { ...base, regenBlock: mutation.regenBlock ?? base.regenBlock };
+}
+
 function traitOf<T extends Trait['id']>(enemy: EnemyState, id: T): Extract<Trait, { id: T }> | undefined {
-  const def = ENEMY_BY_ID.get(enemy.id);
+  const def = defOf(enemy);
   return def?.traits?.find((trait): trait is Extract<Trait, { id: T }> => trait.id === id);
 }
-function nameOf(enemy: EnemyState): string {
-  return ENEMY_BY_ID.get(enemy.id)?.name ?? enemy.id;
+/** The name as the player sees it, 异变 prefix included. Exported because the battle page has to
+ *  match log lines against the same string this prints. */
+export function enemyName(enemy: EnemyState): string {
+  const base = ENEMY_BY_ID.get(enemy.id)?.name ?? enemy.id;
+  const mutation = enemy.mutation ? MUTATION_BY_ID.get(enemy.mutation) : undefined;
+  return mutation ? `${mutation.prefix}${base}` : base;
 }
+const nameOf = enemyName;
 export function livingEnemies(state: BattleState): EnemyState[] {
   return state.enemies.filter(enemy => !enemy.dead && enemy.hp > 0);
 }
 function keepsBlock(enemy: EnemyState): boolean {
-  const def = ENEMY_BY_ID.get(enemy.id);
+  const def = defOf(enemy);
   if (!def) return false;
   return def.regenBlock !== undefined || KEEP_BLOCK_IDS.has(def.id);
 }
-/** 聚群: +amount for every *other* living enemy, counted when the attack resolves. */
+/**
+ * 聚群: +amount for every *other* living enemy **of the same kind**, counted when the attack resolves.
+ *
+ * The same-kind clause is load-bearing. Counting the whole field meant a 影狼 standing next to 头狼
+ * and two 潜草者 was getting +6 and biting for 11 — more than the miniboss it was standing behind —
+ * so 草甸上的头狼 dealt 54 damage in one turn against a 60-health player. 「同伴」 means packmates.
+ *
+ * It also gives the two wolf-shaped enemies different jobs: the pack scales off its own numbers,
+ * and the 头狼 buffs by handing out 力量 instead. Neither steps on the other.
+ */
 function packBonus(s: BattleState, enemy: EnemyState): number {
   const trait = traitOf(enemy, 'pack');
   if (!trait) return 0;
-  return trait.amount * Math.max(0, livingEnemies(s).length - 1);
+  const packmates = livingEnemies(s).filter(other => other.uid !== enemy.uid && other.id === enemy.id).length;
+  return trait.amount * packmates;
 }
 
 // ------------------------------------------------------------------- intents
@@ -253,6 +373,194 @@ function gainStatus(
   setStatus(statuses, status, next);
   log(s, `${who} ${amount > 0 ? '获得' : '失去'} ${Math.abs(amount)} 层${STATUS_LABEL[status]}（${next}）。`,
     STATUS_GOOD[status] ? 'good' : 'bad');
+}
+
+// --------------------------------------------------------------------- relics
+
+/** The two slots. Main first, so a pair that both fire on the same trigger reads in that order. */
+const RELIC_SLOTS: RelicSlot[] = ['main', 'sub'];
+
+/**
+ * The abilities a relic effect may use.
+ *
+ * Built fresh on every call rather than cached on the state: the state is `structuredClone`d at every
+ * entry point, and a closure would not survive the clone. This is the same reason `relics` holds ids
+ * rather than handlers.
+ */
+function relicContext(s: BattleState, slot: RelicSlot, extra: Partial<RelicContext> = {}): RelicContext {
+  const relicId = s.relics?.[slot];
+  return {
+    slot,
+    v: (main, sub) => (slot === 'main' ? main : sub),
+    main: slot === 'main',
+    turn: s.turn,
+    hpFraction: s.player.maxHp ? s.player.hp / s.player.maxHp : 0,
+    player: s.player,
+    handSize: s.hand.length,
+    enemies: livingEnemies(s),
+    hits: s.hits ?? 0,
+    count: key => s.marks?.[`${relicId}:${key}`] ?? 0,
+    bump: (key, by = 1) => {
+      s.marks = s.marks ?? {};
+      const marked = `${relicId}:${key}`;
+      s.marks[marked] = (s.marks[marked] ?? 0) + by;
+    },
+    // Off the encounter stream. Spending `rng` here would reorder the deck — the same mistake that
+    // split `spawnRng` off in the first place.
+    roll: () => spawnRandom(s),
+    log: (text, tone = 'neutral') => log(s, text, tone),
+    status: (who, status, amount) => {
+      if (!amount) return;
+      if (who === 'player') gainStatus(s, s.player.statuses, status, amount, '你');
+      else for (const enemy of livingEnemies(s)) gainStatus(s, enemy.statuses, status, amount, nameOf(enemy));
+    },
+    statusOn: (enemy, status, amount) => {
+      if (!enemy || enemy.dead || !amount) return;
+      gainStatus(s, enemy.statuses, status, amount, nameOf(enemy));
+    },
+    block: amount => {
+      if (!amount) return;
+      s.player.block = Math.max(0, s.player.block + amount);
+      log(s, `遗物 · 你获得 ${amount} 点格挡（${s.player.block}）。`, 'good');
+    },
+    energy: amount => {
+      if (!amount) return;
+      s.player.energy = Math.max(0, s.player.energy + amount);
+      log(s, `遗物 · 能量 ${amount > 0 ? '+' : ''}${amount}（${s.player.energy}）。`, 'good');
+    },
+    draw: count => { if (count > 0) drawCards(s, count); },
+    heal: amount => {
+      if (amount <= 0) return;
+      const healed = Math.min(amount, s.player.maxHp - s.player.hp);
+      s.player.hp += healed;
+      if (healed) log(s, `遗物 · 你回复 ${healed} 点生命（${s.player.hp}）。`, 'good');
+    },
+    loseHp: amount => {
+      if (amount <= 0) return;
+      s.player.hp = Math.max(0, s.player.hp - amount);
+      log(s, `遗物 · 你失去 ${amount} 点生命（${s.player.hp}）。`, 'bad');
+      if (s.player.hp <= 0) lose(s);
+    },
+    stripBlock: amount => {
+      for (const enemy of livingEnemies(s)) {
+        const taken = Math.min(enemy.block, Math.max(0, amount));
+        if (!taken) continue;
+        enemy.block -= taken;
+        log(s, `遗物 · ${nameOf(enemy)} 失去 ${taken} 点格挡（${enemy.block}）。`, 'good');
+      }
+    },
+    reclaim: count => reclaimCards(s, count),
+    tutor: kind => tutor(s, kind),
+    purgeJunk: () => purgeJunk(s),
+    discardRandom: count => discardRandom(s, count),
+    cheapenHand: (count, by, floor = 0) => cheapenHand(s, count, by, floor),
+    copyHand: (count, extra = 0) => copyHand(s, count, extra),
+    topOfDraw: count => s.draw.slice(0, Math.max(0, count)).map(card => cardName(card.cardId)),
+    ...extra,
+  };
+}
+
+/** Ask both relics for a number. Called from the hot paths (every attack hit), so it stays small.
+ *  Exported for the run layer, which reads the victory payouts (`victoryHeal`, `goldBonus`). */
+export function relicModifier(s: BattleState, key: RelicModifierKey, extra: Partial<RelicContext> = {}): number {
+  if (!s.relics) return 0;
+  let total = 0;
+  for (const slot of RELIC_SLOTS) {
+    const spec = effectsFor(s.relics[slot])?.modifiers?.[key];
+    if (spec === undefined) continue;
+    total += readModifier(spec, relicContext(s, slot, extra));
+  }
+  return total;
+}
+
+/**
+ * Which slot is supplying this rule, if any.
+ *
+ * A flag is binary but its *effect* is not: 铁面具 saves you either way, but the sub slot makes you
+ * pay for it, and 燧发枪弹's extra swing is at half damage only in the sub slot. So the engine asks
+ * which slot, not just whether.
+ */
+function relicFlagSlot(s: BattleState, flag: RelicFlag): RelicSlot | undefined {
+  if (!s.relics) return undefined;
+  return RELIC_SLOTS.find(slot => effectsFor(s.relics![slot])?.flags?.includes(flag));
+}
+
+/** Is this rule switched on by either slot? */
+function relicFlag(s: BattleState, flag: RelicFlag): boolean {
+  return relicFlagSlot(s, flag) !== undefined;
+}
+
+/** Fire a moment. Both slots, main first. */
+function fireRelics(s: BattleState, trigger: RelicTrigger, extra: Partial<RelicContext> = {}) {
+  if (!s.relics) return;
+  for (const slot of RELIC_SLOTS) {
+    const handler = effectsFor(s.relics[slot])?.triggers?.[trigger];
+    if (handler) handler(relicContext(s, slot, extra));
+  }
+}
+
+/** 灰烬瓮 — takes the junk an enemy put in your deck back out of it. Never touches `exhaust`. */
+function purgeJunk(s: BattleState): number {
+  const junk = (cards: BattleCard[]) => cards.filter(card => card.cardId === 'ash').length;
+  const before = junk(s.hand) + junk(s.draw);
+  s.hand = s.hand.filter(card => card.cardId !== 'ash');
+  s.draw = s.draw.filter(card => card.cardId !== 'ash');
+  return before;
+}
+
+/** Drops `count` cards at random out of hand. Removed from the back so indices stay valid. */
+function discardRandom(s: BattleState, count: number) {
+  const picks = shuffled(s, s.hand.map((_, index) => index)).slice(0, Math.max(0, Math.floor(count)));
+  for (const index of picks.sort((a, b) => b - a)) {
+    const [card] = s.hand.splice(index, 1);
+    s.discard.push(card);
+    log(s, `遗物 · 弃掉「${cardName(card.cardId)}」。`, 'neutral');
+  }
+}
+
+/**
+ * 断齿梳 / 借物 — makes cards in hand cheaper for the rest of the battle. The discount is stored per
+ * card instance, not per card id, so two copies of 割线 can cost different amounts.
+ */
+function cheapenHand(s: BattleState, count: number, by: number, floor: number) {
+  const picks = shuffled(s, s.hand.map((_, index) => index)).slice(0, Math.max(0, Math.floor(count)));
+  for (const index of picks) {
+    const card = s.hand[index];
+    s.costMarks = s.costMarks ?? {};
+    // The floor is on the final price, so it becomes a floor on the delta.
+    const lowest = floor - cardCost(card.cardId);
+    const next = Math.max(lowest, (s.costMarks[card.uid] ?? 0) - by);
+    if (next === s.costMarks[card.uid]) continue;
+    s.costMarks[card.uid] = next;
+    log(s, `遗物 · 「${cardName(card.cardId)}」本场战斗费用 ${by > 0 ? '降低' : '提高'} ${Math.abs(by)} 点。`, 'good');
+  }
+}
+
+/** 铜钥匙 — digs the topmost card of a kind out of the draw pile and puts it in your hand. */
+function tutor(s: BattleState, kind: 'attack' | 'skill' | 'power') {
+  if (s.hand.length >= HAND_LIMIT) { log(s, `手牌已满（${HAND_LIMIT} 张），找出来的牌放不下。`, 'neutral'); return; }
+  const index = s.draw.findIndex(card => CARD_BY_ID.get(card.cardId)?.type === kind);
+  if (index < 0) return;
+  const [card] = s.draw.splice(index, 1);
+  s.hand.push(card);
+  log(s, `遗物 · 从抽牌堆找出了「${cardName(card.cardId)}」。`, 'good');
+}
+
+/**
+ * 铜镜 — duplicates cards already in hand. The copy gets a fresh `uid`, so it is a genuinely separate
+ * card and not a second reference to the same one; a relic that pushed the same object twice would
+ * have both copies move together the first time either was played.
+ */
+function copyHand(s: BattleState, count: number, extra: number) {
+  const picks = shuffled(s, s.hand.map((_, index) => index)).slice(0, Math.max(0, Math.floor(count)));
+  for (const index of picks) {
+    if (s.hand.length >= HAND_LIMIT) { log(s, `手牌已满（${HAND_LIMIT} 张），复制品放不下了。`, 'neutral'); return; }
+    const source = s.hand[index];
+    const copy: BattleCard = { uid: `r${s.uidSeq++}`, cardId: source.cardId };
+    if (extra) s.costMarks = { ...s.costMarks, [copy.uid]: extra };
+    s.hand.push(copy);
+    log(s, `遗物 · 复制了「${cardName(source.cardId)}」${extra ? `（复制品费用 +${extra}）` : ''}。`, 'good');
+  }
 }
 
 // ------------------------------------------------------------------- the piles
@@ -352,10 +660,32 @@ function lose(s: BattleState) {
 function damagePlayer(s: BattleState, amount: number, label: string): number {
   const blocked = Math.min(s.player.block, Math.max(0, amount));
   s.player.block -= blocked;
-  const hurt = Math.max(0, amount) - blocked;
+  let hurt = Math.max(0, amount) - blocked;
+  // 铁面具 — survives the first blow that would have finished you, once. Applied before the
+  // subtraction rather than after, because "you are at 1" has to be true when 火熄了 would fire.
+  const saveSlot = !s.marks?.['lethal:spent'] && s.player.hp > 0 && hurt >= s.player.hp
+    ? relicFlagSlot(s, 'lethalSave')
+    : undefined;
+  if (saveSlot) {
+    s.marks = { ...s.marks, 'lethal:spent': 1 };
+    log(s, '铁面具 · 这一下本该要你的命，面具替你留住了最后一点火。', 'special');
+    hurt = Math.max(0, s.player.hp - 1);
+    // The lesser slot saves you, but charges for it.
+    if (saveSlot === 'sub') gainStatus(s, s.player.statuses, 'drained', 1, '铁面具');
+  }
   s.player.hp = Math.max(0, s.player.hp - hurt);
   log(s, `${label} → 你：${Math.max(0, amount)} 点伤害（格挡 ${blocked}，生命 −${hurt}）。`, 'bad');
-  if (s.player.hp <= 0) lose(s);
+  if (s.player.hp <= 0) { lose(s); return hurt; }
+  // 铁夹 / 皮革护腕 answer being hit. Fired *after* the damage so the block they grant is not eaten
+  // by the very blow that triggered them, and gated on a mark so "the first time" means it.
+  if (!s.marks?.['attacked:battle']) {
+    s.marks = { ...s.marks, 'attacked:battle': 1 };
+    fireRelics(s, 'firstAttacked');
+  }
+  if (!s.marks?.['attacked:turn']) {
+    s.marks = { ...s.marks, 'attacked:turn': 1 };
+    fireRelics(s, 'firstAttackedTurn');
+  }
   return hurt;
 }
 
@@ -364,7 +694,7 @@ function damagePlayer(s: BattleState, amount: number, label: string): number {
  * fire in turn. Iterative rather than recursive so a long chain cannot blow the stack, and the queue
  * is re-collected after each burst so `dealToEnemy` stays a plain "subtract numbers" call.
  */
-function settle(s: BattleState) {
+function settle(s: BattleState, scorched?: EnemyState) {
   let queue = s.enemies.filter(enemy => !enemy.dead && enemy.hp <= 0);
   while (queue.length) {
     const enemy = queue.shift()!;
@@ -372,6 +702,9 @@ function settle(s: BattleState) {
     enemy.dead = true;
     enemy.hp = 0;
     log(s, `${nameOf(enemy)} 消散。`, 'special');
+    // The one place an enemy death can be observed. `scorched` is the enemy `settleScorch` just
+    // burned, so 焦木块 can tell a death by fire from a death by blade.
+    fireRelics(s, 'enemyKilled', { fallen: enemy, byScorch: enemy === scorched });
     const burst = traitOf(enemy, 'deathBurst');
     if (!burst) continue;
     log(s, `${nameOf(enemy)} 炸开 · 对场上其他所有单位造成 ${burst.amount} 点伤害。`, 'bad');
@@ -397,14 +730,40 @@ function currentTarget(s: BattleState): EnemyState | undefined {
   return livingEnemies(s)[0];
 }
 
-function makeContext(s: BattleState, cardId: string, firstAttackBonus: number): EffectContext {
+function makeContext(
+  s: BattleState, cardId: string, firstAttackBonus: number, isAttack = false, upgrade?: Upgrade,
+): EffectContext {
   const label = `「${cardName(cardId)}」`;
-  /** One hit: 锋锐 and 烙印 are per hit, and so is 淬刃's opening bonus. */
+  /** 打磨 — the deltas are folded in at the four places a card can hand something out, which is what
+   *  lets an upgrade be a table row instead of a second effect function. */
+  const plus = (value: number, delta: number | undefined) => value + (delta ?? 0);
+  /** 燧发枪弹 — the first *attack card of the battle* swings once more, for half. Spent on first use,
+   *  so a multi-hit card does not get one bonus swing per hit. */
+  const bonusSwing = isAttack && !s.marks?.['extraHit:spent']
+    ? relicFlagSlot(s, 'extraHitFirstAttack')
+    : undefined;
+
   const strike = (target: EnemyState, amount: number) => {
+    // `printed` is what the card says it does, upgrade included — so the 余势 swing halves *that*
+    // rather than the pre-polish number.
+    const printed = Math.max(0, plus(amount, upgrade?.hit));
+    // The one place "your attack hits do +N" belongs: upstream of `dealToEnemy`, so it covers both
+    // `hit` and `hitAll`, it is applied once *per hit* rather than once per card, and it is naturally
+    // out of reach of 反震 and 亡语, which are not your attacks.
     const extra = statusOf(s.player.statuses, 'edge')
       + (statusOf(target.statuses, 'mark') > 0 ? MARK_BONUS : 0)
-      + firstAttackBonus;
-    dealToEnemy(s, target, Math.max(0, amount + extra), label);
+      + firstAttackBonus
+      + relicModifier(s, 'attackDamage');
+    s.hits = (s.hits ?? 0) + 1;
+    dealToEnemy(s, target, Math.max(0, printed + extra), label);
+    if (bonusSwing && !s.marks?.['extraHit:spent'] && !target.dead) {
+      // The sub slot swings at half. Half of the card's own printed damage either way, not half of
+      // the buffed total — it is the swing that repeats, not everything 锋锐 and 烙印 did to it.
+      const swing = bonusSwing === 'sub' ? Math.max(1, Math.floor(printed / 2)) : printed;
+      s.marks = { ...s.marks, 'extraHit:spent': 1 };
+      log(s, `燧发枪弹 · 余势再中一次${bonusSwing === 'sub' ? '（减半）' : ''}。`, 'good');
+      dealToEnemy(s, target, swing, `${label}（余势）`);
+    }
     if (s.powers.emberPerHit > 0 && !target.dead) {
       gainStatus(s, s.player.statuses, 'ember', s.powers.emberPerHit, '你');
     }
@@ -426,9 +785,10 @@ function makeContext(s: BattleState, cardId: string, firstAttackBonus: number): 
       for (const target of livingEnemies(s)) strike(target, amount);
     },
     block: amount => {
-      if (amount <= 0) return;
-      s.player.block += amount;
-      log(s, `${label} · 你获得 ${amount} 点格挡（${s.player.block}）。`, 'good');
+      const gain = plus(amount, upgrade?.block);
+      if (gain <= 0) return;
+      s.player.block += gain;
+      log(s, `${label} · 你获得 ${gain} 点格挡（${s.player.block}）。`, 'good');
     },
     spendBlock: amount => {
       const spent = Math.min(s.player.block, Math.max(0, amount));
@@ -436,7 +796,7 @@ function makeContext(s: BattleState, cardId: string, firstAttackBonus: number): 
       if (spent > 0) log(s, `${label} · 你失去 ${spent} 点格挡（${s.player.block}）。`, 'neutral');
       return spent;
     },
-    gain: (status, amount) => gainStatus(s, s.player.statuses, status, amount, '你'),
+    gain: (status, amount) => gainStatus(s, s.player.statuses, status, plus(amount, upgrade?.status?.[status]), '你'),
     spend: (status, amount) => {
       const have = statusOf(s.player.statuses, status);
       const spent = Math.min(have, Math.max(0, Math.floor(amount)));
@@ -451,13 +811,13 @@ function makeContext(s: BattleState, cardId: string, firstAttackBonus: number): 
       if (!target) return;
       gainStatus(s, target.statuses, 'mark', count, nameOf(target));
     },
-    draw: count => drawCards(s, count),
+    draw: count => drawCards(s, Math.max(0, plus(count, upgrade?.draw))),
     bury: count => {
       const buried = buryHand(s, count);
       if (buried) log(s, `${label} · 你手牌里的 ${buried} 张牌变成了「灰烬」。`, 'bad');
       return buried;
     },
-    reclaim: count => reclaimCards(s, count),
+    reclaim: count => reclaimCards(s, Math.max(0, plus(count, upgrade?.reclaim))),
     gainEnergy: count => {
       if (!count) return;
       s.player.energy += count;
@@ -498,15 +858,64 @@ function playOath(s: BattleState, ctx: EffectContext) {
 
 // ------------------------------------------------------------------ the enemy
 
-function spawnEnemy(s: BattleState, id: string, uid: string): EnemyState {
+/** FNV-1a. Only used to fold an encounter id into the encounter stream's seed. */
+function hashId(text: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619) >>> 0;
+  return hash >>> 0;
+}
+
+/** Steps the encounter stream. Same LCG constants as the card stream, different state. */
+function spawnRandom(s: BattleState): number {
+  s.spawnRng = (Math.imul(s.spawnRng, 1664525) + 1013904223) >>> 0;
+  return s.spawnRng / 4294967296;
+}
+
+/** Inclusive roll off the encounter stream, so a seed still replays the fight exactly. */
+function rollBetween(s: BattleState, [min, max]: [number, number]): number {
+  if (max <= min) return min;
+  return min + Math.floor(spawnRandom(s) * (max - min + 1));
+}
+
+/** Only the small ranks mutate: an elite or a boss is already the thing you have to decide about. */
+function rollMutation(s: BattleState, def: EnemyDefinition): string | undefined {
+  if (!MUTABLE_RANKS.includes(def.rank)) return undefined;
+  return spawnRandom(s) < MUTATION_CHANCE ? MUTATIONS[Math.floor(spawnRandom(s) * MUTATIONS.length)].id : undefined;
+}
+
+function spawnEnemy(s: BattleState, id: string, uid: string, mutationId?: string): EnemyState {
   const def = ENEMY_BY_ID.get(id);
   if (!def) throw new Error(`没有这种敌人：${id}`);
+  const mutation = mutationId ? MUTATION_BY_ID.get(mutationId) : undefined;
+  const rolled = rollBetween(s, def.hp);
+  const hp = mutation?.hpScale ? Math.ceil(rolled * mutation.hpScale) : rolled;
   const enemy: EnemyState = {
-    uid, id, hp: def.hp, maxHp: def.hp, block: 0, statuses: {}, turn: 0, intent: [], dead: false,
+    uid, id, mutation: mutationId, hp, maxHp: hp, block: 0,
+    statuses: mutation?.statuses ? { ...mutation.statuses } : {},
+    turn: 0, intent: [], dead: false,
   };
   enemy.intent = publishIntent(s, enemy);
   s.enemies.push(enemy);
   return enemy;
+}
+
+/**
+ * Roll each unit's count, then each one's 异变, then spawn. Counts are rolled for a unit before any of
+ * its members spawn so the *size* of a fight never depends on how many mutations happened to land.
+ */
+function spawnEncounter(s: BattleState, encounter: Encounter) {
+  let index = 0;
+  for (const unit of encounter.units) {
+    const def = ENEMY_BY_ID.get(unit.id);
+    if (!def) throw new Error(`没有这种敌人：${unit.id}`);
+    const count = rollBetween(s, unit.count);
+    for (let i = 0; i < count; i++) {
+      // The field holds four. A high roll on a three-unit encounter is capped rather than refused —
+      // the fight is smaller than the dice said, which is a better failure than a crash.
+      if (s.enemies.length >= FIELD_LIMIT) return;
+      spawnEnemy(s, unit.id, `${unit.id}-${index++}`, rollMutation(s, def));
+    }
+  }
 }
 
 /** 灼烧 is not an attack: it burns straight through block on both sides of the field ("受到等量伤害",
@@ -514,16 +923,18 @@ function spawnEnemy(s: BattleState, id: string, uid: string): EnemyState {
 function settleScorch(s: BattleState, enemy: EnemyState) {
   const stacks = statusOf(enemy.statuses, 'scorch');
   if (stacks <= 0) return;
-  enemy.hp = Math.max(0, enemy.hp - stacks);
-  log(s, `灼烧 · ${nameOf(enemy)} 受到 ${stacks} 点伤害（${enemy.hp}）。`, 'good');
-  setStatus(enemy.statuses, 'scorch', stacks - 1);
-  settle(s);
+  const amount = stacks + relicModifier(s, 'scorchDamage', { subject: enemy });
+  enemy.hp = Math.max(0, enemy.hp - amount);
+  log(s, `灼烧 · ${nameOf(enemy)} 受到 ${amount} 点伤害（${enemy.hp}）。`, 'good');
+  // 焚炉 — the fire does not burn down. (秘宝, so no chapter-I relic sets this yet.)
+  if (!relicFlag(s, 'scorchHolds')) setStatus(enemy.statuses, 'scorch', stacks - 1);
+  settle(s, enemy);
 }
 
 /** Everything that happens before an enemy acts: its wall comes down (unless it keeps one), its
  *  passives hand out their gifts, and its 灼烧 burns. */
 function startEnemyTurn(s: BattleState, enemy: EnemyState) {
-  const def = ENEMY_BY_ID.get(enemy.id);
+  const def = defOf(enemy);
   if (def?.regenBlock !== undefined) {
     const before = enemy.block;
     enemy.block = Math.max(enemy.block, def.regenBlock);
@@ -664,7 +1075,10 @@ function beginTurn(s: BattleState) {
   s.phase = 'player';
   s.playedThisTurn = 0;
   s.attackPlayed = false;
+  s.skillPlayedThisTurn = false;
   s.banking = false;
+  // 「每回合第一次被攻击」 is per turn; 「每场战斗第一次」 is not.
+  if (s.marks) s.marks = { ...s.marks, 'attacked:turn': 0 };
   // 反震 and 攒烬 live for one full round: they are set during your turn and must survive the enemy
   // phase they were bought to punish, so they are cleared here rather than on 结束回合.
   setStatus(s.player.statuses, 'retaliate', 0);
@@ -690,14 +1104,22 @@ function beginTurn(s: BattleState) {
   const drained = statusOf(s.player.statuses, 'drained');
   setStatus(s.player.statuses, 'bank', 0);
   setStatus(s.player.statuses, 'drained', 0);
-  s.player.energy = Math.max(0, s.player.energyPerTurn + Math.min(banked, BANK_LIMIT) - drained);
+  // 无尽沙漏 / 永夜之心 add energy here rather than by raising `energyPerTurn`, which
+  // `isValidBattle` pins to `ENERGY_PER_TURN` — the per-turn allowance is a constant, the bonus is not.
+  const relicEnergy = relicModifier(s, 'energyBonus');
+  s.player.energy = Math.max(0, s.player.energyPerTurn + Math.min(banked, BANK_LIMIT) - drained + relicEnergy);
   log(s, `第 ${s.turn} 回合 · 能量 ${s.player.energy}`
+    + `${relicEnergy ? `（遗物 ${relicEnergy > 0 ? '+' : ''}${relicEnergy}）` : ''}`
     + `${banked ? `（蓄火 +${Math.min(banked, BANK_LIMIT)}）` : ''}`
     + `${drained ? `（枯竭 −${drained}）` : ''}。`, 'special');
 
   const shrouded = statusOf(s.player.statuses, 'shrouded');
   setStatus(s.player.statuses, 'shrouded', 0);
-  drawCards(s, Math.max(1, DRAW_PER_TURN - shrouded));
+  drawCards(s, Math.max(1, DRAW_PER_TURN - shrouded + relicModifier(s, 'drawCount')));
+
+  // Last, so a relic that grants block does not have it eaten by 壁垒's reconciliation above, and so
+  // 「回合开始时若格挡为 0」 sees the block the player actually kept.
+  fireRelics(s, 'turnStart');
 
   // 不动: the only power that pays out on its own.
   if (s.powers.turnBlock > 0) {
@@ -710,6 +1132,8 @@ function beginTurn(s: BattleState) {
 }
 
 function endPlayerTurn(s: BattleState) {
+  // Before the hand is thrown away: 「回合结束时随机一张手牌费用 -1」 has to be able to see the hand.
+  fireRelics(s, 'turnEnd');
   if (s.banking) {
     const banked = Math.min(BANK_LIMIT, s.player.energy);
     setStatus(s.player.statuses, 'bank', banked);
@@ -727,23 +1151,57 @@ function endPlayerTurn(s: BattleState) {
 
 // -------------------------------------------------------------- the public API
 
-export function startBattle(encounterId: string, deck: DeckId, seed = 7): BattleState {
-  const encounter = ENCOUNTERS.find(entry => entry.id === encounterId);
+/** What a chapter run hands to a fight that the fight cannot work out on its own. */
+export interface StartOptions {
+  /** Carried-over HP. Clamped into `[0, PLAYER_MAX_HP]` — the run owns the value, not the battle. */
+  hp?: number;
+  /** The sub deck to splash into the pile. See `chapterDeck`. */
+  sub?: DeckId;
+  /** The relics the run is carrying. See `BattleState.relics`. */
+  relics?: { main?: string; sub?: string };
+  /**
+   * The run's own deck, if it has been edited. Absent means "deal the chapter's starting pile for
+   * `deck`", which is what every caller did before a run could add, burn or polish a card.
+   *
+   * No `uid` here: a card's identity is per-*battle*, and this list belongs to the run. The uids are
+   * stamped as the pile is dealt.
+   */
+  cards?: { cardId: string; upgraded?: boolean }[];
+}
+
+export function startBattle(encounterId: string, deck: DeckId, seed = 7, opts: StartOptions = {}): BattleState {
+  // Any encounter in any pool, not just the five anchors: the map hands out generated fights from
+  // the same list the designed ones live in.
+  const encounter = ALL_ENCOUNTERS.find(entry => entry.id === encounterId);
   if (!encounter) throw new Error(`没有这场战斗：${encounterId}`);
   if (!isDeckUnlocked(deck)) throw new Error(`第一章还不能携带「${deck}」牌组。`);
-  const cards = starterDeck(deck);
-  if (!cards.length) throw new Error(`「${deck}」牌组在第一章没有可用的牌。`);
+  if (opts.sub !== undefined && !isDeckUnlocked(opts.sub)) throw new Error(`第一章还不能携带「${opts.sub}」牌组。`);
+  const chapterCards = chapterDeck(deck, opts.sub);
+  if (!chapterCards.length) throw new Error(`「${deck}」牌组在第一章没有可用的牌。`);
+  // A run passes in the HP left over from the last fight. `maxHp` stays pinned at `PLAYER_MAX_HP`,
+  // which is what lets a carried state still satisfy `isValidBattle`.
+  const carried = Number.isFinite(opts.hp) ? Math.trunc(opts.hp!) : PLAYER_MAX_HP;
 
   const s: BattleState = {
     version: 1,
     encounterId,
     deck,
+    sub: opts.sub,
     seed: Math.trunc(seed) >>> 0,
     rng: Math.trunc(seed) >>> 0,
+    // Seeded from the seed *and* the encounter id, so opening two different fights with the same
+    // seed does not roll the same monsters.
+    spawnRng: (Math.imul(Math.trunc(seed) >>> 0, 0x9e3779b1) ^ hashId(encounterId)) >>> 0,
     turn: 0,
     phase: 'player',
+    relics: opts.relics,
+    marks: {},
+    hits: 0,
+    costMarks: {},
     player: {
-      hp: PLAYER_MAX_HP, maxHp: PLAYER_MAX_HP, block: 0,
+      // Provisional. 守望者之誓 raises the ceiling, and that has to be asked of the relics *after*
+      // the state exists — so it is settled a few lines down, before the opening turn.
+      hp: Math.max(0, Math.min(PLAYER_MAX_HP, carried)), maxHp: PLAYER_MAX_HP, block: 0,
       energy: ENERGY_PER_TURN, energyPerTurn: ENERGY_PER_TURN, statuses: {},
     },
     enemies: [],
@@ -763,10 +1221,34 @@ export function startBattle(encounterId: string, deck: DeckId, seed = 7): Battle
   };
 
   log(s, `${encounter.name} · ${encounter.kind} · 战斗开始。`, 'special');
-  s.draw = shuffled(s, cards.map(cardId => ({ uid: `c${s.uidSeq++}`, cardId })));
-  encounter.units.forEach((id, index) => spawnEnemy(s, id, `${id}-${index}`));
+  // A run hands its own deck in; anything else gets the chapter's starting pile. The uids are
+  // re-stamped here either way, because a battle's uids have to be unique *within the battle* and the
+  // run's copy is not the battle's to name.
+  const pile: { cardId: string; upgraded?: boolean }[] = opts.cards ?? chapterCards.map(cardId => ({ cardId }));
+  s.draw = shuffled(s, pile.map(card => ({ uid: `c${s.uidSeq++}`, cardId: card.cardId, upgraded: card.upgraded })));
+  spawnEncounter(s, encounter);
   s.targetUid = s.enemies[0]?.uid;
+
+  // The ceiling is raised before anything reads 生命, and the carried-over HP is re-clamped to it —
+  // a run that walked in at 60 with a +15 relic walks in at 60/75, not at 75/75.
+  const ceiling = PLAYER_MAX_HP + relicModifier(s, 'maxHp');
+  s.player.maxHp = ceiling;
+  s.player.hp = Math.max(0, Math.min(ceiling, carried));
+
   beginTurn(s);
+
+  // Battle-start relics fire **after** the opening turn has begun, not before it, for two reasons
+  // that both showed up the moment the first batch of relics was tested:
+  //
+  //   1. 铜镜 copies 「a card in hand」, and before `beginTurn` there is no hand to copy from.
+  //   2. `beginTurn` clears 反震 at the top of every turn (it lives one full round), so a relic that
+  //      grants 反震 at battle start had it wiped before the player ever saw the number.
+  //
+  // The enemies are already standing either way, so 「对所有敌人造成 N 点伤害」 still has a target.
+  // `settle` is called by hand because `startBattle` has no other one: without it a kill here would
+  // leave an enemy at `hp <= 0 && dead === false` until the first card was played.
+  fireRelics(s, 'battleStart');
+  settle(s);
   return s;
 }
 
@@ -774,7 +1256,7 @@ export function canPlay(state: BattleState, cardUid: string): boolean {
   if (state.phase !== 'player') return false;
   const card = state.hand.find(entry => entry.uid === cardUid);
   if (!card) return false;
-  const cost = cardCost(card.cardId);
+  const cost = cardCostNow(state, card.cardId, card.uid);
   return cost >= 0 && cost <= state.player.energy;
 }
 
@@ -790,24 +1272,55 @@ export function playCard(source: BattleState, cardUid: string, targetUid?: strin
   const s = clone(source);
   const index = s.hand.findIndex(entry => entry.uid === cardUid);
   const card = s.hand[index];
-  const cost = cardCost(card.cardId);
+  // Read before `playedThisTurn` moves at the end of this function — that counter *is* the 引火
+  // condition, so charging after the increment would silently drop the discount on every card.
+  const cost = cardCostNow(s, card.cardId, card.uid);
   if (cost < 0) throw new Error(`「${cardName(card.cardId)}」不能直接打出。`);
   if (cost > s.player.energy) throw new Error(`能量不足，无法打出「${cardName(card.cardId)}」。`);
 
   s.player.energy -= cost;
   s.hand.splice(index, 1);
   if (targetUid !== undefined) s.targetUid = targetUid;
-  // 淬刃 pays out on the first attack card of the turn, and only on that card.
-  const firstAttackBonus = isAttackCard(card.cardId) && !s.attackPlayed ? s.powers.firstAttackBonus : 0;
-  if (isAttackCard(card.cardId)) s.attackPlayed = true;
+  const attack = isAttackCard(card.cardId);
+  // 淬刃 and 守夜人的提灯 both pay out on the first attack card of the turn, and only on that card.
+  const firstAttackBonus = attack && !s.attackPlayed
+    ? s.powers.firstAttackBonus + relicModifier(s, 'firstAttackDamage')
+    : 0;
+  if (attack) s.attackPlayed = true;
+  // The two cost rules that key off a card's *kind* rather than off the turn.
+  const kind = CARD_BY_ID.get(card.cardId)?.type;
+  if (kind === 'skill') s.skillPlayedThisTurn = true;
+  if (kind === 'power') s.powerPlayedThisBattle = true;
   log(s, `打出「${cardName(card.cardId)}」（能量 −${cost}，余 ${s.player.energy}）。`, 'special');
 
+  const upgrade = upgradeFor(card.cardId, card.upgraded);
   const effect = effectFor(card.cardId);
-  if (effect) effect(makeContext(s, card.cardId, firstAttackBonus));
-  else if (card.cardId === OATH.id) playOath(s, makeContext(s, card.cardId, 0));
+  if (effect) {
+    // 打磨's `power` delta is applied by watching what the card actually changed rather than by
+    // handing every effect a wrapped powers object: `effects.ts` writes `ctx.power.emberPerHit += 1`
+    // directly, and rewriting all twenty-six of those to go through a setter is a large change for a
+    // bonus that only ever lands once.
+    const powersBefore = upgrade?.power ? { ...s.powers } : undefined;
+    effect(makeContext(s, card.cardId, firstAttackBonus, attack, upgrade));
+    if (powersBefore) {
+      for (const key of Object.keys(s.powers) as (keyof typeof s.powers)[]) {
+        if (s.powers[key] > powersBefore[key]) s.powers[key] += upgrade!.power!;
+      }
+    }
+  } else if (card.cardId === OATH.id) playOath(s, makeContext(s, card.cardId, 0));
   else if (card.cardId !== 'ash') log(s, `「${cardName(card.cardId)}」还没有实装效果。`, 'neutral');
 
-  s.discard.push(card);
+  // 双生镜 — the first card of the battle comes back to hand instead of going to the discard. The
+  // lesser slot only catches it if that first card was an attack.
+  const retainSlot = s.marks?.['retain:spent'] ? undefined : relicFlagSlot(s, 'retainFirstCard');
+  const retains = retainSlot === 'main' || (retainSlot === 'sub' && attack);
+  if (retains) {
+    s.marks = { ...s.marks, 'retain:spent': 1 };
+    s.hand.push(card);
+    log(s, '双生镜 · 这张牌又回到了手里。', 'special');
+  } else {
+    s.discard.push(card);
+  }
   s.playedThisTurn += 1;
   settle(s);
   return s;
@@ -836,6 +1349,7 @@ function validEnemy(enemy: unknown): boolean {
   if (!enemy || typeof enemy !== 'object') return false;
   const e = enemy as EnemyState;
   if (typeof e.uid !== 'string' || !e.uid.length || !ENEMY_BY_ID.has(e.id)) return false;
+  if (e.mutation !== undefined && !MUTATION_BY_ID.has(e.mutation)) return false;
   if (!Number.isInteger(e.hp) || e.hp < 0 || !Number.isInteger(e.maxHp) || e.maxHp <= 0 || e.hp > e.maxHp) return false;
   if (!Number.isInteger(e.block) || e.block < 0) return false;
   if (!Number.isInteger(e.turn) || e.turn < 0 || typeof e.dead !== 'boolean') return false;
@@ -851,15 +1365,37 @@ export function isValidBattle(value: unknown): value is BattleState {
   if (!value || typeof value !== 'object') return false;
   const s = value as BattleState;
   if (s.version !== 1) return false;
-  if (typeof s.encounterId !== 'string' || !ENCOUNTERS.some(entry => entry.id === s.encounterId)) return false;
+  if (typeof s.encounterId !== 'string' || !ALL_ENCOUNTERS.some(entry => entry.id === s.encounterId)) return false;
   if (!DECK_IDS.includes(s.deck)) return false;
+  // Optional, so every state saved before chapter runs existed stays valid.
+  if (s.sub !== undefined && !DECK_IDS.includes(s.sub)) return false;
+  if (s.relics !== undefined) {
+    if (typeof s.relics !== 'object' || s.relics === null) return false;
+    for (const id of [s.relics.main, s.relics.sub]) {
+      if (id !== undefined && !RELIC_BY_ID.has(id)) return false;
+    }
+  }
+  if (s.marks !== undefined && (!s.marks || typeof s.marks !== 'object')) return false;
+  if (s.hits !== undefined && (!Number.isInteger(s.hits) || s.hits < 0)) return false;
+  if (s.costMarks !== undefined) {
+    if (!s.costMarks || typeof s.costMarks !== 'object') return false;
+    // A mark big enough to make a 3-cost card free is fine; one big enough to make it cost 100 is a
+    // corrupt save, and the cost path would happily charge it.
+    if (!Object.values(s.costMarks).every(value => Number.isInteger(value) && Math.abs(value) <= 10)) return false;
+  }
+  if (s.skillPlayedThisTurn !== undefined && typeof s.skillPlayedThisTurn !== 'boolean') return false;
+  if (s.powerPlayedThisBattle !== undefined && typeof s.powerPlayedThisBattle !== 'boolean') return false;
   if (!PHASES.includes(s.phase)) return false;
   if (!Number.isInteger(s.turn) || s.turn < 1) return false;
   if (!Number.isInteger(s.seed) || !Number.isInteger(s.rng) || s.rng < 0 || s.rng > 0xFFFFFFFF) return false;
+  if (!Number.isInteger(s.spawnRng) || s.spawnRng < 0 || s.spawnRng > 0xFFFFFFFF) return false;
 
   const p = s.player;
   if (!p || typeof p !== 'object') return false;
-  if (p.maxHp !== PLAYER_MAX_HP || !Number.isInteger(p.hp) || p.hp < 0 || p.hp > p.maxHp) return false;
+  // A relic may raise the ceiling (守望者之誓), so this is a floor rather than an equality now.
+  // Nothing may *lower* it — `PLAYER_MAX_HP` is still the number every other constant is tuned to.
+  if (!Number.isInteger(p.maxHp) || p.maxHp < PLAYER_MAX_HP) return false;
+  if (!Number.isInteger(p.hp) || p.hp < 0 || p.hp > p.maxHp) return false;
   if (!Number.isInteger(p.block) || p.block < 0) return false;
   if (!Number.isInteger(p.energy) || p.energy < 0) return false;
   if (p.energyPerTurn !== ENERGY_PER_TURN) return false;
@@ -869,8 +1405,10 @@ export function isValidBattle(value: unknown): value is BattleState {
   if (![s.hand, s.draw, s.discard, s.exhaust, s.log].every(Array.isArray)) return false;
   if (s.hand.length > HAND_LIMIT) return false;
 
-  if (!s.hand.every(card => card && Object.keys(card).every(key => key === 'uid' || key === 'cardId'))) return false;
+  if (!s.hand.every(card => card && Object.keys(card).every(key =>
+    key === 'uid' || key === 'cardId' || key === 'upgraded'))) return false;
   const cards = [...s.hand, ...s.draw, ...s.discard, ...s.exhaust];
+  if (!cards.every(card => card.upgraded === undefined || typeof card.upgraded === 'boolean')) return false;
   const bad = cards.some(card => !card || typeof card.uid !== 'string' || typeof card.cardId !== 'string'
     || (!CARD_BY_ID.has(card.cardId) && !OFF_DECK_CARDS[card.cardId]));
   if (bad) return false;

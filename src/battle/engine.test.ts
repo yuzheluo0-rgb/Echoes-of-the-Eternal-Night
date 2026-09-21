@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  canPlay, cardCost, cardName, cardRules, endTurn, intentFor, intentText, isValidBattle,
-  livingEnemies, playCard, startBattle, type BattleCard, type BattleState,
+  FIELD_LIMIT, canPlay, cardCost, cardCostNow, cardName, cardRules, endTurn, enemyName, intentFor,
+  intentText, isValidBattle, livingEnemies, playCard, startBattle, type BattleCard, type BattleState,
 } from './engine.ts';
-import { ENCOUNTERS, ENEMY_BY_ID, OATH } from './enemies.ts';
+import { ENCOUNTERS, ENEMY_BY_ID, MUTATIONS, MUTATION_BY_ID, MUTABLE_RANKS, OATH, POOLS } from './enemies.ts';
 import { starterDeck } from './chapter.ts';
 import type { DeckId } from '../cards/index.ts';
 
@@ -26,6 +26,30 @@ function endTurns(s: BattleState, times: number): BattleState {
   for (let i = 0; i < times; i++) out = endTurn(out);
   return out;
 }
+/**
+ * Damage an enemy has taken. Enemy HP is rolled from a band now (see `ENEMIES`), so asserting an
+ * absolute number would be asserting the dice rather than the mechanic — and the mechanic is the
+ * only thing these tests are about.
+ */
+const lost = (enemy: { hp: number; maxHp: number }): number => enemy.maxHp - enemy.hp;
+
+/**
+ * Strip whatever 异变 the seed happened to roll. Call it immediately after `startBattle`, before the
+ * test sets any statuses of its own.
+ *
+ * A mutation is not noise to be tolerated, it is a real enemy — a 肿胀的 wolf genuinely keeps its
+ * block, which is exactly why the 吞光 test's "clear my own block first" premise stopped holding.
+ * But that test is about 吞光, not about 肿胀的, so it takes the plain wolf.
+ */
+function unmutated(state: BattleState): BattleState {
+  const out = structuredClone(state);
+  for (const enemy of out.enemies) {
+    enemy.mutation = undefined;
+    enemy.statuses = {};
+  }
+  return out;
+}
+
 /** The engine never uses Math.random, and neither do the tests. */
 function lcg(seed: number) {
   let state = seed >>> 0;
@@ -98,7 +122,9 @@ test('抽牌堆耗尽时弃牌堆洗回抽牌堆，牌的总数守恒', () => {
 // ------------------------------------------------------------------ 4. energy
 
 test('能量不足时 canPlay 为 false，playCard 抛错', () => {
-  const s = withHand(startBattle('ch1-1', 'blade', 3), ['blade-01', 'blade-02'], 0);
+  // `playedThisTurn: 1` takes 引火 out of the picture, so this stays a test about energy alone.
+  // The opening discount has its own test below.
+  const s = { ...withHand(startBattle('ch1-1', 'blade', 3), ['blade-01', 'blade-02'], 0), playedThisTurn: 1 };
   assert.equal(cardCost('blade-01'), 1);
   assert.equal(cardCost('blade-02'), 0);
   assert.equal(canPlay(s, 'rig-0'), false);
@@ -113,6 +139,34 @@ test('能量不足时 canPlay 为 false，playCard 抛错', () => {
   const over = { ...s, phase: 'won' as const };
   assert.equal(canPlay(over, 'rig-1'), false);
   assert.throws(() => playCard(over, 'rig-1'), /战斗已经结束/);
+});
+
+test('引火：每回合第一张牌 −1 费，最低 0，之后恢复原价', () => {
+  const s = withHand(startBattle('ch1-1', 'blade', 210), ['blade-01', 'blade-01', 'blade-01'], 3); // 割线 1 费 ×3
+  assert.equal(cardCostNow(s, 'blade-01'), 0, '开局第一张 1 费牌打折到 0');
+  const first = playCard(s, 'rig-0');
+  assert.equal(first.player.energy, 3, '第一张没花能量');
+  assert.equal(cardCostNow(first, 'blade-01'), 1, '第二张恢复原价');
+  const second = playCard(first, 'rig-1');
+  assert.equal(second.player.energy, 2);
+  assert.equal(cardCostNow(second, 'blade-01'), 1, '第三张也是原价');
+  assert.equal(playCard(second, 'rig-2').player.energy, 1, '折扣一回合只给一次');
+
+  // 0 费牌减到 0 就停住，不会变成负数、更不会倒找能量。
+  const zero = withHand(startBattle('ch1-1', 'blade', 211), ['blade-02'], 3);
+  assert.equal(cardCostNow(zero, 'blade-02'), 0);
+  assert.equal(playCard(zero, 'rig-0').player.energy, 3, '0 费牌不吃也不给能量');
+
+  // 不能直接打出的牌（-1）不会被折成可打出。
+  assert.equal(cardCostNow(zero, 'nope'), -1, '未知的牌仍然是 -1');
+
+  // 2 费牌减到 1 —— 这是这条规则真正的价值所在。
+  const big = withHand(startBattle('ch1-1', 'blade', 212), ['blade-25'], 3); // 敛刃 2 费
+  assert.equal(cardCostNow(big, 'blade-25'), 1);
+  assert.equal(playCard(big, 'rig-0').player.energy, 2);
+
+  // 新回合折扣回来。
+  assert.equal(cardCostNow(endTurn(s), 'blade-01'), 0, '回合刷新后折扣重置');
 });
 
 // ------------------------------------------------------- 5. block absorbs first
@@ -153,23 +207,23 @@ test('锋锐与烙印每次命中都加伤，多段牌按次数乘', () => {
   rig.player.statuses.edge = 2;
   rig.enemies[0].statuses.mark = 1;
   const hit = playCard(rig, 'rig-0', rig.enemies[0].uid);
-  assert.equal(hit.enemies[0].hp, 126 - (3 + 2 + 3) * 2, '每次命中 +2 锋锐 +3 烙印');
+  assert.equal(lost(hit.enemies[0]), (3 + 2 + 3) * 2, '每次命中 +2 锋锐 +3 烙印');
   assert.equal(hit.enemies[0].statuses.mark, 1, '烙印不会因为挨打而消耗');
 
   const plain = structuredClone(rig);
   delete plain.enemies[0].statuses.mark;
-  assert.equal(playCard(plain, 'rig-0', plain.enemies[0].uid).enemies[0].hp, 126 - (3 + 2) * 2);
+  assert.equal(lost(playCard(plain, 'rig-0', plain.enemies[0].uid).enemies[0]), (3 + 2) * 2);
 });
 
 test('淬刃只强化本回合第一张攻击牌', () => {
   const rig = withHand(startBattle('ch1-5', 'blade', 22), ['blade-01', 'blade-01', 'blade-04']);
   rig.powers.firstAttackBonus = 3;
   const first = playCard(rig, 'rig-0', rig.enemies[0].uid);
-  assert.equal(first.enemies[0].hp, 126 - 10, '7 + 3');
+  assert.equal(lost(first.enemies[0]), 10, '7 + 3');
   const second = playCard(first, 'rig-1', first.enemies[0].uid);
-  assert.equal(second.enemies[0].hp, 126 - 10 - 7, '第二张攻击牌不再加成');
+  assert.equal(lost(second.enemies[0]), 10 + 7, '第二张攻击牌不再加成');
   const skill = playCard(second, 'rig-2');
-  assert.equal(skill.enemies[0].hp, 126 - 17);
+  assert.equal(lost(skill.enemies[0]), 17);
   assert.equal(skill.player.block, 6);
 });
 
@@ -198,20 +252,22 @@ test('灼烧在敌人回合开始时结算并递减，归零移除', () => {
   const rig = withHand(startBattle('ch1-1', 'blade', 31), []);
   rig.enemies[0].statuses.scorch = 3;
   const one = endTurn(rig);
-  assert.equal(one.enemies[0].hp, 11 - 3);
+  assert.equal(lost(one.enemies[0]), 3);
   assert.equal(one.enemies[0].statuses.scorch, 2);
   const two = endTurn(one);
-  assert.equal(two.enemies[0].hp, 11 - 3 - 2);
+  assert.equal(lost(two.enemies[0]), 3 + 2);
   assert.equal(two.enemies[0].statuses.scorch, 1);
   const three = endTurn(two);
-  assert.equal(three.enemies[0].hp, 11 - 3 - 2 - 1);
+  assert.equal(lost(three.enemies[0]), 3 + 2 + 1);
   assert.equal(three.enemies[0].statuses.scorch, undefined, '归零就移除');
 });
 
 // ---------------------------------------------- 8. keepBlock, shatter (patched)
 
 test('潜草者的格挡跨回合保留，其它敌人的格挡在自己回合开始时清空', () => {
-  let s = startBattle('ch1-4', 'blade', 41);
+  // 草甸上的头狼 is the 头狼's floor alone now, so the 潜草者 case is taken from a fight that is
+  // actually about it.
+  let s = startBattle('s-ambush', 'blade', 41);
   const stalker = () => s.enemies.find(enemy => enemy.id === 'stalker')!;
   assert.equal(intentText(stalker().intent[0]), '潜伏 · 格挡 4');
   s = endTurn(s);
@@ -238,13 +294,13 @@ test('shatter：单次打穿格挡时自身受伤，磨穿不算', () => {
     rig.enemies[0].block = 4;
     const broken = playCard(rig, 'rig-0', rig.enemies[0].uid);
     assert.equal(broken.enemies[0].block, 0);
-    assert.equal(broken.enemies[0].hp, 11 - 3 - 5, '3 点溢出 + 5 点碎裂');
+    assert.equal(lost(broken.enemies[0]), 3 + 5, '3 点溢出 + 5 点碎裂');
 
     const chip = withHand(startBattle('ch1-1', 'blade', 52), ['blade-02']); // 3 伤害 2 次
     chip.enemies[0].block = 10;
     const chipped = playCard(chip, 'rig-0', chip.enemies[0].uid);
     assert.equal(chipped.enemies[0].block, 4);
-    assert.equal(chipped.enemies[0].hp, 11, '两次都没打穿，不碎');
+    assert.equal(lost(chipped.enemies[0]), 0, '两次都没打穿，不碎');
   } finally {
     ENEMY_BY_ID.set('shadewolf', def);
   }
@@ -273,7 +329,9 @@ test('deathBurst 死亡时炸到其它单位（含玩家），并且能连锁', 
 // ------------------------------------------------------ 10. devour, steal, ward
 
 test('吞光：吃下玩家的余烬与锋锐，变成自己的格挡', () => {
-  const rig = withHand(startBattle('ch1-1', 'blade', 71), []);
+  // Plain wolves: a 肿胀的 one keeps its block between turns, which is the mutation working rather
+  // than 吞光 failing, and this test is about 吞光.
+  const rig = withHand(unmutated(startBattle('ch1-1', 'blade', 71)), []);
   rig.player.statuses.ember = 4;
   rig.player.statuses.edge = 2;
   rig.enemies[0].block = 3;
@@ -322,7 +380,20 @@ test('第一章五场遭遇战都能开局，牌数守恒', () => {
       assert.equal(s.player.hp, 60);
       assert.equal(s.player.energy, 3);
       assert.equal(s.hand.length, 5);
-      assert.deepEqual(s.enemies.map(enemy => enemy.id), encounter.units);
+      // Counts roll now, so what is asserted is the *kinds* and their bounds rather than a fixed list.
+      const spawned = s.enemies.map(enemy => enemy.id);
+      assert.ok(spawned.length >= 1 && spawned.length <= FIELD_LIMIT, `${encounter.id} 场上 ${spawned.length} 只`);
+      for (const id of spawned) {
+        assert.ok(encounter.units.some(unit => unit.id === id), `${encounter.id} 里不该有 ${id}`);
+      }
+      for (const unit of encounter.units) {
+        const n = spawned.filter(id => id === unit.id).length;
+        assert.ok(n <= unit.count[1], `${encounter.id}：${unit.id} 出了 ${n} 只，超过上限 ${unit.count[1]}`);
+        // 战场上限会截断掷点，只有没被截断时才查下限
+        if (spawned.length < FIELD_LIMIT) {
+          assert.ok(n >= unit.count[0], `${encounter.id}：${unit.id} 只出了 ${n} 只，低于下限 ${unit.count[0]}`);
+        }
+      }
       assert.ok(s.enemies.every(enemy => enemy.hp === enemy.maxHp && !enemy.dead && enemy.intent.length > 0));
       assert.equal(count(s), starterDeck(deck).length, `${encounter.id}/${deck} 牌数不对`);
       assert.equal(new Set(pile(s).map(card => card.uid)).size, count(s));
@@ -335,6 +406,137 @@ test('第一章五场遭遇战都能开局，牌数守恒', () => {
   assert.throws(() => startBattle('nope', 'blade'), /没有这场战斗/);
   assert.throws(() => startBattle('ch1-1', 'flame'), /不能携带/);
   assert.throws(() => startBattle('ch1-1', 'mirror'), /不能携带/);
+});
+
+// --------------------------------------------- 11b. encounter generation
+
+test('怪物血量在区间内掷点，区间里每个值都真的会出现', () => {
+  const [min, max] = ENEMY_BY_ID.get('shadewolf')!.hp;
+  const seen = new Set<number>();
+  for (let seed = 1; seed <= 200; seed++) {
+    for (const wolf of startBattle('w-shadepack', 'blade', seed).enemies) {
+      // A 异变 scales HP on purpose — 强健的 is meant to leave the band, not to stay inside it.
+      if (wolf.mutation) continue;
+      assert.ok(wolf.hp >= min && wolf.hp <= max, `种子 ${seed}：影狼 ${wolf.hp} 不在 ${min}–${max}`);
+      assert.equal(wolf.hp, wolf.maxHp, '开局满血');
+      seen.add(wolf.hp);
+    }
+  }
+  assert.deepEqual([...seen].sort((a, b) => a - b), Array.from({ length: max - min + 1 }, (_, i) => min + i),
+    '区间里每个整数都该抽得到，否则区间是假的');
+});
+
+test('遭遇战只掷数量，不掷种类', () => {
+  const encounter = POOLS.weak.find(entry => entry.id === 'w-shadepack')!;
+  const counts = new Set<number>();
+  for (let seed = 1; seed <= 60; seed++) {
+    const s = startBattle(encounter.id, 'blade', seed);
+    for (const enemy of s.enemies) assert.equal(enemy.id, 'shadewolf', '种类不能变');
+    counts.add(s.enemies.length);
+  }
+  assert.deepEqual([...counts].sort((a, b) => a - b), [2, 3], '2–3 只都应该出现过');
+});
+
+test('数量与血量都由种子决定：同种子同牌面，异种子会变', () => {
+  const board = (seed: number) => startBattle('w-shadepack', 'blade', seed)
+    .enemies.map(enemy => `${enemy.id}:${enemy.hp}:${enemy.mutation ?? '-'}`);
+  assert.deepEqual(board(9), board(9), '同一个种子必须给出同一块场地');
+  const boards = new Set(Array.from({ length: 40 }, (_, i) => board(i + 1).join('|')));
+  assert.ok(boards.size > 1, '不同种子应该掷出不同的场地');
+});
+
+test('异变只落在小兵和寻常怪身上，且真的改数值', () => {
+  const mutated = new Map<string, number>();
+  for (let seed = 1; seed <= 400; seed++) {
+    for (const enemy of startBattle('s-lanternround', 'blade', seed).enemies) {
+      if (!enemy.mutation) continue;
+      const def = ENEMY_BY_ID.get(enemy.id)!;
+      assert.ok(MUTABLE_RANKS.includes(def.rank), `${def.rank} 不该异变`);
+      mutated.set(enemy.mutation, (mutated.get(enemy.mutation) ?? 0) + 1);
+    }
+  }
+  assert.ok(mutated.size > 0, '400 局里总该掷出几次异变');
+  for (const [id, times] of mutated) {
+    assert.ok(MUTATION_BY_ID.has(id), `${id} 不在异变表里`);
+    assert.ok(times < 400, `${id} 每次都出现，说明它其实不是随机的`);
+  }
+  // 精英与首领永远不异变
+  for (let seed = 1; seed <= 60; seed++) {
+    for (const enemy of startBattle('ch1-5', 'blade', seed).enemies) assert.equal(enemy.mutation, undefined);
+  }
+});
+
+test('「披甲的」的每回合格挡真的生效，不是只改了个名字', () => {
+  const armored = MUTATIONS.find(m => m.regenBlock !== undefined)!;
+  const s = unmutated(startBattle('ch1-1', 'blade', 7));
+  for (const enemy of s.enemies) enemy.mutation = armored.id;
+  assert.equal(enemyName(s.enemies[0]), `${armored.prefix}影狼`, '名字要带上前缀');
+  const after = endTurn(s);
+  assert.ok(after.enemies[0].block >= armored.regenBlock!,
+    `披甲的应该每回合把格挡顶到 ${armored.regenBlock}，实际 ${after.enemies[0].block}`);
+});
+
+test('异变改的是实际数值，不只是显示', () => {
+  const frenzied = MUTATIONS.find(m => m.statuses?.strength)!;
+  // The statuses are handed out *at spawn*, so the roll has to actually land on 狂躁的 — retrofitting
+  // `mutation` onto an enemy that already spawned gives it the name but not the strength, which is
+  // precisely the failure mode this test exists to catch.
+  let board: BattleState | undefined;
+  for (let seed = 1; seed <= 500 && !board; seed++) {
+    const s = startBattle('w-shadepack', 'blade', seed);
+    if (s.enemies.some(enemy => enemy.mutation === frenzied.id)) board = s;
+  }
+  assert.ok(board, '500 个种子里总该掷出一次狂躁的');
+  const enemy = board.enemies.find(entry => entry.mutation === frenzied.id)!;
+  assert.equal(enemy.statuses.strength, frenzied.statuses!.strength, '开局就带着力量');
+  assert.match(enemyName(enemy), new RegExp(frenzied.prefix), '名字要带上前缀');
+
+  const attack = intentFor(board, enemy).find(intent => intent.kind === 'attack');
+  const bare = intentFor(board, { ...enemy, mutation: undefined, statuses: {} }).find(intent => intent.kind === 'attack');
+  assert.ok(attack?.kind === 'attack' && bare?.kind === 'attack');
+  assert.equal(attack.amount - bare.amount, frenzied.statuses!.strength, '力量要算进意图里');
+});
+
+test('生成走独立的一条流：换遭遇战不会打乱洗牌', () => {
+  // Same deck, same seed, different encounters — the encounter rolls differ but the card order must
+  // not. This is the whole reason `spawnRng` exists apart from `rng`.
+  const deckOf = (id: string) => startBattle(id, 'blade', 77).draw.map(card => card.cardId);
+  assert.deepEqual(deckOf('ch1-1'), deckOf('w-hollowrim'), '遭遇战不该影响抽牌顺序');
+  assert.deepEqual(deckOf('ch1-1'), deckOf('s-deepgrass'));
+});
+
+test('战场上最多四只，掷得再多也不会超', () => {
+  // 潜草者巢穴 rolls up to 3 + 2 = 5 bodies against a cap of 4.
+  for (let seed = 1; seed <= 80; seed++) {
+    const s = startBattle('e-brood', 'blade', seed);
+    assert.ok(s.enemies.length >= 1 && s.enemies.length <= FIELD_LIMIT,
+      `种子 ${seed}：场上 ${s.enemies.length} 只，超过上限 ${FIELD_LIMIT}`);
+    assert.ok(isValidBattle(s));
+  }
+});
+
+test('池子里的每一场遭遇战都开得起来，且意图有字', () => {
+  for (const [pool, entries] of Object.entries(POOLS)) {
+    assert.ok(entries.length > 0, `${pool} 池是空的`);
+    for (const encounter of entries) {
+      assert.equal(encounter.pool, pool, `${encounter.id} 的 pool 字段和它所在的池对不上`);
+      for (const deck of DECKS) {
+        const s = startBattle(encounter.id, deck, 3);
+        assert.ok(isValidBattle(s), `${encounter.id}/${deck} 开局不合法`);
+        assert.ok(s.hand.length === 5);
+        for (const enemy of s.enemies) {
+          assert.ok(intentFor(s, enemy).every(intent => intentText(intent).length > 0), `${encounter.id} 意图没字`);
+        }
+      }
+    }
+  }
+  assert.equal(POOLS.boss.length, 1, '一章只有一个首领');
+  assert.deepEqual(POOLS.boss.map(e => e.id), ['ch1-5']);
+});
+
+test('未知的遭遇战 id 直接抛错，池子之外也开不了', () => {
+  assert.throws(() => startBattle('nope', 'blade'), /没有这场战斗/);
+  assert.throws(() => startBattle('ch1-9', 'blade'), /没有这场战斗/);
 });
 
 // ------------------------------------------------------------- 12. random play
@@ -398,7 +600,9 @@ test('40 局随机对局：不变量恒成立，且必然分出胜负', () => {
 // ------------------------------------------------------------ optional systems
 
 test('蓄火把没用完的能量带到下回合，枯竭扣能量', () => {
-  const rig = withHand(startBattle('ch1-1', 'blade', 121), ['blade-25']); // 敛刃 2 费：8 伤害 + 蓄火
+  // 引火 is held off with `playedThisTurn: 1` — this test is about 蓄火, and the discount would
+  // otherwise shave a point off the energy it is counting.
+  const rig = { ...withHand(startBattle('ch1-1', 'blade', 121), ['blade-25']), playedThisTurn: 1 }; // 敛刃 2 费：8 伤害 + 蓄火
   const banked = playCard(rig, 'rig-0', rig.enemies[0].uid);
   assert.equal(banked.player.energy, 1);
   const next = endTurn(banked);
@@ -482,7 +686,11 @@ test('反震每次被命中都反击，多段攻击按次数算，攻击者会�
 });
 
 test('萤火的馈赠在它回合开始时发放，然后才动手', () => {
-  const s = startBattle('ch1-2', 'blade', 161);
+  // 萤火树洞 rolls how many 萤火 turn up; this test is about the gift, so the board is pinned to one
+  // of each rather than to whatever the dice said.
+  const rolled = startBattle('ch1-2', 'blade', 161);
+  const s = unmutated(rolled);
+  s.enemies = [s.enemies.find(enemy => enemy.id === 'emberfly')!, s.enemies.find(enemy => enemy.id === 'scavenger')!];
   assert.equal(s.player.statuses.ember, undefined);
   const after = endTurn(s);
   assert.equal(after.player.statuses.ember, 1);
@@ -495,7 +703,7 @@ test('换岗把「未熄的誓言」洗进抽牌堆；打出它会给守望者�
   rig.enemies[0].intent = [{ kind: 'special', note: '换岗 · 将一张「未熄的誓言」放入你的牌堆' }];
   const shuffledIn = endTurn(rig);
   assert.equal(shuffledIn.draw.filter(card => card.cardId === 'oath').length, 1);
-  assert.equal(shuffledIn.enemies[0].hp, 126, '这一拍不打人');
+  assert.equal(shuffledIn.enemies[0].hp, shuffledIn.enemies[0].maxHp, '这一拍不打人');
 
   const oath = structuredClone(shuffledIn);
   oath.enemies[0].hp = 100;
@@ -514,9 +722,9 @@ test('换岗把「未熄的誓言」洗进抽牌堆；打出它会给守望者�
 test('played() 数的是这张牌之前的张数，handSize() 不含正在打出的这张', () => {
   const rig = withHand(startBattle('ch1-5', 'blade', 181), ['blade-09', 'blade-09']); // 三叠 2×3，连缀时 2×4
   const first = playCard(rig, 'rig-0', rig.enemies[0].uid);
-  assert.equal(first.enemies[0].hp, 126 - 6);
+  assert.equal(lost(first.enemies[0]), 6);
   const second = playCard(first, 'rig-1', first.enemies[0].uid);
-  assert.equal(second.enemies[0].hp, 126 - 12, '第二张时 played() 只有 1，还没到连缀');
+  assert.equal(lost(second.enemies[0]), 12, '第二张时 played() 只有 1，还没到连缀');
 
   const empty = withHand(startBattle('ch1-5', 'bone', 182), ['bone-08']); // 白骨墙：空明 14 点
   assert.equal(playCard(empty, 'rig-0').player.block, 14);
@@ -566,7 +774,15 @@ test('isValidBattle 拒绝损坏的存档', () => {
     { ...s, seed: 1.5 },
     { ...s, player: { ...s.player, hp: 61 } },
     { ...s, player: { ...s.player, hp: -1 } },
-    { ...s, player: { ...s.player, maxHp: 99 } },
+    // 守望者之誓 raises the ceiling, so above 60 is legal now — but *below* it is not, and neither is
+    // health that has climbed past whatever the ceiling currently is.
+    { ...s, player: { ...s.player, maxHp: 59 } },
+    { ...s, player: { ...s.player, maxHp: 60.5 } },
+    { ...s, player: { ...s.player, maxHp: 75, hp: 80 } },
+    { ...s, relics: { main: 'not-a-relic' } },
+    { ...s, relics: { sub: 42 } },
+    { ...s, hits: -1 },
+    { ...s, costMarks: { c0: 99 } },
     { ...s, player: { ...s.player, energyPerTurn: 4 } },
     { ...s, player: { ...s.player, statuses: { ember: -2 } } },
     { ...s, player: { ...s.player, statuses: { nope: 1 } } },

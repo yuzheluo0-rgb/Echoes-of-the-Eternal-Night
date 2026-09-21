@@ -1,4 +1,4 @@
-import { CARDS, CARD_BY_ID, TIER_BY_ID, type DeckId } from '../cards/index.ts';
+import { CARDS, CARD_BY_ID, MAIN_SHARE, RESOURCES, TIER_BY_ID, type DeckId } from '../cards/index.ts';
 
 /**
  * Chapter I. The protagonist starts with two decks unlocked and only part of each one — the rest of
@@ -23,14 +23,23 @@ export const CHAPTER_1: Chapter = {
   name: '第一章 · 余烬营地',
   subtitle: 'CHAPTER I · THE LAST HEARTH',
   decks: ['blade', 'bone'],
-  nextUnlock: '击破「草原守望者」后解锁 断罪之刃 · 三叠 与 长明壁垒 · 垒壁 的进阶牌',
+  // This used to name 三叠 and 垒壁, which were already in `unlocked` above — the promise was empty
+  // from the day it was written. It now names the明焰阶 cards that are genuinely still locked.
+  nextUnlock: '击破「草原守望者」后解锁两副牌组的明焰阶：断罪之刃 断罪 / 刃雨 / 裂甲 / 借焰，长明壁垒 回震 / 照壁 / 炭墙 / 封炉',
   unlocked: {
     // Attack and tempo. Teaches 余烬 (build a resource), 烙印 (make one target die faster),
     // 反震 (punish being hit), 蓄火 (plan a turn ahead).
     blade: ['blade-01', 'blade-02', 'blade-03', 'blade-04', 'blade-07', 'blade-08', 'blade-09', 'blade-11', 'blade-14', 'blade-18', 'blade-21', 'blade-25'],
     // Defence that turns into offence. Teaches 壁垒 (block that stays), 格挡转伤害, 拾回 (get a card
     // back), 连缀 (play in the right order).
-    bone: ['bone-01', 'bone-02', 'bone-03', 'bone-04', 'bone-06', 'bone-07', 'bone-08', 'bone-11', 'bone-13', 'bone-14', 'bone-18', 'bone-20'],
+    //
+    // `bone-05` 砺石 and `bone-09` 殉道 are the deck's *only* zero-cost cards, and leaving them out
+    // made 长明壁垒 the one deck where every single card costs at least 1: three energy bought exactly
+    // three cards every turn, with no slack, so a five-card hand always stranded two of them and
+    // 连缀 (three cards in a turn) sat exactly on the boundary. 断罪之刃 meanwhile carries nine
+    // zero-cost cards and never felt the squeeze. Reinstating them is what makes the two decks
+    // comparable; the 引火 discount in `engine.ts` does the rest.
+    bone: ['bone-01', 'bone-02', 'bone-03', 'bone-04', 'bone-05', 'bone-06', 'bone-07', 'bone-08', 'bone-09', 'bone-11', 'bone-13', 'bone-14', 'bone-18', 'bone-20'],
   },
 };
 
@@ -54,6 +63,52 @@ function copies(cardId: string) {
 export function starterDeck(deck: DeckId): string[] {
   const pool = CHAPTER_1.unlocked[deck] ?? [];
   return pool.flatMap(id => Array.from({ length: copies(id) }, () => id));
+}
+
+/**
+ * The 主/副 composition. `MAIN_SHARE` of what a battle draws should come from the main deck, and
+ * because the engine shuffles one physical pile, that share has to be built into the deck rather
+ * than rolled once per draw — the two are statistically the same, and only the first needs no engine
+ * change. So the main deck is carried whole and the sub deck contributes a thin splash: one copy
+ * each of a handful of its cards, which lands the pile at roughly four main cards to every sub card.
+ *
+ * The splash is ordered signature-first, so what the second deck actually adds is *options* rather
+ * than bulk. That is the whole point of it: the sub deck is how a build answers a problem its main
+ * deck cannot.
+ */
+export function chapterDeck(main: DeckId, sub?: DeckId): string[] {
+  const base = starterDeck(main);
+  if (!sub || sub === main) return base;
+  return [...base, ...splashCards(sub, base.length)];
+}
+
+/**
+ * How many sub cards it takes for the sub deck to be as close to `1 - MAIN_SHARE` of the finished
+ * pile as a whole number of cards allows. Asked as "which share is nearest" rather than solved
+ * arithmetically, because `1 - MAIN_SHARE` is 0.19999999999999996 in floating point and the direct
+ * division silently rounds a 22-card main deck down to a 18.5% splash.
+ */
+function splashSize(mainSize: number, available: number): number {
+  const target = 1 - MAIN_SHARE;
+  let wanted = 1;
+  let closest = Infinity;
+  for (let sub = 1; sub <= available; sub++) {
+    const error = Math.abs(sub / (mainSize + sub) - target);
+    if (error < closest) { closest = error; wanted = sub; }
+  }
+  return wanted;
+}
+
+/** The sub deck's contribution: its signature cards first, then filler, one copy each. */
+function splashCards(sub: DeckId, mainSize: number): string[] {
+  // One copy each, in the deck's own stable order — the splash is variety, not volume.
+  const distinct = [...new Set(starterDeck(sub))];
+  // A deck can own more than one resource (长明壁垒 owns both 锋锐 and 壁垒), so this is the set,
+  // not a single id.
+  const owned = new Set(RESOURCES.filter(resource => resource.owner === sub).map(resource => resource.id));
+  const signature = distinct.filter(id => CARD_BY_ID.get(id)!.keywords.some(keyword => owned.has(keyword)));
+  const rest = distinct.filter(id => !signature.includes(id));
+  return [...signature, ...rest].slice(0, splashSize(mainSize, distinct.length));
 }
 
 export interface ChapterDeckView {

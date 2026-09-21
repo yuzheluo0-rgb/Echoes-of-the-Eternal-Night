@@ -91,7 +91,8 @@ export interface EnemyDefinition {
   name: string;
   /** Chapter-1 foes are graded, and the grade sets the name's colour in the UI. */
   rank: EnemyRank;
-  hp: number;
+  /** Inclusive `[min, max]`, rolled at spawn. `[11, 11]` means "always exactly 11". */
+  hp: [number, number];
   /** How much of it comes back each turn, before its action. */
   regenBlock?: number;
   note: string;
@@ -112,6 +113,8 @@ export const RANK_COLOR: Record<EnemyRank, string> = { minion: '#8d9a94', normal
 export interface EnemyState {
   uid: string;
   id: string;
+  /** The 异变 this one rolled, if any. Carries the name prefix and the frame colour. */
+  mutation?: string;
   hp: number;
   maxHp: number;
   block: number;

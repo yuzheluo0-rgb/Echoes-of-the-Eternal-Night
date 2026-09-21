@@ -15,7 +15,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { canPlay, endTurn, intentFor, intentText, isValidBattle, livingEnemies, playCard, startBattle, type BattleCard, type BattleState } from './engine.ts';
+import { FIELD_LIMIT, canPlay, endTurn, intentFor, intentText, isValidBattle, livingEnemies, playCard, startBattle, type BattleCard, type BattleState } from './engine.ts';
 import { ENCOUNTERS, ENEMY_BY_ID } from './enemies.ts';
 import { starterDeck } from './chapter.ts';
 import { CARD_BY_ID, DECK_IDS, type DeckId } from '../cards/index.ts';
@@ -98,8 +98,20 @@ test('第一章五场遭遇战都能开起来', () => {
       const s = startBattle(encounter.id, deck, 5);
       assert.ok(isValidBattle(s), `${encounter.id} / ${deck} 开局不合法`);
       assert.equal(s.encounterId, encounter.id);
-      assert.equal(s.enemies.length, encounter.units.length, `${encounter.id} 的敌人数量对不上`);
-      assert.deepEqual(s.enemies.map(enemy => enemy.id), encounter.units);
+      // Counts roll now, so what is pinned is the *kinds* and their bounds rather than a fixed list.
+      const spawned = s.enemies.map(enemy => enemy.id);
+      assert.ok(spawned.length >= 1 && spawned.length <= FIELD_LIMIT, `${encounter.id} 场上 ${spawned.length} 只`);
+      for (const id of spawned) {
+        assert.ok(encounter.units.some(unit => unit.id === id), `${encounter.id} 里不该有 ${id}`);
+      }
+      for (const unit of encounter.units) {
+        const n = spawned.filter(id => id === unit.id).length;
+        assert.ok(n <= unit.count[1], `${encounter.id}：${unit.id} 出了 ${n} 只，超过上限 ${unit.count[1]}`);
+        // 战场上限会截断掷点，只有没被截断时才查下限
+        if (spawned.length < FIELD_LIMIT) {
+          assert.ok(n >= unit.count[0], `${encounter.id}：${unit.id} 只出了 ${n} 只，低于下限 ${unit.count[0]}`);
+        }
+      }
       assert.equal(s.hand.length, 5);
       assert.ok(s.turn >= 1);
       assert.ok(livingEnemies(s).length === s.enemies.length, '开局不该有人躺着');
