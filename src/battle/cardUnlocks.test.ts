@@ -19,7 +19,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BOSS_IDS, BOSS_UNLOCKS, clearProgress, creditAndSave, creditProgress, earnedCards, emptyProgress,
-  isValidProgress, unlocksFor,
+  isValidProgress, unlockGroups, unlocksFor,
 } from './cardUnlocks.ts';
 import { CHAPTER_1 } from './chapter.ts';
 import { rewardCardPool } from './rewards.ts';
@@ -144,4 +144,22 @@ test('损坏的解锁存档被拒绝，不会把别的牌塞进池子', () => {
     assert.equal(isValidProgress(bad), false, `本该拒绝：${JSON.stringify(bad)}`);
   }
   assert.equal(isValidProgress({ version: 1, unlocked: ['blade-16'], credited: ['ch1-5'] }), true);
+});
+
+test('解锁的牌按牌组合并，顺序跟着牌组表走', () => {
+  // 这一条管的是**解锁屏第一眼看到什么**：那 26 张牌里，哪几张是给我正在用的那副牌的。
+  // 分组写在 `cardUnlocks.ts` 而不是屏幕里，因为 `strip-types` 解析不了 JSX——
+  // 写在屏幕旁边的规则是测试够不到的规则（`describeEffect` 就是为此挪出来的）。
+  const groups = unlockGroups(BOSS_IDS);
+  assert.deepEqual(groups.map(g => g.deck), ['blade', 'flame', 'bone'], '牌组顺序必须跟着 DECKS 走');
+  assert.equal(groups.length, 3, '三副牌各一组');
+  for (const group of groups) {
+    assert.ok(group.ids.length > 0, `${group.deck} 分到了空组`);
+    // 每一张都必须真的属于这一组，不能串台。
+    for (const id of group.ids) assert.equal(CARD_BY_ID.get(id)?.deck, group.deck, `${id} 分错了牌组`);
+  }
+  // 合起来必须**一张不多一张不少**——分组丢牌是最容易发生、也最难在界面上发现的错。
+  assert.deepEqual(groups.flatMap(g => g.ids).sort(), [...BOSS_IDS].sort(), '分组把牌弄丢或弄重了');
+  // 空输入不该崩，也不该吐出一个空组。
+  assert.deepEqual(unlockGroups([]), []);
 });

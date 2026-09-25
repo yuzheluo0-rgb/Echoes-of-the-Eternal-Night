@@ -36,6 +36,12 @@
 
 .nd-panel {
   position: relative; z-index: 1;
+  /* ⚠️ 面板可以比屏幕高——解锁屏一次摆 26 张牌，量出来约 1500px。
+     `.nd` 是 position:fixed 而且不滚动，所以没有这一条的话**超出的部分不是没排版，是够不着**：
+     而那一屏的全部意义就是让玩家看见这些牌。 */
+  max-height: calc(100dvh - 68px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   width: min(1180px, 100%);
   padding: 46px 52px 40px;
   border: 1px solid rgba(190, 175, 130, .34);
@@ -108,7 +114,15 @@
 
 /* ------------------------------------------------------------------ actions */
 
-.nd-actions { display: flex; gap: 16px; align-items: center; margin-top: 32px; padding-top: 26px; border-top: 1px solid var(--line); }
+/* Sticky, because a tall screen now scrolls: 解锁屏一次摆 26 张牌，「继续」在 1500px 之下，
+   不吸底就得先滚到底才能离开——一个把人困在展示屏上的按钮。 */
+.nd-actions {
+  display: flex; gap: 16px; align-items: center; margin-top: 32px; padding-top: 26px;
+  border-top: 1px solid var(--line);
+  position: sticky; bottom: 0; z-index: 2;
+  background: linear-gradient(180deg, rgba(14, 22, 27, .0), rgba(14, 22, 27, .96) 34%);
+  padding-bottom: 6px;
+}
 .nd-primary, .nd-ghost {
   padding: 17px 46px; font-size: 20px; letter-spacing: 6px; border-radius: 3px;
   font-family: 'Noto Serif SC', 'Songti SC', serif;
@@ -273,3 +287,16 @@
   padding: 3px 9px; font-size: 10px; letter-spacing: 2px; border-radius: 2px; white-space: nowrap;
   color: #cfe6ee; background: rgba(12, 24, 30, .92); border: 1px solid rgba(159, 216, 232, .4);
 }
+
+/* ------------------------------------------------------- 击破首领的解锁
+   摆的是牌面，不是名字。「万刃」和「千刃」对一个没见过这两张牌的玩家是同样三个字，
+   而解锁的全部意义就是让他见到。按牌组分，因为「这六张是给我哪副牌的」是第一个会问的问题。 */
+.nd-unlock-group { margin-top: 26px; }
+.nd-unlock-deck {
+  display: flex; align-items: baseline; gap: 10px; margin: 0 0 12px;
+  font-size: 15px; letter-spacing: 4px; color: var(--tone, #d4bd87);
+  border-bottom: 1px solid color-mix(in srgb, var(--tone, #d4bd87) 28%, transparent);
+  padding-bottom: 7px;
+}
+.nd-unlock-deck i { font-style: normal; font-size: 11px; letter-spacing: 2px; color: #7f9189; }
+.nd-unlock-grid { display: flex; flex-wrap: wrap; gap: 12px; }

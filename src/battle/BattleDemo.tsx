@@ -53,7 +53,7 @@ import {
 import { REWARD_BY_ID } from './rewards.ts';
 import { eventForNode, type EventOption } from './events.ts';
 import {
-  CampfireScreen, CardPicker, CardRevealScreen, EventScreen, RefineScreen, RewardScreen,
+  CampfireScreen, CardPicker, CardRevealScreen, EventScreen, RefineScreen, RewardScreen, UnlockScreen,
   type CampfirePick,
 } from './NodeScreen.tsx';
 import { ALL_ENCOUNTERS, ENCOUNTER_BY_ID } from './enemies.ts';
@@ -468,8 +468,10 @@ export default function BattleDemo() {
   // Meta-progression, not run state: beating 头狼 widens the pool for the *next* run, which is why it
   // lives beside the run rather than inside it.
   const [progress, setProgress] = useState<RelicProgress>(loadProgress);
-  /** The 明焰阶 cards 击破守望者 just unlocked, held only so the result panel can name them. */
+  /** The 明焰阶 cards 击破守望者 just unlocked — what `UnlockScreen` puts on screen, as faces. */
   const [unlockedCards, setUnlockedCards] = useState<string[]>([]);
+  /** 解锁屏看过了没有。它只在这一次击杀之后有意义，所以是组件状态而不是 run 的一部分。 */
+  const [unlockSeen, setUnlockSeen] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
   const [audioOn, setAudioOn] = useState(true);
   const [fx, setFx] = useState<{ seq: number; events: FxEvent[] }>({ seq: 0, events: [] });
@@ -621,6 +623,7 @@ export default function BattleDemo() {
     // The unlock panel belongs to the win that earned it. Carrying it into the next run would show
     // 「明焰阶 · 已解锁」 on a chapter that has not been cleared yet.
     setUnlockedCards([]);
+    setUnlockSeen(false);
     setState(null);
     sound('bell', audioOn);
   }
@@ -794,6 +797,7 @@ export default function BattleDemo() {
     resetFx();
     setRun(null);
     setUnlockedCards([]);
+    setUnlockSeen(false);
     setState(null);
     setOutcome(null);
     sound('bell', audioOn);
@@ -1127,7 +1131,15 @@ export default function BattleDemo() {
       </div>
     </div>}
 
-    {outcome && <div className="bd-over">
+    {/* 击破守望者的解锁**先于**战果面板整屏出现。
+        它原来只是战果面板里的一行名字，而那个面板讲的是这一仗：带走的血、拿到的钱。
+        解锁讲的是往后每一局，缩在里面就等于没有。摆的是牌面——「万刃」和「千刃」对一个没见过
+        这两张牌的玩家是同样三个字。 */}
+    {outcome && !!unlockedCards.length && !unlockSeen && <div className="bd-over">
+      <UnlockScreen cards={unlockedCards} audioOn={audioOn} onDone={() => setUnlockSeen(true)} />
+    </div>}
+
+    {outcome && (!unlockedCards.length || unlockSeen) && <div className="bd-over">
       <div className={`bd-over-card bd-spoils ${outcome.won ? 'won' : 'lost'}`}>
         <p className="bd-over-kicker">
           {!outcome.won ? 'DEFEAT' : outcome.chapterCleared ? 'CHAPTER I · CLEARED' : 'VICTORY'}
@@ -1155,13 +1167,9 @@ export default function BattleDemo() {
           </p>}
         </>}
 
-        {!!unlockedCards.length && <div className="bd-unlock">
-          <p className="bd-unlock-kicker">明焰阶 · 已解锁</p>
-          <div className="bd-unlock-cards">
-            {unlockedCards.map(id => <b key={id}>{cardName(id)}</b>)}
-          </div>
-          <p className="bd-unlock-note">往后每一局，它们都可能出现在战利品里。</p>
-        </div>}
+        {/* The 解锁 block that used to sit here — a list of names — is gone. `UnlockScreen` shows the
+            same thing one step earlier and with the actual cards on it; saying it twice, once without
+            the cards, is how the feedback got missed in the first place. */}
 
         {!outcome.won && <p className="bd-spoils-note">
           这一章到此为止。火熄了就得重新点——新的牌序，新的血量，从头再来。

@@ -12,6 +12,8 @@
  * therefore stays on the starting pool and never moves.
  */
 
+import { CARD_BY_ID, DECKS, type DeckId } from '../cards/index.ts';
+
 /**
  * What 击破草原守望者 hands over, per deck: six cards each.
  *
@@ -57,6 +59,23 @@ export function emptyProgress(): CardProgress {
 /** The card ids a given victory hands over. Empty for encounters that hand over nothing. */
 export function unlocksFor(encounterId: string): string[] {
   return UNLOCK_BY_ENCOUNTER[encounterId] ?? [];
+}
+
+/**
+ * The unlocked cards, **grouped by deck in the chapter's own deck order** — what `UnlockScreen` draws.
+ *
+ * Here rather than inside the screen for the reason `describeEffect` lives in `events.ts`:
+ * `node --experimental-strip-types` cannot parse JSX, so a helper written beside its component is a
+ * helper no test can reach. This one is worth testing — it decides which six cards are shown as
+ * whose, and 「这六张是给我哪副牌的」 is the first question the screen invites.
+ *
+ * The order comes from `DECKS`, not from the order the ids happen to sit in `BOSS_UNLOCKS`, so the
+ * groups appear in the same order as the opening screen's deck list.
+ */
+export function unlockGroups(cards: string[]): { deck: DeckId; ids: string[] }[] {
+  return DECKS
+    .map(deck => ({ deck: deck.id, ids: cards.filter(id => CARD_BY_ID.get(id)?.deck === deck.id) }))
+    .filter(group => group.ids.length > 0);
 }
 
 /**

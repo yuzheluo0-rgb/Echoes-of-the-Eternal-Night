@@ -14,12 +14,13 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { sound } from '../audio';
 import { CardBack, CardFace } from '../cards/CardFace';
-import { CARD_BY_ID, DECKS } from '../cards/index.ts';
+import { CARD_BY_ID, DECK_BY_ID } from '../cards/index.ts';
 import { RARITY_COLOR, RARITY_LABEL, type CardOffer, type RewardSpec } from './rewards.ts';
 import { isUpgradable } from './upgrades.ts';
 import { canAfford, outcomeLine, type EventOption, type EventSpec } from './events.ts';
 import { sceneArt, SCENE_BY_KEY } from './scenes.ts';
 import { deckCounts, holdsRelic, resolveEvent, type ChapterRun } from './run.ts';
+import { unlockGroups } from './cardUnlocks.ts';
 import { REFINE_LABEL, RELIC_BY_ID } from '../relics/relics.ts';
 import { RelicFace } from '../relics/RelicFace';
 import { refineLines } from './relics.ts';
@@ -135,6 +136,47 @@ export function CampfireScreen({ run, onPick, audioOn }: {
       <NodeChoice label="打磨" tone="#d9bc80" hint="把一张牌磨得更好，本局永久生效"
         onHover={() => sound('hover', audioOn)} onClick={() => onPick('polish')} />
     </div>
+  </NodeShell>;
+}
+
+// ------------------------------------------------------------- the unlock
+
+/**
+ * 击破守望者解锁了什么 —— **摆出牌，不是列出名字**。
+ *
+ * The unlock has been a line of names inside the victory panel since it was written, and a list of
+ * names is not feedback: 「万刃」 and 「千刃」 are the same three characters to a player who has never
+ * seen either card, and the panel they sat in was about the *fight* — health carried, gold paid. The
+ * cards are the reward, so the cards are what has to be on screen.
+ *
+ * Grouped by deck, because that is how a player reads them: they have been carrying two of these
+ * decks for a whole chapter and the question 「这六张是给我哪副牌的」 is the first one they will ask.
+ */
+export function UnlockScreen({ cards, onDone, audioOn }: {
+  cards: string[]; onDone: () => void; audioOn: boolean;
+}) {
+  // Grouped by `cardUnlocks.ts` rather than here: `strip-types` cannot parse JSX, so the rule for
+  // 「which six are whose, in what order」 is testable only if it lives outside this file.
+  const groups = unlockGroups(cards).map(group => ({ deck: DECK_BY_ID.get(group.deck)!, ids: group.ids }));
+  return <NodeShell kind="treasure" scene="boss" kicker="击破守望者 · 明焰阶"
+    title="火换了一种烧法"
+    actions={<button className="nd-primary" onPointerEnter={() => sound('hover', audioOn)}
+      onClick={() => { sound('bell', audioOn); onDone(); }}>继续</button>}
+    footer={`${cards.length} 张牌加入了往后每一局的战利品池。`}>
+    <p className="nd-copy">
+      守望者倒下的地方，火还在烧。这些牌从今往后会出现——不是在这一次，是在每一次。
+    </p>
+    {groups.map(({ deck, ids }) => <section key={deck.id} className="nd-unlock-group">
+      <p className="nd-unlock-deck" style={{ '--tone': deck.accent } as CSSProperties}>
+        {deck.name}<i>{ids.length} 张</i>
+      </p>
+      <div className="nd-unlock-grid">
+        {ids.map(id => {
+          const card = CARD_BY_ID.get(id);
+          return card ? <CardFace key={id} card={card} compact /> : null;
+        })}
+      </div>
+    </section>)}
   </NodeShell>;
 }
 
@@ -441,7 +483,7 @@ export function CardPicker({ task, run, options, onChoose, onDismiss, onPass, au
         if (!card) return null;
         // 背面朝上的一张牌：**牌组自己的背面**，所以玩家知道这是哪一副牌、不知道是哪一张。
         // 那个「知道一半」正是这个设计的工作——完全看不见是抽奖，完全看得见就没有了随机性。
-        const deck = entry.hidden ? DECKS.find(d => d.id === card.deck) : undefined;
+        const deck = entry.hidden ? DECK_BY_ID.get(card.deck as never) : undefined;
         return <button key={`${entry.cardId}${entry.upgraded ? '+' : ''}`}
           className={`nd-card ${picked === entry.index ? 'on' : ''} ${entry.hidden ? 'is-hidden' : ''}`}
           aria-label={entry.hidden ? `${deck?.name ?? ''}的一张牌，背面朝上` : card.name}

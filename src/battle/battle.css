@@ -862,25 +862,9 @@
 .bd-spoils-actions { margin-top: 22px; display: flex; justify-content: center; }
 .bd-spoils-actions .bd-over-btn { margin: 0; }
 
-/* 击破守望者 — what the chapter handed over. This is the only place the reward for finishing the
-   chapter is ever stated, and it is meta-progression rather than loot, so it is set as a moment
-   rather than as another row in the spoils table. */
-.bd-unlock {
-  margin: 20px auto 0; padding: 16px 22px 15px;
-  max-width: 470px; text-align: center;
-  border: 1px solid rgba(217, 188, 128, .25); border-radius: 4px;
-  background: linear-gradient(180deg, rgba(217, 188, 128, .07), transparent);
-  animation: bd-unlock-in .55s ease-out both;
-}
-.bd-unlock-kicker { font-size: 9px; letter-spacing: 4px; color: #d9bc80; margin-bottom: 13px; }
-.bd-unlock-cards { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px 20px; }
-.bd-unlock-cards b {
-  font-size: 22px; font-weight: 400; letter-spacing: 2px;
-  font-family: Georgia, 'Songti SC', serif;
-  color: #f0cf87; text-shadow: 0 0 16px rgba(240, 207, 135, .35);
-}
-.bd-unlock-note { font-size: 11.5px; color: #7f9189; margin-top: 13px; line-height: 1.8; }
-@keyframes bd-unlock-in { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
+/* 击破守望者的解锁样式搬到了 node.css —— 它现在是一整屏（`UnlockScreen`），
+   不再是战果面板里的一行名字。 */
+
 
 /* --------------------------------------------------------------- relics */
 
