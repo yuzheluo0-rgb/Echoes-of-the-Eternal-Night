@@ -166,15 +166,57 @@ export function CampfireScreen({ run, onPick, audioOn, quenchChance }: {
  * Grouped by deck, because that is how a player reads them: they have been carrying two of these
  * decks for a whole chapter and the question 「这六张是给我哪副牌的」 is the first one they will ask.
  */
+/** The unlocked cards, by deck — the body both the unlock screen and the cleared screen share. */
+export function UnlockGroups({ cards }: { cards: string[] }) {
+  // Grouped by `cardUnlocks.ts` rather than here: `strip-types` cannot parse JSX, so the rule for
+  // 「which six are whose, in what order」 is testable only if it lives outside this file.
+  const groups = unlockGroups(cards).map(group => ({ deck: DECK_BY_ID.get(group.deck)!, ids: group.ids }));
+  return <>{groups.map(({ deck, ids }) => <section key={deck.id} className="nd-unlock-group">
+    <p className="nd-unlock-deck" style={{ '--tone': deck.accent } as CSSProperties}>
+      {deck.name}<i>{ids.length} 张</i>
+    </p>
+    <div className="nd-unlock-grid">
+      {ids.map(id => {
+        const card = CARD_BY_ID.get(id);
+        return card ? <CardFace key={id} card={card} compact /> : null;
+      })}
+    </div>
+  </section>)}</>;
+}
+
+/**
+ * 通关之后回到塔上时要看到的东西 —— **一个出口，也是一份交代**。
+ *
+ * ⚠️ Without it the page is a dead end. `outcome` is component state and is not saved, so a reload
+ * after the boss shows the tower, with no results panel and no unlock screen; and the boss node is
+ * behind you with no outgoing edges, so `reachableFrom` is empty and **nothing on the map can be
+ * stepped on**. Reported as 「打完 boss 没有反馈面板，刷新以后还是这个已经通关的爬塔路线」.
+ *
+ * The victory panel's own numbers (营火回血, 带进下一场) are **not** reconstructed here — the heal was
+ * rolled and spent in the session that won, and inventing them for a reload would be exactly the kind
+ * of plausible-looking lie this project keeps finding. What is recoverable is what was unlocked, and
+ * that is the part worth coming back for.
+ */
+export function ChapterClearedScreen({ cards, onLeave, audioOn }: {
+  cards: string[]; onLeave: () => void; audioOn: boolean;
+}) {
+  return <NodeShell kind="treasure" scene="boss" kicker="第一章 · 已通关" title="这一章打完了"
+    actions={<button className="nd-primary" onPointerEnter={() => sound('hover', audioOn)}
+      onClick={() => { sound('bell', audioOn); onLeave(); }}>回到开场</button>}
+    footer={cards.length ? `明焰阶的 ${cards.length} 张牌已经在往后每一局的战利品池里。` : undefined}>
+    <p className="nd-copy">
+      长夜塔还在那儿，但这一座已经空了。火还亮着，下一章会从别处点起来。
+    </p>
+    {!!cards.length && <UnlockGroups cards={cards} />}
+  </NodeShell>;
+}
+
 export function UnlockScreen({ cards, fresh = true, onDone, audioOn }: {
   cards: string[];
   /** 这次的 26 张是**新拿到**的，还是**早就在池子里**的。两种都要摆，话不一样。 */
   fresh?: boolean;
   onDone: () => void; audioOn: boolean;
 }) {
-  // Grouped by `cardUnlocks.ts` rather than here: `strip-types` cannot parse JSX, so the rule for
-  // 「which six are whose, in what order」 is testable only if it lives outside this file.
-  const groups = unlockGroups(cards).map(group => ({ deck: DECK_BY_ID.get(group.deck)!, ids: group.ids }));
   return <NodeShell kind="treasure" scene="boss" kicker="击破守望者 · 明焰阶"
     title={fresh ? '火换了一种烧法' : '你早就把它们带来了'}
     actions={<button className="nd-primary" onPointerEnter={() => sound('hover', audioOn)}
@@ -190,17 +232,7 @@ export function UnlockScreen({ cards, fresh = true, onDone, audioOn }: {
         ? '守望者倒下的地方，火还在烧。这些牌从今往后会出现——不是在这一次，是在每一次。'
         : '又一位守望者倒下。这些牌在你第一次打赢的时候就进了战利品池，它们还在那儿。'}
     </p>
-    {groups.map(({ deck, ids }) => <section key={deck.id} className="nd-unlock-group">
-      <p className="nd-unlock-deck" style={{ '--tone': deck.accent } as CSSProperties}>
-        {deck.name}<i>{ids.length} 张</i>
-      </p>
-      <div className="nd-unlock-grid">
-        {ids.map(id => {
-          const card = CARD_BY_ID.get(id);
-          return card ? <CardFace key={id} card={card} compact /> : null;
-        })}
-      </div>
-    </section>)}
+    <UnlockGroups cards={cards} />
   </NodeShell>;
 }
 

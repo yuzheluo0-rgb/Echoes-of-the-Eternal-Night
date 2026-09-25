@@ -53,7 +53,8 @@ import {
 import { REWARD_BY_ID } from './rewards.ts';
 import { eventForNode, type EventOption } from './events.ts';
 import {
-  CampfireScreen, CardPicker, CardRevealScreen, EventScreen, RefineScreen, RewardScreen, UnlockScreen,
+  CampfireScreen, CardPicker, CardRevealScreen, ChapterClearedScreen, EventScreen, RefineScreen,
+  RewardScreen, UnlockScreen,
   type CampfirePick,
 } from './NodeScreen.tsx';
 import { ALL_ENCOUNTERS, ENCOUNTER_BY_ID } from './enemies.ts';
@@ -989,6 +990,14 @@ export default function BattleDemo() {
   // The tower is the hub. A fight is the only thing that takes you off it, and the relic draw is
   // the only thing that interrupts it.
   if (!inFight || !encounter) {
+    // ⚠️ **通关之后塔上没有出口。** `outcome` 是组件状态、不落盘，所以刷新一次战果面板和解锁屏都不会
+    // 回来；而 boss 节点已经走过、出边为空，`reachableFrom` 是空的——**地图上一个能走的格子都没有**。
+    // 玩家看到的是一座死塔，外加一句「点亮的是下一步能去的地方」，而什么都没亮。
+    if (isChapterCleared(run)) {
+      return <div className="tw-host">
+        <ChapterClearedScreen cards={unlocksFor('ch1-5')} audioOn={audioOn} onLeave={restart} />
+      </div>;
+    }
     return <div className="tw-host">
       <TowerMapView run={run} encounters={ENCOUNTER_BY_ID} onEnter={enterFloor} />
       {run.pendingDraw && <div className="bd-over">
