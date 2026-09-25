@@ -28,7 +28,7 @@ import { REWARD_BY_ID } from './rewards.ts';
 import { fullDeckPool, rewardCardPool, rollCardOffer } from './rewards.ts';
 import { generateMap } from './map.ts';
 import {
-  HEAL_MAX, HEAL_MIN, RUN_ENCOUNTERS, addCard, answerRefine, battleSeed, canEnter, canEnterNode,
+  HEAL_MAX, HEAL_MIN, RUN_ENCOUNTERS, addCard, answerRefine, battleSeed, campfireQuench, canEnter, canEnterNode,
   chooseCard, claimReward, currentEncounter, deckFor, dismissRefine, dismissReveal, resolveEvent, encounterFor, enterNode, finishBattle, healRoll, holdsRelic,
   isValidRun, newRun, nextChoices, removeCard, restHeal, spendGold, swapDecks, upgradeCard,
   isChapterCleared, type ChapterRun,
@@ -892,4 +892,27 @@ test('保证不认「身上没有遗物」：丢掉之后再赢一场，不会�
   const emptied: ChapterRun = { ...granted, relics: {}, drawDue: undefined };
   const after = finishBattle(emptied, wonBattle(weak.id, emptied)).run;
   assert.equal(after.drawDue, undefined, '丢掉遗物就能再领一件');
+});
+
+test('营火淬炼：挂上赌局，而且**由它自己结束这一层**', () => {
+  // ⚠️ 这一条钉的是 CLAUDE.md 点名的那个坑。焚牌和打磨当年只挂 `cardTask`、不设 `resolved`，
+  // 而选牌器是**盖在**营火上面的——于是**一次营火可以既焚牌又休息**，同一晚花两遍。
+  //
+  // 淬炼挂的是 `relicTask` 而不是 `cardTask`，走的是另一条分支，所以它必须自己回答
+  // 「谁负责结束这一层」。抽成函数就是为了这条测试够得到它。
+  const node = generateMap(7).nodes.find(n => n.row === 9)!;
+  const run: ChapterRun = {
+    ...newRun('blade', 'bone', 7), at: node.id, path: [node.id],
+    relics: { main: 'iron-nail' }, relicGranted: true, rewardDue: node.id,
+  };
+  const quenched = campfireQuench(run, 'small', 72);
+  assert.equal(quenched.relicTask?.tier, 'small');
+  assert.equal(quenched.relicTask?.chance, 72);
+  assert.equal(quenched.resolved, node.id, '没标成已解决——这个营火还能再花一次');
+  assert.equal(quenched.rewardDue, undefined, '战利品没清掉，会再弹一次');
+  assert.equal(isValidRun(quenched), true, '存档必须合法，否则刷新一下整局没了');
+  // 赌局本身照常结算。
+  const after = answerRefine(quenched, 'iron-nail');
+  assert.equal(after.refined?.['iron-nail'], 'small');
+  assert.equal(after.relicTask?.done?.won, true, '成算 72 却不给结果屏');
 });

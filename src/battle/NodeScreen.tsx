@@ -118,13 +118,21 @@ function rewardScene(reward: RewardSpec): string {
 
 // ------------------------------------------------------------------ campfire
 
-export type CampfirePick = 'rest' | 'burn' | 'polish';
+export type CampfirePick = 'rest' | 'burn' | 'polish' | 'quench';
 
-/** 营火 — three ways to spend a night, all of them final. */
-export function CampfireScreen({ run, onPick, audioOn }: {
-  run: ChapterRun; onPick: (choice: CampfirePick) => void; audioOn: boolean;
+/**
+ * 营火 — what a night at the fire buys. All of them final, and 淬炼 only if you have something to
+ * put in.
+ *
+ * **淬炼 是这里唯一「有可能赔本」的选择**（`ND_QUENCH` 那屏会说清成算），而这正是它该在营火上的
+ * 原因：营火是**每条路线都一定会经过**的地方，奇遇不是——实测一半的地图上连一个淬炼奇遇都没有。
+ * 稳妥的那一注放在必经之路上，赌大的那一注留在奇遇里。
+ */
+export function CampfireScreen({ run, onPick, audioOn, quenchChance }: {
+  run: ChapterRun; onPick: (choice: CampfirePick) => void; audioOn: boolean; quenchChance: number;
 }) {
   const heal = Math.round(run.maxHp * .3);
+  const held = (['main', 'sub'] as const).filter(slot => run.relics[slot]);
   return <NodeShell kind="rest" scene="rest" kicker="营火 · 停下来" title="营地的火"
     footer="无论选哪个，这一层就过去了。">
     <p className="nd-copy">火还在烧。你有时间做一件事。</p>
@@ -135,6 +143,12 @@ export function CampfireScreen({ run, onPick, audioOn }: {
         onHover={() => sound('hover', audioOn)} onClick={() => onPick('burn')} />
       <NodeChoice label="打磨" tone="#d9bc80" hint="把一张牌磨得更好，本局永久生效"
         onHover={() => sound('hover', audioOn)} onClick={() => onPick('polish')} />
+      {/* 身上没有遗物时置灰并**说明原因**：一个点了没反应的按钮读起来像坏了，不像一个你暂时没有的东西。 */}
+      <NodeChoice label="淬炼" tone="#e0b45f" disabled={!held.length}
+        hint={held.length
+          ? `把一件遗物的数值往上推一档 · 成算 ${quenchChance}%，失败则碎`
+          : '身上没有遗物可以往里放'}
+        onHover={() => sound('hover', audioOn)} onClick={() => onPick('quench')} />
     </div>
   </NodeShell>;
 }
@@ -152,19 +166,29 @@ export function CampfireScreen({ run, onPick, audioOn }: {
  * Grouped by deck, because that is how a player reads them: they have been carrying two of these
  * decks for a whole chapter and the question 「这六张是给我哪副牌的」 is the first one they will ask.
  */
-export function UnlockScreen({ cards, onDone, audioOn }: {
-  cards: string[]; onDone: () => void; audioOn: boolean;
+export function UnlockScreen({ cards, fresh = true, onDone, audioOn }: {
+  cards: string[];
+  /** 这次的 26 张是**新拿到**的，还是**早就在池子里**的。两种都要摆，话不一样。 */
+  fresh?: boolean;
+  onDone: () => void; audioOn: boolean;
 }) {
   // Grouped by `cardUnlocks.ts` rather than here: `strip-types` cannot parse JSX, so the rule for
   // 「which six are whose, in what order」 is testable only if it lives outside this file.
   const groups = unlockGroups(cards).map(group => ({ deck: DECK_BY_ID.get(group.deck)!, ids: group.ids }));
   return <NodeShell kind="treasure" scene="boss" kicker="击破守望者 · 明焰阶"
-    title="火换了一种烧法"
+    title={fresh ? '火换了一种烧法' : '你早就把它们带来了'}
     actions={<button className="nd-primary" onPointerEnter={() => sound('hover', audioOn)}
       onClick={() => { sound('bell', audioOn); onDone(); }}>继续</button>}
-    footer={`${cards.length} 张牌加入了往后每一局的战利品池。`}>
+    footer={fresh
+      ? `${cards.length} 张牌加入了往后每一局的战利品池。`
+      : `这 ${cards.length} 张从第一次击破起就一直在池子里。`}>
+    {/* ⚠️ **重复击破也要说一句。** 判定原来只看「这次新解锁了什么」，重复击破就整屏不出现，
+        表现是「打完 boss 没有任何反馈」——而打赢 boss 是整章的收尾，它不该第二次就沉默。
+        但也**不能说谎**：牌早就是人家的了，「从今往后会出现」在这时候是假话。 */}
     <p className="nd-copy">
-      守望者倒下的地方，火还在烧。这些牌从今往后会出现——不是在这一次，是在每一次。
+      {fresh
+        ? '守望者倒下的地方，火还在烧。这些牌从今往后会出现——不是在这一次，是在每一次。'
+        : '又一位守望者倒下。这些牌在你第一次打赢的时候就进了战利品池，它们还在那儿。'}
     </p>
     {groups.map(({ deck, ids }) => <section key={deck.id} className="nd-unlock-group">
       <p className="nd-unlock-deck" style={{ '--tone': deck.accent } as CSSProperties}>

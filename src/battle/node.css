@@ -85,7 +85,9 @@
 
 /* ------------------------------------------------------------------- choices */
 
-.nd-choices { display: grid; gap: 16px; margin-top: 30px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+/* 230px 而不是 280：营火现在有四个选项，而 1076px 的内容宽在 280 下只排得下三列，
+   第四个会换行并且比上面三张窄一截。auto-fit 会把空轨道塌掉，所以三选项的事件屏不受影响。 */
+.nd-choices { display: grid; gap: 16px; margin-top: 30px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
 .nd-choice {
   display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
   padding: 24px 26px; text-align: left;

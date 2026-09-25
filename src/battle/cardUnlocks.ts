@@ -62,6 +62,21 @@ export function unlocksFor(encounterId: string): string[] {
 }
 
 /**
+ * What this victory **newly** hands over — the diff, not the list.
+ *
+ * The distinction matters at the call site: a repeat kill of the boss hands over nothing, and calling
+ * `creditAndSave` for it would be a no-op that reads like a bug.
+ *
+ * ⚠️ **An empty return is not 「nothing happened」.** It is what a *repeat* kill returns, and the
+ * unlock screen is still owed to the player on that kill — 「你已经有了」 is a different sentence from
+ * 「你刚刚拿到」, and printing neither is how 「打完 boss 没有任何反馈」 gets reported.
+ */
+export function newUnlocks(encounterId: string, earned: readonly string[]): string[] {
+  const have = new Set(earned);
+  return unlocksFor(encounterId).filter(id => !have.has(id));
+}
+
+/**
  * The unlocked cards, **grouped by deck in the chapter's own deck order** — what `UnlockScreen` draws.
  *
  * Here rather than inside the screen for the reason `describeEffect` lives in `events.ts`:

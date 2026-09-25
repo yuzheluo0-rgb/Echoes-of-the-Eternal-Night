@@ -44,9 +44,9 @@ import { refineLines } from './relics.ts';
 import {
   availableRelics, creditProgress, loadProgress, saveProgress, type RelicProgress,
 } from '../relics/unlocks.ts';
-import { creditAndSave, earnedCards, unlocksFor } from './cardUnlocks.ts';
+import { creditAndSave, earnedCards, newUnlocks, unlocksFor } from './cardUnlocks.ts';
 import {
-  answerRefine, canEnterNode, campfire, chooseCard, claimRelic, claimReward, deckFor, discardRelic,
+  answerRefine, campfire, campfireQuench, canEnterNode, chooseCard, claimRelic, claimReward, deckFor, discardRelic,
   dismissCard, dismissRefine, dismissReveal, enterNode, repairCard,
   nodeAt, offerDraw, resolveEvent, rollOffer, rollPendingReward, swapRelics,
 } from './run.ts';
@@ -72,6 +72,18 @@ import './battle.css';
 
 /** Set once the tour has been seen through or skipped, so it never comes back on its own. */
 const TOUR_KEY = 'eternal-night-battle-tutorial-v1';
+
+/**
+ * 营火那一档淬炼的成算 —— **比两条奇遇都稳**。
+ *
+ * 分工是这样的：营火是**每条路线都一定会经过的地方**（奇遇不是，boss 前那一排的 `?` 更是只有约
+ * 四分之一的路线终点踩得到），所以稳妥的那一注放在这儿，保证一局至少能淬一次；奇遇留的是
+ * **赌大**的那一注（大强化 45%、冷铁砧 62%），那才是该拿遗物去冒险的地方。
+ *
+ * 数字的来源是实测：不加营火这档时，**一半的地图上连一个淬炼奇遇都没有**，
+ * 单条路线算下来只有约 55% 见得到。见不到就等于这个机制不存在。
+ */
+export const CAMPFIRE_QUENCH_CHANCE = 72;
 
 /** The deck the chapter opens on. The pair is locked at that point; only 主/副 moves after it. */
 /**
@@ -468,9 +480,15 @@ export default function BattleDemo() {
   // Meta-progression, not run state: beating 头狼 widens the pool for the *next* run, which is why it
   // lives beside the run rather than inside it.
   const [progress, setProgress] = useState<RelicProgress>(loadProgress);
-  /** The 明焰阶 cards 击破守望者 just unlocked — what `UnlockScreen` puts on screen, as faces. */
-  const [unlockedCards, setUnlockedCards] = useState<string[]>([]);
-  /** 解锁屏看过了没有。它只在这一次击杀之后有意义，所以是组件状态而不是 run 的一部分。 */
+  /**
+   * 击破守望者之后要摆出来的那一屏：这一场给的全部，外加「是不是这次新拿到的」。
+   *
+   * ⚠️ **`fresh: false` 也要摆。** 判定原来只看「这次新解锁了什么」，于是**第二次击破守望者
+   * ——或者在一个早就解锁过这套牌的浏览器里第一次击破——整屏根本不出现**，表现就是
+   * 「打完 boss 没有任何反馈」。打赢 boss 是整章的收尾，它不该第二次就变成沉默；话不一样而已。
+   */
+  const [unlock, setUnlock] = useState<{ ids: string[]; fresh: boolean } | null>(null);
+  /** 这一屏看过了没有。它只在这一次击杀之后有意义，所以是组件状态而不是 run 的一部分。 */
   const [unlockSeen, setUnlockSeen] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
   const [audioOn, setAudioOn] = useState(true);
@@ -620,9 +638,9 @@ export default function BattleDemo() {
     saveRun(next);
     setRun(next);
     setOutcome(null);
-    // The unlock panel belongs to the win that earned it. Carrying it into the next run would show
-    // 「明焰阶 · 已解锁」 on a chapter that has not been cleared yet.
-    setUnlockedCards([]);
+    // The unlock screen belongs to the win that earned it. Carrying it into the next run would show
+    // 「明焰阶」 on a chapter that has not been cleared yet.
+    setUnlock(null);
     setUnlockSeen(false);
     setState(null);
     sound('bell', audioOn);
@@ -670,12 +688,20 @@ export default function BattleDemo() {
     if (!run) return;
     // The campfire says 焚牌; the run calls that task `remove`. Same thing, and the rename keeps the
     // run's vocabulary about the deck rather than about one screen's wording.
+    // The campfire says 焚牌; the run calls that task `remove`. Same thing, and the rename keeps the
+    // run's vocabulary about the deck rather than about one screen's wording.
+    //
+    // 淬炼 is the odd one: it hands the run a **`relicTask`** rather than a `cardTask`, so the reveal
+    // screen takes over from here. `resolved` is set by this branch itself, for the reason the note in
+    // CLAUDE.md gives: a campfire that only armed a sub-task could be spent twice — 焚牌 then 休息.
     const next: ChapterRun = choice === 'rest'
       ? campfire(run, { kind: 'rest' })
-      : {
-        ...run, cardTask: choice === 'burn' ? 'remove' : 'polish',
-        resolved: run.at, rewardDue: undefined,
-      };
+      : choice === 'quench'
+        ? campfireQuench(run, 'small', CAMPFIRE_QUENCH_CHANCE)
+        : {
+          ...run, cardTask: choice === 'burn' ? 'remove' : 'polish',
+          resolved: run.at, rewardDue: undefined,
+        };
     saveRun(next); setRun(next);
     if (choice === 'rest') sound('bell', audioOn);
   }
@@ -796,7 +822,7 @@ export default function BattleDemo() {
     clearRun();
     resetFx();
     setRun(null);
-    setUnlockedCards([]);
+    setUnlock(null);
     setUnlockSeen(false);
     setState(null);
     setOutcome(null);
@@ -849,8 +875,16 @@ export default function BattleDemo() {
       // And 击破守望者 widens the *card* pool — the promise `nextUnlock` has carried since the
       // chapter was written. Read what is new *before* crediting, because afterwards the answer is
       // always "nothing". Also idempotent.
-      const opened = unlocksFor(state.encounterId).filter(id => !earnedCards().includes(id));
-      if (opened.length) { creditAndSave(state.encounterId); setUnlockedCards(opened); }
+      const offered = unlocksFor(state.encounterId);
+      if (offered.length) {
+        const opened = newUnlocks(state.encounterId, earnedCards());
+        if (opened.length) creditAndSave(state.encounterId);
+        // ⚠️ **Shown on every kill of this fight, not only the first.** It used to be gated on
+        // `opened.length`, so a second 击破守望者 — or a first one in a browser that had already
+        // unlocked the set — produced no screen at all and read as 「打完 boss 没有任何反馈」.
+        // Beating the boss is the end of the chapter; it does not get to be silent the second time.
+        setUnlock({ ids: offered, fresh: opened.length > 0 });
+      }
     } else {
       // The run is dead. Drop the save so a reload cannot resume a chapter that was already lost.
       clearRun();
@@ -939,11 +973,15 @@ export default function BattleDemo() {
     }
   }
   if (floor && run.resolved !== run.at) {
-    if (floor.kind === 'rest') return <CampfireScreen run={run} onPick={answerCampfire} audioOn={audioOn} />;
+    if (floor.kind === 'rest') {
+      return <CampfireScreen run={run} onPick={answerCampfire} audioOn={audioOn}
+        quenchChance={CAMPFIRE_QUENCH_CHANCE} />;
+    }
     if (floor.kind === 'event') {
       // `key` — the screen holds the half-answered option in local state, so climbing to the next
       // 奇遇 has to hand it a fresh one rather than leave it showing the last floor's answer.
-      return <EventScreen key={floor.id} event={eventForNode(floor.id)} run={run}
+      // `floor.row` too: the row before the boss is always a 淬炼 — see `eventForNode`.
+      return <EventScreen key={floor.id} event={eventForNode(floor.id, floor.row)} run={run}
         onContinue={commitEvent} audioOn={audioOn} />;
     }
   }
@@ -1135,11 +1173,12 @@ export default function BattleDemo() {
         它原来只是战果面板里的一行名字，而那个面板讲的是这一仗：带走的血、拿到的钱。
         解锁讲的是往后每一局，缩在里面就等于没有。摆的是牌面——「万刃」和「千刃」对一个没见过
         这两张牌的玩家是同样三个字。 */}
-    {outcome && !!unlockedCards.length && !unlockSeen && <div className="bd-over">
-      <UnlockScreen cards={unlockedCards} audioOn={audioOn} onDone={() => setUnlockSeen(true)} />
+    {outcome && unlock && !unlockSeen && <div className="bd-over">
+      <UnlockScreen cards={unlock.ids} fresh={unlock.fresh} audioOn={audioOn}
+        onDone={() => setUnlockSeen(true)} />
     </div>}
 
-    {outcome && (!unlockedCards.length || unlockSeen) && <div className="bd-over">
+    {outcome && (!unlock || unlockSeen) && <div className="bd-over">
       <div className={`bd-over-card bd-spoils ${outcome.won ? 'won' : 'lost'}`}>
         <p className="bd-over-kicker">
           {!outcome.won ? 'DEFEAT' : outcome.chapterCleared ? 'CHAPTER I · CLEARED' : 'VICTORY'}

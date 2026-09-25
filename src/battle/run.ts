@@ -626,6 +626,22 @@ export function discardRelic(run: ChapterRun, slot: 'main' | 'sub'): ChapterRun 
 }
 
 /**
+ * 营火的那一档淬炼：把赌局挂上去，**并且由它自己结束这一层**。
+ *
+ * It lives here rather than inline in the campfire's click handler for two reasons. One is the test:
+ * `strip-types` cannot parse JSX, so a branch written beside its screen is a branch nothing can hold
+ * to account. The other is the bug that branch has already caused once in this file — 焚牌 and 打磨
+ * only armed a `cardTask` and left `resolved` alone, and since the picker is drawn *over* the
+ * campfire, one night at the fire could be spent twice: burn a card, then rest as well.
+ *
+ * So this sets `resolved` (and clears `rewardDue`) the same way the other two do, and `run.test.ts`
+ * asserts it — 「谁负责结束这一层」 is the question every sub-task-awarding flow has to answer.
+ */
+export function campfireQuench(run: ChapterRun, tier: RefineTier, chance: number): ChapterRun {
+  return { ...run, relicTask: { tier, chance }, resolved: run.at, rewardDue: undefined };
+}
+
+/**
  * 淬炼 a relic: every number it prints goes up by one (`small`) or two (`large`).
  *
  * Pure and additive — calling it twice just overwrites the tier, and the run cannot end up with two

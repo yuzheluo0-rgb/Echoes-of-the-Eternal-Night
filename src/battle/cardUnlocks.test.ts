@@ -19,7 +19,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BOSS_IDS, BOSS_UNLOCKS, clearProgress, creditAndSave, creditProgress, earnedCards, emptyProgress,
-  isValidProgress, unlockGroups, unlocksFor,
+  isValidProgress, newUnlocks, unlockGroups, unlocksFor,
 } from './cardUnlocks.ts';
 import { CHAPTER_1 } from './chapter.ts';
 import { rewardCardPool } from './rewards.ts';
@@ -162,4 +162,16 @@ test('解锁的牌按牌组合并，顺序跟着牌组表走', () => {
   assert.deepEqual(groups.flatMap(g => g.ids).sort(), [...BOSS_IDS].sort(), '分组把牌弄丢或弄重了');
   // 空输入不该崩，也不该吐出一个空组。
   assert.deepEqual(unlockGroups([]), []);
+});
+
+test('newUnlocks：一次击杀只报**这次新拿到的**，重复击破返回空', () => {
+  // 判定抽在 `cardUnlocks.ts` 而不是屏幕里：`strip-types` 解析不了 JSX，
+  // 写在组件旁边的规则是测试够不到的规则。
+  assert.deepEqual(newUnlocks('ch1-5', []).sort(), [...BOSS_IDS].sort(), '第一次击破应当报全部');
+  assert.deepEqual(newUnlocks('ch1-5', BOSS_IDS), [], '第二次击破不该再报成「新解锁」');
+  assert.deepEqual(newUnlocks('ch1-5', BOSS_IDS.slice(0, 5)).sort(), [...BOSS_IDS].slice(5).sort(),
+    '只解锁了一部分时，报的应当正好是没拿到的那部分');
+  // 一场不发牌的仗永远报空——这是 `creditAndSave` 的幂等性依赖的前提。
+  assert.deepEqual(newUnlocks('ch1-1', []), []);
+  assert.deepEqual(newUnlocks('没有这场仗', []), []);
 });

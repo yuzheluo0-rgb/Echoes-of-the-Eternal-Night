@@ -24,6 +24,9 @@
 
 import { REFINE_LABEL, type RefineTier } from '../relics/relics.ts';
 import { JUNK, isHazard } from './enemies.ts';
+// One constant, type-free, and `map.ts` imports nothing from here — no cycle. A literal 16 would have
+// been the kind of number that silently stops being true the next time the tower grows.
+import { MAP_ROWS } from './map.ts';
 
 /** The printed name of a hazard, for the line that says what an option cost you. */
 function hazardName(cardId: string): string {
@@ -559,7 +562,7 @@ function signed(amount: number): string {
  * ids that differ in one character differs mostly in its low bits, and it is the low bits that take
  * the modulo. Without the scramble, `n7-2` and `n7-3` would tend to land on neighbouring events.
  */
-export function eventForNode(nodeId: string): EventSpec {
+export function eventForNode(nodeId: string, row?: number): EventSpec {
   let hash = 2166136261;
   for (let i = 0; i < nodeId.length; i++) {
     hash = Math.imul(hash ^ nodeId.charCodeAt(i), 16777619);
@@ -567,5 +570,19 @@ export function eventForNode(nodeId: string): EventSpec {
   hash ^= hash >>> 15;
   hash = Math.imul(hash, 2246822507);
   hash ^= hash >>> 13;
-  return EVENTS[(hash >>> 0) % EVENTS.length];
+  const index = hash >>> 0;
+  // ⚠️ **boss 前那一排的「未知事件」永远是淬炼。**
+  //
+  // 不加这条时实测：**49.5% 的地图上一个淬炼类奇遇都不存在**（200 种子，数的是全图的 `?` 节点，
+  // 而玩家只走其中一条路线，所以实际只会更低）。一个花了整轮的机制，一半的局连见都见不到。
+  // 靠加条目治不好——要把它压到 10% 以下，五分之一的事件都得是淬炼。
+  //
+  // 放在这里是因为那一排本来就是营火，而淬火石本来就是火边的事；那一层也是**打 boss 前最后一次
+  // 加码**，场景和时机都对得上。`row` 由调用方给，所以这个文件仍然不认识地图。
+  if (row === MAP_ROWS) return REFINE_EVENTS[index % REFINE_EVENTS.length];
+  return EVENTS[index % EVENTS.length];
 }
+
+/** The floors whose answers include a 淬炼 — see `eventForNode` for why these two matter so much. */
+export const REFINE_EVENTS: EventSpec[] = EVENTS.filter(event =>
+  event.options.some(option => option.effect.kind === 'refine'));
