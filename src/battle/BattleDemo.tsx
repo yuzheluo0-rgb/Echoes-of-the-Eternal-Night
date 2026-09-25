@@ -37,7 +37,10 @@ import {
 } from './engine.ts';
 import { ENEMY_BY_ID, MUTATION_BY_ID, type Encounter } from './enemies.ts';
 import { RelicFace } from '../relics/RelicFace';
-import { RELIC_BY_ID, TIER_BY_ID, type RelicDefinition } from '../relics/relics.ts';
+import { REFINE_LABEL, RELIC_BY_ID, TIER_BY_ID, type RelicDefinition } from '../relics/relics.ts';
+// The relic **behaviour** layer, not the data one — `refineLines` runs this relic's handlers to work
+// out what moved. Two files named `relics.ts` in different folders; the paths are explicit on purpose.
+import { refineLines } from './relics.ts';
 import {
   availableRelics, creditProgress, loadProgress, saveProgress, type RelicProgress,
 } from '../relics/unlocks.ts';
@@ -1176,13 +1179,31 @@ function BattleRelics({ run }: { run: ChapterRun }) {
       return <div key={slot} className={`bd-hand-relic ${relic ? '' : 'is-empty'}`}>
         <div className="bd-hand-relic-scale">
           {relic
-            ? <RelicFace relic={relic} />
+            ? <RelicFace relic={relic} refine={refineBadge(run, slot)} />
             : <span className="bd-hand-relic-blank"><i>{slot === 'main' ? '主遗物' : '副遗物'}</i>空</span>}
         </div>
         <span className="bd-hand-relic-tag">{slot === 'main' ? '主' : '副'}</span>
       </div>;
     })}
   </div>;
+}
+
+/**
+ * 淬炼, in the shape the face wants it: the tier, and the lines saying what moved.
+ *
+ * The lines come from `refineLines`, which runs the relic's **own handlers** at both tiers — the same
+ * call the engine makes during a fight. That is the whole point: authoring a second set of numbers for
+ * the card face is how 打磨 shipped a card that said 「抽 1 张牌」 while the engine drew two, and this
+ * arrangement cannot repeat it.
+ *
+ * `slot` matters: 干粮 pays 3 生命 in the 主槽 and 1 in the 副槽, so the same relic refines to a
+ * different number on each side of the frame.
+ */
+function refineBadge(run: ChapterRun, slot: 'main' | 'sub') {
+  const id = run.relics[slot];
+  const tier = id ? run.refined?.[id] : undefined;
+  if (!id || !tier) return undefined;
+  return { tier, lines: refineLines(id, slot, tier) };
 }
 
 /**
@@ -1206,7 +1227,14 @@ function RelicSlots({ run, onSwap, onDrop, audioOn }: {
         title={relic ? `${relic.name}\n主槽：${relic.text}\n副槽：${relic.sub}` : undefined}>
         <span>{slot === 'main' ? '主遗物' : '副遗物'}</span>
         <b>{relic ? relic.name : '空'}</b>
-        {relic && <i>{tier!.name} · {slot === 'main' ? '完整效果' : '折扣效果'}</i>}
+        {relic && <i>{tier!.name} · {slot === 'main' ? '完整效果' : '折扣效果'}
+          {/* The plate is a name plate rather than a face, so the refinement is one more clause
+              rather than a block of its own — but it still has to be *here*, because this is the
+              screen where the loadout is read. */}
+          {run.refined?.[relic.id] && <em className="bd-relic-refined">
+            {REFINE_LABEL[run.refined[relic.id]!]}
+          </em>}
+        </i>}
         {editable && relic && <button className="bd-relic-drop" onClick={() => onDrop!(slot)}
           onPointerEnter={() => sound('hover', audioOn ?? true)}>丢弃</button>}
       </div>;

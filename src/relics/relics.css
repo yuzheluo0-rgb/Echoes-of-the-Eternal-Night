@@ -124,6 +124,31 @@
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
 }
 
+/* ---------------------------------------------------------------- 淬炼
+   A refined relic prints what moved, in a gold strip **under the tier ribbon** — the one place on the
+   card with room to spare.
+   ⚠️ Not in `.rl-body`. That block is bottom-anchored at a fixed height precisely so a row of cards'
+   names sits on one line; a refinement printed inside it makes that card's block taller and shoves its
+   own name 37px up, so a row with one quenched relic and one plain relic comes out looking broken.
+   Measured, not guessed: `.rl` 342 → the sibling's name 37px lower. */
+.rl-refine {
+  position: absolute; top: 47px; left: 16px; right: 16px;
+  display: flex; flex-direction: column; gap: 5px; align-items: center;
+  text-align: center; pointer-events: none;
+}
+.rl-refine-mark {
+  font-size: 10px; letter-spacing: 2.6px; padding: 2px 9px; border-radius: 2px;
+  color: #1a1408; background: linear-gradient(180deg, #f0d79a, #cfa855);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, .55);
+}
+.rl-refine ul { margin: 0; padding: 0; list-style: none; }
+.rl-refine li {
+  font-size: 12px; line-height: 1.6; color: #f4dfa6;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, .95), 0 0 18px rgba(0, 0, 0, .85);
+}
+.rl-compact .rl-refine { top: 40px; left: 10px; right: 10px; }
+.rl-compact .rl-refine li { font-size: 10.5px; }
+
 /* --- light --- */
 .rl-sheen {
   position: absolute; inset: 0; pointer-events: none; opacity: 0;

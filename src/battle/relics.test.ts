@@ -18,7 +18,7 @@ import {
   startBattle, type BattleState,
 } from './engine.ts';
 import {
-  IMPLEMENTED_RELICS, RELIC_EFFECTS, refinedPair, refineSteps,
+  IMPLEMENTED_RELICS, RELIC_EFFECTS, refinedPair, refineLines, refineSteps, refineSummary,
   type RefineTier, type RelicSlot,
 } from './relics.ts';
 import { STATUS_GOOD, type StatusId } from './types.ts';
@@ -27,7 +27,7 @@ import {
   canEnter, claimRelic, discardRelic, earnsRelic, finishBattle, isValidRun as isValidRunForTest,
   newRun, offerDraw, rollOffer, swapRelics,
 } from './run.ts';
-import { RELIC_BY_ID, RELICS, type RelicDefinition } from '../relics/relics.ts';
+import { REFINE_TEXT, RELIC_BY_ID, RELICS, type RelicDefinition } from '../relics/relics.ts';
 import {
   availableRelics, creditProgress, emptyProgress, earnedRelics, isValidProgress, poolSize,
   startingRelics, unlocksFor,
@@ -285,6 +285,10 @@ test('淬炼：每一件遗物的数值都真的变大，而且是两档递进',
 
   const flat: string[] = [];
   for (const relic of pool) {
+    // 手写刻度的遗物**不在这一条的管辖范围**，这是这一条自己的判据决定的：`strength` 数的是数字，
+    // 而怀表的强化是**时间**——提前一回合给同一点能量，数字一个都没动。它们在 `REFINE_TEXT` 里
+    // 有逐件写的文案，由下面那条「卡面印得出什么变大了」看着。
+    if (REFINE_TEXT[relic.id]) continue;
     for (const slot of ['main', 'sub'] as const) {
       const base = strength(relic.id, slot, undefined);
       const small = strength(relic.id, slot, 'small');
@@ -315,6 +319,38 @@ test('淬炼：接在引擎上，两档在真战斗里也确实不一样', () =>
     }
   }
   assert.deepEqual(same, [], '这些遗物淬炼之后，实弹战斗里的结果和没淬炼时一模一样');
+});
+
+test('淬炼：卡面印得出「什么变大了」，一件都不许空着', () => {
+  // 引擎里数字涨了、测试全绿、而卡面还印着原文案——玩家看到的就是「淬炼了但什么也没发生」。
+  // **打磨那一轮正是这么栽的**（引擎读 upgrades.ts，卡面读 card.text，两条路一分叉卡面就说谎），
+  // 所以这一条查的是**界面那一侧**：每一件能抽到的遗物、两个槽、两个档位，都必须印得出至少一行。
+  //
+  // 两个方向都查，因为手写刻度表既可能写多也可能写漏：
+  //   写多了 → 那件其实走通用 +N，手写文案把它说成别的东西；
+  //   写漏了 → 通用行会说「每一个数 +1」，而它其实不是。
+  const pool = availableRelics(creditProgress(emptyProgress(), 'ch1-4'));
+  const blank: string[] = [];
+  const shouldBeAuthored = new Set<string>();
+  for (const relic of pool) {
+    for (const slot of ['main', 'sub'] as const) {
+      for (const tier of ['small', 'large'] as const) {
+        if (!refineLines(relic.id, slot, tier).length) {
+          blank.push(`${relic.id}（${relic.name}）${slot === 'main' ? '主槽' : '副槽'} · ${tier}`);
+        }
+      }
+      // 「走通用 +N」的判据：未淬炼 → 小强化，**每一个标签都恰好动 1**。
+      // 空摘要也算数：`every` 在空数组上恒为真，怀表就会因为「什么都没动」而被判成走通用行——
+      // 而它的强化是**时间**（提前一个回合），一个 +N 的行印在它身上就是谎话。
+      const small = refineSummary(relic.id, slot, 'small');
+      if (!small.length || !small.every(delta => Math.abs(delta.to - delta.from) === 1)) {
+        shouldBeAuthored.add(relic.id);
+      }
+    }
+  }
+  assert.deepEqual(blank, [], '这些遗物淬炼之后，卡面印不出任何东西');
+  assert.deepEqual([...shouldBeAuthored].sort(), Object.keys(REFINE_TEXT).sort(),
+    '手写刻度表和实际行为对不上：写多的那件其实走通用 +N，漏写的那件通用行会说谎');
 });
 
 test('淬炼：阶梯本身是单调的，写在表里的每一对数都被抬高', () => {

@@ -956,6 +956,12 @@
 .bd-relic-slot > span { font-size: 9px; letter-spacing: 2.6px; color: #7f9189; }
 .bd-relic-slot b { font-size: 15px; letter-spacing: 2px; font-weight: 400; color: var(--tier, #b6c3b2); font-family: 'Noto Serif SC', 'Songti SC', serif; }
 .bd-relic-slot i { font-size: 10.5px; font-style: normal; color: #7f9189; }
+/* 已淬炼, on the name plate. Gold, because it is the one thing on this row the player earned. */
+.bd-relic-refined {
+  font-style: normal; margin-left: 6px; padding: 1px 5px; border-radius: 2px;
+  font-size: 9.5px; letter-spacing: 1.2px; color: #1a1408;
+  background: linear-gradient(180deg, #f0d79a, #cfa855);
+}
 .bd-relic-slot.empty b { color: #5d6a66; font-size: 13px; }
 /* 丢弃 / 调换 — the two things you can do to a loadout between fights. Neither exists once the fight
    has started, which is why the battle panel renders the same boxes without them. */

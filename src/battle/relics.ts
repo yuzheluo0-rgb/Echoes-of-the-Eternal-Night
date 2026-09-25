@@ -20,45 +20,16 @@
  * instead of a second 余烬) reads `c.main` and branches.
  */
 
-import type { EnemyState, LogLine, PlayerState, StatusId } from './types.ts';
+import { STATUS_LABEL, type EnemyState, type LogLine, type PlayerState, type StatusId } from './types.ts';
+import { REFINE_TEXT, refinedPair, refineSteps, type RefineTier } from '../relics/relics.ts';
 
 export type RelicSlot = 'main' | 'sub';
 
-/**
- * 淬炼 — how far a relic's numbers have been pushed up.
- *
- * 打磨 is the card's version of this: the same card, larger numbers. 淬炼 is the relic's version, and
- * it is **purely numeric**: it does not change which branch of a relic is live, does not move it
- * between slots, and does not touch its rules. Every number the relic prints simply gets bigger.
- *
- *   小强化   该遗物**印出来的每一个数** +1
- *   大强化   +2
- *
- * Which number that is depends on the relic and on which slot it sits in — 干粮 pays 3 生命 in the
- * main slot and 1 in the sub — so the bump is applied wherever the relic reads its number, through
- * `ctx.n` / `ctx.v`. Nothing is scaled in the engine afterward: a 大强化 relic adds +2 at exactly the
- * points its unrefined self added the base number, so the two can never drift apart.
- *
- * A handful of relics do not want a flat +1 — 水囊 pays a **percentage**, 铁匠锤 a **cost**, and on
- * those a plain +1 would be meaningless or backwards. Those branch on `ctx.steps` and say what they
- * mean. `relics.test.ts` checks that **every** relic in the set is strictly stronger at 大强化 than at
- * 小强化 than unrefined, so a relic that quietly gains nothing fails rather than shipping.
- */
-export type RefineTier = 'small' | 'large';
-
-/** How much every printed number goes up. The single place the two tiers are told apart. */
-export function refineSteps(tier: RefineTier | undefined): number {
-  return tier === 'large' ? 2 : tier === 'small' ? 1 : 0;
-}
-
-/** The tier's name as the player reads it. `undefined` is the unrefined relic, which needs no label. */
-export const REFINE_LABEL: Record<RefineTier, string> = { small: '小强化', large: '大强化' };
-
-/** What a relic's two slot numbers become once quenched. Exported so the tests can assert it directly. */
-export function refinedPair(main: number, sub: number, refine: RefineTier | undefined): [number, number] {
-  const steps = refineSteps(refine);
-  return [main + steps, sub + steps];
-}
+// The 淬炼 vocabulary (tier, steps, pair arithmetic) lives in the **data** module — `src/relics/**`
+// may not import `src/battle/**`, and the card face needs to read a tier too. Imported for this
+// file's own use and re-exported so the engine and the run keep importing everything relic-shaped
+// from one place.
+export { REFINE_LABEL, refinedPair, refineSteps, type RefineTier } from '../relics/relics.ts';
 
 /** When a relic pays out. */
 export type RelicTrigger =
@@ -260,13 +231,26 @@ export const RELIC_EFFECTS: Record<string, RelicEffects> = {
       },
     },
   },
-  'dead-wick': { triggers: { turnStart: c => { if (c.hpFraction < c.v(.5, .25)) c.status('player', 'ember', c.n(1)); } } },
+  // ⚠️ **The thresholds are fractions, so `c.v(.5, .25)` would add a whole 1 to them** — 0.25 + 1 is
+  // 1.25, a 生命 fraction that is always true, and the relic would have quietly become 「每回合给余烬」
+  // instead of 「快死的时候给」. Its rung is ten percentage points, not one.
+  'dead-wick': {
+    triggers: {
+      turnStart: c => {
+        if (c.hpFraction < (c.main ? .5 : .25) + c.steps * .1) c.status('player', 'ember', c.n(1));
+      },
+    },
+  },
   'chipped-bowl': { triggers: { battleStart: c => already(c, 'retaliate') ? c.block(c.n(2)) : c.status('player', 'retaliate', c.n(1)) } },
 
   // ------------------------------------------------------------------ 旧物
   // 怀表's number is a **turn**, so the bump runs the other way: refining makes it arrive earlier,
   // not later. `c.v(5, 7)` would have pushed it to turn 7 and made 小强化 a downgrade.
-  'brass-watch': { triggers: { turnStart: c => { if (c.turn === (c.main ? 5 : 7) - c.steps) c.energy(c.n(1)); } } },
+  //
+  // The energy stays 1. It is the *timing* that scales, and `c.n(1)` here would have double-dipped —
+  // arriving on turn 3 **and** paying three energy, which is a different relic rather than a better
+  // one. Its card face therefore cannot use the generic 「数值 +N」 line; see `REFINE_TEXT`.
+  'brass-watch': { triggers: { turnStart: c => { if (c.turn === (c.main ? 5 : 7) - c.steps) c.energy(1); } } },
   // 铜钥匙 hands over a *kind* of card, which has no number to enlarge — so the tier pays in draws
   // instead, on top of the tutor. `c.n(0)` is exactly the bump (0 / 1 / 2), the same scale the rest
   // of the set uses, which keeps 「大强化 = +2」 true here too.
@@ -434,3 +418,153 @@ export function effectsFor(relicId: string | undefined): RelicEffects | undefine
 
 /** Every id that has behaviour. The test that refuses to ship a blank relic reads this. */
 export const IMPLEMENTED_RELICS = Object.keys(RELIC_EFFECTS);
+
+// ------------------------------------------------------------------ telling the player
+
+/** What one number of a relic's effect did when it was quenched. */
+export interface RefineDelta {
+  /** The noun the player reads: 格挡, 余烬, 抽牌, 能力牌减费 … */
+  label: string;
+  from: number;
+  to: number;
+}
+
+/**
+ * What a relic's numbers become at a 淬炼 tier, **derived from the relic's own handlers**.
+ *
+ * This exists because of the rule the whole project keeps re-learning: a card that prints one number
+ * while the engine uses another is a card that lies. 打磨 taught it once (`upgrades.ts`), and 淬炼 is
+ * the same shape of feature — so rather than authoring a second set of printed text for fifty-two
+ * relics and hoping the two stay in step, this **runs the handlers** and reports what moved.
+ *
+ * It cannot drift. Change `c.n(2)` to `c.n(3)` in a handler and this line changes with it, because it
+ * is reading the same call.
+ *
+ * The numbers come from a synthetic board (turn 1–8, both a full and an empty hand, one enemy), which
+ * is enough to fire every relic in the set — `relics.test.ts` asserts that **no relic ever reports an
+ * empty summary**, so a relic whose refinement does nothing cannot be shown as 「已淬炼」 with nothing
+ * underneath it.
+ */
+export function refineSummary(relicId: string, slot: RelicSlot, tier: RefineTier): RefineDelta[] {
+  const before = tallyNumbers(relicId, slot, undefined);
+  const after = tallyNumbers(relicId, slot, tier);
+  const deltas: RefineDelta[] = [];
+  for (const [label, to] of after) {
+    const from = before.get(label) ?? 0;
+    if (to !== from) deltas.push({ label, from, to });
+  }
+  // Largest change first: the line the player should read is the one that moved most.
+  return deltas.sort((a, b) => Math.abs(b.to - b.from) - Math.abs(a.to - a.from));
+}
+
+/**
+ * The lines a 淬炼 relic prints under its name — ready to render, so the card face does no arithmetic.
+ *
+ * Two sources, in order:
+ *
+ *   1. **`REFINE_TEXT`**, for the five relics whose rung is not one. Hand-written, because 「回血加成
+ *      +15%」 and 「提前到第 4 回合」 are sentences and no formula produces them.
+ *   2. **The relic's own handlers**, run at both tiers — 「格挡 1 → 3」, 「攻击加伤 1 → 3」.
+ *
+ * The second source is the point of the whole arrangement. It is not a second copy of the numbers
+ * kept in step by discipline; it is the *same call* the engine will make, read twice. A relic whose
+ * refinement stopped working would print an empty card rather than a confident lie, and
+ * `relics.test.ts` fails on an empty card.
+ */
+export function refineLines(relicId: string, slot: RelicSlot, tier: RefineTier): string[] {
+  const authored = REFINE_TEXT[relicId]?.[tier];
+  if (authored) return [authored];
+  return refineSummary(relicId, slot, tier).map(delta => `${delta.label} ${delta.from} → ${delta.to}`);
+}
+
+/** The noun for each thing a relic can do, as the player reads it on the face. */
+const EFFECT_LABELS: Record<string, string> = {
+  block: '格挡', energy: '能量', draw: '抽牌', heal: '生命', reclaim: '拾回', stripBlock: '削格挡',
+  copyHand: '复制牌', cheapenHand: '降费', discardRandom: '弃牌', loseHp: '失去生命',
+  // Modifiers the engine asks for by name rather than through a context method.
+  attackDamage: '攻击加伤', firstAttackDamage: '首次攻击加伤', scorchDamage: '灼烧伤害',
+  maxHp: '生命上限', kindling: '引火加深', drawCount: '每回合抽牌', energyBonus: '每回合能量',
+  victoryHeal: '战后回血', victoryGold: '战后金币', goldBonus: '金币加成', healMultiplier: '回血加成',
+  firstCardCost: '首牌减费', firstSkillCost: '技能牌减费', firstPowerCost: '能力牌减费',
+};
+
+/** Costs are *added* to a price, so a negative one is a discount — flipped to read 「便宜 3」. */
+const COST_KEYS = new Set(['firstCardCost', 'firstSkillCost', 'firstPowerCost']);
+
+/** Sum every number a relic hands the engine, by what it was for. */
+function tallyNumbers(
+  relicId: string, slot: RelicSlot, tier: RefineTier | undefined,
+): Map<string, number> {
+  const steps = refineSteps(tier);
+  const tally = new Map<string, number>();
+  /**
+   * Keeps the **largest single number** seen for a label, not the running total.
+   *
+   * The probe sweeps eight turns and two hands so that 怀表 and 鱼骨 have a chance to fire at all, and
+   * summing across that sweep multiplies every value by the number of times it fired — 血衫 read as
+   * 「锋锐 2 → 4」 a turn, which summed to 「32 → 64」 over the sweep and would have been a card face
+   * claiming a refinement sixty-four times its real size. One invocation is the unit the player
+   * reads. Magnitude, so a negative number (an enemy's 力量 going down) still counts as bigger.
+   */
+  const add = (label: string, n: number) => {
+    if (!n) return;
+    const seen = tally.get(label);
+    if (seen === undefined || Math.abs(n) > Math.abs(seen)) tally.set(label, n);
+  };
+  const enemy: EnemyState = {
+    id: 'probe', uid: 'e0', hp: 20, maxHp: 20, block: 0, statuses: {},
+    dead: false, turn: 1, intent: [{ kind: 'attack', amount: 5 }],
+  };
+  const probe = (turn: number, handSize: number): RelicContext => ({
+    slot, refine: tier, steps,
+    v: (main, sub) => { const [m, u] = refinedPair(main, sub, tier); return slot === 'main' ? m : u; },
+    main: slot === 'main',
+    n: base => base + steps,
+    turn, hpFraction: .3,
+    // Energy above 2 so 陶灯's 「结束回合时还有能量」 gate is open at every tier.
+    player: { statuses: {}, block: 0, energy: 3, energyPerTurn: 3, hp: 18, maxHp: 60 },
+    handSize, enemies: [enemy], subject: enemy, fallen: enemy, byScorch: true, hits: 3,
+    count: () => 0, bump: () => {}, roll: () => 0, log: () => {},
+    // Both sides tally the same way on purpose: the summary says 「灼烧 1 → 3」, and whether that
+    // landed on the player or on an enemy is the relic's printed text's business, not this line's.
+    status: (_who, st, amount) => add(STATUS_LABEL[st], amount),
+    statusOn: (_e, st, amount) => add(STATUS_LABEL[st], amount),
+    block: a => add(EFFECT_LABELS.block, a),
+    energy: a => add(EFFECT_LABELS.energy, a),
+    draw: a => add(EFFECT_LABELS.draw, a),
+    heal: a => add(EFFECT_LABELS.heal, a),
+    loseHp: a => add(EFFECT_LABELS.loseHp, a),
+    stripBlock: a => add(EFFECT_LABELS.stripBlock, a),
+    reclaim: a => add(EFFECT_LABELS.reclaim, a),
+    tutor: () => {},
+    purgeJunk: () => 0,
+    discardRandom: a => add(EFFECT_LABELS.discardRandom, a),
+    cheapenHand: (count, by) => add(EFFECT_LABELS.cheapenHand, by * count),
+    // Just the count — the test's strength metric weights a card double, but a card *face* that says
+    // 「复制牌 2 → 4」 for a relic that copies one card is the kind of number this whole function
+    // exists to avoid printing.
+    copyHand: (count, _extra = 0) => add(EFFECT_LABELS.copyHand, count),
+    topOfDraw: () => ['一', '二', '三', '四', '五'],
+  }) as RelicContext;
+
+  const effects = RELIC_EFFECTS[relicId];
+  if (!effects) return tally;
+  for (const trigger of ['battleStart', 'enemyKilled', 'firstAttacked', 'firstAttackedTurn'] as const) {
+    effects.triggers?.[trigger]?.(probe(1, 3));
+  }
+  for (let turn = 1; turn <= 8; turn++) {
+    for (const handSize of [3, 0]) {
+      effects.triggers?.turnStart?.(probe(turn, handSize));
+      effects.triggers?.turnEnd?.(probe(turn, handSize));
+    }
+  }
+  for (const [key, spec] of Object.entries(effects.modifiers ?? {})) {
+    const value = typeof spec === 'function' ? spec(probe(1, 3)) : (() => {
+      const [m, s] = spec;
+      const [a, b] = refinedPair(m, s, tier);
+      return slot === 'main' ? a : b;
+    })();
+    add(EFFECT_LABELS[key] ?? key, COST_KEYS.has(key) ? -value : value);
+  }
+  return tally;
+}

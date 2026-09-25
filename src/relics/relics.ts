@@ -172,6 +172,88 @@ export const RELICS: RelicDefinition[] = [
 
 export const RELIC_BY_ID = new Map(RELICS.map(relic => [relic.id, relic]));
 
+// ------------------------------------------------------------------- 淬炼
+
+/**
+ * 淬炼 — how far a relic's numbers have been pushed up.
+ *
+ * 打磨 is the card's version of this: the same card, larger numbers. 淬炼 is the relic's version, and
+ * it is **purely numeric**: it does not change which branch of a relic is live, does not move it
+ * between slots, and does not touch its rules. Every number the relic prints simply gets bigger.
+ *
+ *   小强化   该遗物印出来的每一个数 **+1**
+ *   大强化   **+2**
+ *
+ * Which number that is depends on the relic and on which slot it sits in — 干粮 pays 3 生命 in the
+ * main slot and 1 in the sub — so the bump is applied wherever the relic reads its number, through
+ * `ctx.n` / `ctx.v` in `src/battle/relics.ts`. Nothing is scaled in the engine afterward, so the two
+ * can never drift apart.
+ *
+ * The vocabulary lives **here**, in the data module, rather than beside the behaviour, because both
+ * sides need it and only one direction of import is allowed: `src/relics/**` may not reach into
+ * `src/battle/**` (the whole gallery is meant to be openable without the battle engine), so the card
+ * face reads the tier from here and the engine reads it from here too.
+ *
+ * A handful of relics do not want a flat +1 — see `REFINE_TEXT` below, and the test that keeps the
+ * two lists honest.
+ */
+export type RefineTier = 'small' | 'large';
+
+/** How much every printed number goes up. The single place the two tiers are told apart. */
+export function refineSteps(tier: RefineTier | undefined): number {
+  return tier === 'large' ? 2 : tier === 'small' ? 1 : 0;
+}
+
+/** The tier's name as the player reads it. `undefined` is the unrefined relic, which needs no label. */
+export const REFINE_LABEL: Record<RefineTier, string> = { small: '小强化', large: '大强化' };
+
+/** What a relic's two slot numbers become once quenched. Exported so the tests can assert it directly. */
+export function refinedPair(main: number, sub: number, refine: RefineTier | undefined): [number, number] {
+  const steps = refineSteps(refine);
+  return [main + steps, sub + steps];
+}
+
+/**
+ * 淬炼文案 — for the relics whose rung is **not** one point.
+ *
+ * Forty-seven of the fifty-two relics scale by exactly +1 per tier (`ctx.n` / `ctx.v`), and their card
+ * faces can say so generically: 「本件印出的每一个数 +1」 is true, checkable, and needs no authoring.
+ * These five cannot say that, because +1 would be meaningless or backwards on them:
+ *
+ *   皮水袋 / 商队账本   the number is a **percentage** — 回血加成 50% + 1% would be invisible
+ *   黄铜手             the number multiplies a fraction, so its rung is ten points of ceiling
+ *   黄铜怀表           the number is a **turn**, and bigger is *later* — this one's rung runs backwards
+ *   熄芯               the thresholds are **fractions**, and 0.25 + 1 would be a condition that is
+ *                      always true, which is a different relic rather than a better one
+ *
+ * `relics.test.ts` enforces the split **behaviourally**: it runs each relic's own handlers at both
+ * tiers and requires that every relic whose numbers do not move by exactly one is listed here, and
+ * that everything listed here really does move by something other than one. A relic that is added to
+ * this table by mistake fails; so does one that needed to be and was forgotten.
+ */
+export const REFINE_TEXT: Record<string, { small: string; large: string }> = {
+  waterskin: {
+    small: '营火回血加成再 +15%。',
+    large: '营火回血加成再 +30%。',
+  },
+  ledger: {
+    small: '战后金币加成再 +15%。',
+    large: '战后金币加成再 +30%。',
+  },
+  'brass-hand': {
+    small: '按已损失生命换算的格挡，上限 +10 点。',
+    large: '按已损失生命换算的格挡，上限 +20 点。',
+  },
+  'brass-watch': {
+    small: '提前一回合：主槽第 4 回合、副槽第 6 回合给能量。',
+    large: '提前两回合：主槽第 3 回合、副槽第 5 回合给能量。',
+  },
+  'dead-wick': {
+    small: '触发线抬高 10%：主槽六成生命、副槽三成半。',
+    large: '触发线抬高 20%：主槽七成生命、副槽四成半。',
+  },
+};
+
 export function relicsOfTier(tier: RelicTier): RelicDefinition[] {
   return RELICS.filter(relic => relic.tier === tier);
 }
