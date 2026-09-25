@@ -19,7 +19,10 @@ import { RARITY_COLOR, RARITY_LABEL, type RewardSpec } from './rewards.ts';
 import { isUpgradable } from './upgrades.ts';
 import { canAfford, outcomeLine, type EventOption, type EventSpec } from './events.ts';
 import { sceneArt, SCENE_BY_KEY } from './scenes.ts';
-import { deckCounts, resolveEvent, type ChapterRun } from './run.ts';
+import { deckCounts, holdsRelic, resolveEvent, type ChapterRun } from './run.ts';
+import { REFINE_LABEL, RELIC_BY_ID } from '../relics/relics.ts';
+import { RelicFace } from '../relics/RelicFace';
+import { refineLines } from './relics.ts';
 import type { NodeKind } from './map.ts';
 import './node.css';
 
@@ -131,6 +134,71 @@ export function CampfireScreen({ run, onPick, audioOn }: {
         onHover={() => sound('hover', audioOn)} onClick={() => onPick('burn')} />
       <NodeChoice label="打磨" tone="#d9bc80" hint="把一张牌磨得更好，本局永久生效"
         onHover={() => sound('hover', audioOn)} onClick={() => onPick('polish')} />
+    </div>
+  </NodeShell>;
+}
+
+// -------------------------------------------------------------------- 淬炼
+
+/**
+ * 淬炼 — the one gamble in the run, played out in the open in two beats.
+ *
+ * **Pick which relic goes in the fire, then watch what comes out.** The second beat is not decoration.
+ * The first version of 打磨's screen closed itself after 660ms with a gold flash and players did not
+ * notice it had happened at all — 「看不见的停顿不是反馈，是延迟」. Here the stake is a relic, so a silent
+ * result is the worst version of that mistake: the player would have to go and read the deck screen to
+ * find out whether they still owned the thing.
+ *
+ * The outcome comes from `run.relicTask.done` and is never re-derived. The run has already applied it
+ * by the time this renders, so there is exactly one place that knows what happened.
+ */
+export function RefineScreen({ run, onPick, onDismiss, audioOn }: {
+  run: ChapterRun; onPick: (relicId: string) => void; onDismiss: () => void; audioOn: boolean;
+}) {
+  const task = run.relicTask!;
+  const done = task.done;
+  const held = (['main', 'sub'] as const).filter(slot => run.relics[slot]);
+
+  if (!done) {
+    return <NodeShell kind="event" scene="rest" kicker="淬炼 · 押上去"
+      title={REFINE_LABEL[task.tier]}
+      footer={`成算 ${task.chance}%。失败的话，那件东西就没了。`}>
+      <p className="nd-copy">火已经旺了。挑一件放进——<b>它可能回不来</b>。</p>
+      <div className="nd-choices">
+        {held.map(slot => {
+          const relic = RELIC_BY_ID.get(run.relics[slot]!)!;
+          return <NodeChoice key={slot} label={relic.name} tone="#e08a52"
+            hint={`${slot === 'main' ? '主槽' : '副槽'} · ${relic.text}`}
+            onHover={() => sound('hover', audioOn)} onClick={() => onPick(relic.id)} />;
+        })}
+      </div>
+    </NodeShell>;
+  }
+
+  const relic = RELIC_BY_ID.get(done.relicId)!;
+  // From `done`, not from the run: on a failure the relic is already gone and `run.relics` no longer
+  // names it, so looking it up here reported 副槽 for a relic that had been in 主槽. See `done.slot`.
+  const slot = done.slot;
+  // Failure means the relic is gone; there is no face left to show, so the frame keeps the name and
+  // the empty slot underneath. Success shows the same card it always was, with the gold strip on it.
+  return <NodeShell kind="event" scene="rest" kicker="淬炼 · 出火" title={done.won ? '成了' : '碎了'}
+    actions={<button className="nd-primary" onPointerEnter={() => sound('hover', audioOn)}
+      onClick={() => { sound('bell', audioOn); onDismiss(); }}>继续</button>}
+    footer={done.won ? `${relic.name} · 已淬炼` : `${relic.name} 不在了`}>
+    <p className="nd-copy nd-outcome">
+      {done.won
+        ? '它从火里出来的时候还是热的，但比进去的时候沉了一点。'
+        : '你听见一声很脆的响。捞出来的只有几块认不出是什么的碎片。'}
+    </p>
+    <div className={`nd-quench ${done.won ? 'is-won' : 'is-lost'}`}>
+      {done.won
+        ? <div className="nd-quench-card"><RelicFace relic={relic}
+            refine={{ tier: task.tier, lines: refineLines(relic.id, slot, task.tier) }} /></div>
+        : <div className="nd-quench-ghost">
+          <span className="nd-quench-name">{relic.name}</span>
+          <span className="nd-quench-slot">{slot === 'main' ? '主槽' : '副槽'} 空了</span>
+        </div>}
+      <span className="nd-quench-flash" aria-hidden="true" />
     </div>
   </NodeShell>;
 }

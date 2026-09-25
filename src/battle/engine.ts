@@ -92,7 +92,9 @@ const ECHO_WALL = { name: '残壁', cost: 1, text: '获得 3 点格挡。', tag:
 const OFF_DECK_CARDS: Record<string, {
   name: string; cost: number; text: string; tag?: string; accent?: string;
 }> = {
-  ash: JUNK.ash,
+  // Every card that is not in the library, by id. `isJunkId` below is the single answer to 「is this
+  // junk」, so a new hazard added to `JUNK` reaches the name/cost/text lookups and 灰烬瓮 together.
+  ...JUNK,
   [OATH.id]: OATH,
   'echo-01': ECHO_WALL,
 };
@@ -557,11 +559,20 @@ function fireRelics(s: BattleState, trigger: RelicTrigger, extra: Partial<RelicC
 
 /** 灰烬瓮 — takes the junk an enemy put in your deck back out of it. Never touches `exhaust`. */
 function purgeJunk(s: BattleState): number {
-  const junk = (cards: BattleCard[]) => cards.filter(card => card.cardId === 'ash').length;
+  // Every junk id, not just 灰烬. It was `=== 'ash'`, so 灰烬瓮 quietly ignored the hazards a 奇遇 had
+  // charged the player for — a relic that says 「收走牌堆里的异物」 and then leaves two of them.
+  const junk = (cards: BattleCard[]) => cards.filter(card => isJunkId(card.cardId)).length;
   const before = junk(s.hand) + junk(s.draw);
-  s.hand = s.hand.filter(card => card.cardId !== 'ash');
-  s.draw = s.draw.filter(card => card.cardId !== 'ash');
+  s.hand = s.hand.filter(card => !isJunkId(card.cardId));
+  s.draw = s.draw.filter(card => !isJunkId(card.cardId));
   return before;
+}
+
+/** Junk by id: the cards an enemy shoves in and the hazards a 奇遇 hands over. One predicate, so the
+ *  two lists cannot drift — 灰烬瓮, the deck screen and the run's validator all ask this. */
+const JUNK_IDS = new Set(Object.keys(JUNK));
+export function isJunkId(cardId: string): boolean {
+  return JUNK_IDS.has(cardId);
 }
 
 /** Drops `count` cards at random out of hand. Removed from the back so indices stay valid. */

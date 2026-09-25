@@ -24,9 +24,10 @@ import {
 import { ALL_ENCOUNTERS, POOLS } from './enemies.ts';
 import { generateMap } from './map.ts';
 import {
-  HEAL_MAX, HEAL_MIN, RUN_ENCOUNTERS, addCard, battleSeed, canEnter, canEnterNode, currentEncounter, deckFor,
-  encounterFor, enterNode, finishBattle, healRoll, nextChoices, removeCard, restHeal, spendGold, upgradeCard,
-  isChapterCleared, isValidRun, newRun, swapDecks, type ChapterRun,
+  HEAL_MAX, HEAL_MIN, RUN_ENCOUNTERS, addCard, answerRefine, battleSeed, canEnter, canEnterNode,
+  currentEncounter, deckFor, dismissRefine, encounterFor, enterNode, finishBattle, healRoll, holdsRelic,
+  isValidRun, newRun, nextChoices, removeCard, restHeal, spendGold, swapDecks, upgradeCard,
+  isChapterCleared, type ChapterRun,
 } from './run.ts';
 
 /** The decks chapter I hands out. Three since 燎原余烬 joined — the middle link of the cycle. */
@@ -597,4 +598,75 @@ test('第一章的三副牌都能当主牌组，别的不能', () => {
   // cheapest card costs 1 — see the note on `CHAPTER_1.unlocked.bone`.
   assert.equal(starterDeck('blade').length, 22);
   assert.equal(starterDeck('bone').length, 28);
+});
+
+// ---------------------------------------------------------------------- 淬炼
+
+/**
+ * A run standing in front of the fire with one relic on it and the bet already named.
+ *
+ * **Seven rolls are spent before the bet**, because a 淬炼 never meets the stream's first value: 回血,
+ * 遗物抽取, 战斗生成 and the card offers all come off the same stream, and by the time the player is
+ * deep enough in the tower to meet a 奇遇 the run has drawn from it many times. It also matters
+ * mechanically — the LCG is seeded with the run seed itself, so its *first* output for seeds 1–60 all
+ * land on the same side of 50%, and a test that rolled the first value would find only one outcome
+ * and conclude the gamble was fake.
+ */
+function atTheFire(seed: number, chance: number, tier: 'small' | 'large' = 'small'): ChapterRun {
+  let run: ChapterRun = { ...newRun('blade', 'bone', seed), relics: { main: 'iron-nail' } };
+  for (let i = 0; i < 7; i++) run = healRoll(run).run;
+  return { ...run, relicTask: { tier, chance } };
+}
+
+test('淬炼：成算 100 一定成、成算 0 一定碎，而且结果真的落到遗物上', () => {
+  const won = answerRefine(atTheFire(3, 100), 'iron-nail');
+  assert.equal(won.refined?.['iron-nail'], 'small', '成了却没记下档位');
+  assert.equal(holdsRelic(won, 'iron-nail'), true, '成了遗物却不见了');
+  // 结果留在 `relicTask.done` 上，屏幕靠着它渲染——它必须在 `relicTask` 清掉之前一直活着。
+  assert.equal(won.relicTask?.done?.won, true, '结果没写进 relicTask，结果屏就没得可显示');
+  assert.equal(dismissRefine(won).relicTask, undefined, '继续之后这一层还没结束');
+
+  const lost = answerRefine(atTheFire(3, 0), 'iron-nail');
+  assert.equal(holdsRelic(lost, 'iron-nail'), false, '碎了却还在身上');
+  assert.equal(lost.refined, undefined, '碎掉的东西不该留着淬炼档位');
+  assert.equal(lost.relicTask?.done?.won, false);
+});
+
+test('淬炼：同种子重放一样，不同种子两种结果都出得来', () => {
+  // 赌局走的是 run 自己的流，所以一整局仍然由一个种子完整重放——和回血同一条规矩。
+  const wins = new Set<boolean>();
+  for (let seed = 1; seed <= 60; seed++) {
+    const a = answerRefine(atTheFire(seed, 50), 'iron-nail');
+    const b = answerRefine(atTheFire(seed, 50), 'iron-nail');
+    assert.equal(a.refined?.['iron-nail'] ?? '碎', b.refined?.['iron-nail'] ?? '碎',
+      `种子 ${seed}：同一注掷出了两个结果`);
+    wins.add(a.relicTask?.done?.won === true);
+  }
+  assert.deepEqual([...wins].sort(), [false, true], '成算 50% 只出一种结果，那这个赌局是假的');
+});
+
+test('淬炼：赌完之后不能重复掷，不能拿不在身上的东西去淬', () => {
+  const rolled = answerRefine(atTheFire(9, 50), 'iron-nail');
+  const again = answerRefine(rolled, 'iron-nail');
+  assert.equal(again, rolled, '同一注被掷了第二次——结果会因为点两下而改变');
+  // 一件不在身上的遗物：淬炼会把它「变强」，而玩家根本看不到它。
+  const stranger = answerRefine(atTheFire(9, 100), 'whetstone');
+  assert.equal(stranger.refined, undefined, '拿不在身上的遗物去淬炼居然成功了');
+});
+
+test('淬炼：等着被裁决的存档必须能过校验，而且结果与遗物状态一致', () => {
+  const pending = atTheFire(11, 70);
+  assert.equal(isValidRun(pending), true, '开着淬炼的存档被丢掉了——刷新一下玩家就没了这一注');
+  const rolled = answerRefine(pending, 'iron-nail');
+  assert.equal(isValidRun(rolled), true, '结果屏上的存档过不了校验，刷新会丢掉整局');
+  // 输了那一份也要合法——**两个槽都空着正是「碎了」留下的状态**，而结果屏还挂在上面。
+  const lost = answerRefine(atTheFire(11, 0), 'iron-nail');
+  assert.equal(lost.relics.main, undefined);
+  assert.equal(isValidRun(lost), true, '碎掉之后的存档被丢掉了——刷新一下玩家就没了');
+
+  // `done.won` 与遗物的实际状态必须对得上：一份说「成了」而遗物已经不在的存档会让结果屏说谎。
+  const guaranteed = answerRefine(atTheFire(11, 100), 'iron-nail');
+  assert.equal(guaranteed.relicTask?.done?.won, true);
+  assert.equal(isValidRun({ ...guaranteed, relics: {}, refined: undefined }), false,
+    '一份「说成了但遗物没了」的存档被放行了');
 });

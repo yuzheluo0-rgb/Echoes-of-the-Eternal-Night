@@ -39,9 +39,20 @@ function lcg(seed: number) {
  */
 const GAINING: EventEffect['kind'][] = ['gold', 'hp', 'maxHp', 'relic', 'remove', 'polish', 'duplicate', 'cards', 'nothing'];
 
+/**
+ * The kinds that never leave the player better off, and cannot be a gain.
+ *
+ * 隐患 is a card you did not want, and 淬炼 is a coin flip whose stake **is** the relic — it can end
+ * with fewer things than you started with, which is the opposite of a gain. Both are listed in
+ * `hasPrice` below, and that is what stops them reading as free: an option that can only ever cost is
+ * still a price, and the label has to say so.
+ */
+const COSTLY: EventEffect['kind'][] = ['refine', 'junk'];
+
 /** Does taking this option leave the player better off, in a way the run can actually count? */
 function isGain(effect: EventEffect): boolean {
   if (effect.kind === 'nothing') return false;         // costs nothing, gains nothing — not a gain
+  if (COSTLY.includes(effect.kind)) return false;
   if (effect.kind === 'gold' || effect.kind === 'hp' || effect.kind === 'maxHp') return effect.amount > 0;
   return GAINING.includes(effect.kind);
 }
@@ -54,8 +65,14 @@ function isGain(effect: EventEffect): boolean {
  */
 function hasPrice(option: (typeof EVENTS)[number]['options'][number]): boolean {
   const needs = option.requires;
-  if (needs && ((needs.gold ?? 0) > 0 || (needs.hp ?? 0) > 0)) return true;
+  // `relic` is a price too — it is the thing 淬炼 puts on the table.
+  if (needs && ((needs.gold ?? 0) > 0 || (needs.hp ?? 0) > 0 || needs.relic)) return true;
   const effect = option.effect;
+  // A hazard card is a cost paid over every shuffle for the rest of the run, and a 淬炼 stakes the
+  // relic itself. Neither is visible to a check that only knows about gold and 生命, and without them
+  // 「淬火石」 fits none of the three labels — the table would have had a floor it could not describe.
+  if (effect.kind === 'junk') return true;
+  if (effect.kind === 'refine') return true;
   return (effect.kind === 'hp' || effect.kind === 'maxHp') && effect.amount < 0;
 }
 
@@ -76,6 +93,8 @@ const SAMPLE: Record<EventEffect['kind'], EventEffect> = {
   polish: { kind: 'polish' },
   duplicate: { kind: 'duplicate' },
   cards: { kind: 'cards', count: 3 },
+  refine: { kind: 'refine', tier: 'small', chance: 80 },
+  junk: { kind: 'junk', cardId: 'dross' },
   nothing: { kind: 'nothing' },
 };
 
@@ -102,8 +121,8 @@ test('每一种效果都说得出来，而且印的是它自己的数字', () =>
     assert.ok(described.trim().length >= 2, `${kind} 描述不出来：${JSON.stringify(described)}`);
   }
   assert.equal(new Set(Object.keys(SAMPLE)).size, Object.keys(SAMPLE).length, 'SAMPLE 里不能有重复');
-  assert.deepEqual(Object.keys(SAMPLE).sort(), [...GAINING].sort(),
-    'SAMPLE 与 GAINING 必须覆盖同一组 kind —— 加了新效果要同时登记这两处');
+  assert.deepEqual(Object.keys(SAMPLE).sort(), [...GAINING, ...COSTLY].sort(),
+    'SAMPLE 与 GAINING + COSTLY 必须覆盖同一组 kind —— 加了新效果要同时登记这两处');
 
   for (const event of EVENTS) {
     for (const option of event.options) {
@@ -159,11 +178,19 @@ test('奇遇表：每个选项的文案都写完了，不会漏字', () => {
       assert.ok(option.outcome.trim().length >= 8, `${event.id} / ${option.label}：outcome 太短`);
 
       // A count of zero or a negative "you gain" would print as nonsense on the outcome line.
+      // Written as a **positive** list of the kinds that carry an `amount`, not as a list of the ones
+      // that do not: the negative form silently skipped `refine` the moment it was added, which is
+      // exactly how a check stops checking without anyone noticing.
       const effect = option.effect;
       if (effect.kind === 'cards') assert.ok(effect.count > 0, `${event.id}：抽 ${effect.count} 张牌`);
-      if (effect.kind !== 'cards' && effect.kind !== 'relic' && effect.kind !== 'remove'
-        && effect.kind !== 'polish' && effect.kind !== 'duplicate' && effect.kind !== 'nothing') {
+      if (effect.kind === 'gold' || effect.kind === 'hp' || effect.kind === 'maxHp') {
         assert.notEqual(effect.amount, 0, `${event.id} / ${option.label}：+0 是个不存在的效果`);
+      }
+      // A gamble has to be a gamble: 0% is a punishment dressed as a choice and 100% is a free upgrade
+      // printed with a scary number next to it.
+      if (effect.kind === 'refine') {
+        assert.ok(effect.chance > 0 && effect.chance < 100,
+          `${event.id} / ${option.label}：${effect.chance}% 不是一次赌`);
       }
       if (option.requires?.hp !== undefined) {
         assert.ok(option.requires.hp > 0, `${event.id}：生命代价要写成正数，它不是治疗`);
@@ -210,16 +237,23 @@ test('canAfford：刚好够能付，差一点就不能', () => {
       const needs = option.requires ?? {};
       const gold = needs.gold ?? 0;
       const hp = needs.hp ?? 0;
-      // Comfortably above every requirement: always affordable.
-      assert.equal(canAfford(option, gold + 500, hp + 500), true, `${event.id} / ${option.label}`);
+      // Comfortably above every requirement: always affordable. `relics` is passed as 2 — the run can
+      // carry at most two, so that is "comfortably above" for a 淬炼 option too.
+      assert.equal(canAfford(option, gold + 500, hp + 500, 2), true, `${event.id} / ${option.label}`);
+      // 淬炼 with an empty pair of slots opens a picker with nothing in it, so the option is refused
+      // rather than shown as a live button.
+      if (needs.relic) {
+        assert.equal(canAfford(option, gold + 500, hp + 500, 0), false, `${event.id}：身上没有遗物却能淬炼`);
+        assert.equal(canAfford(option, gold + 500, hp + 500, 1), true, `${event.id}：只有一件遗物时应当可以淬炼`);
+      }
       if (gold > 0) {
-        assert.equal(canAfford(option, gold, hp + 500), true, `${event.id}：金币刚好够却被挡住`);
-        assert.equal(canAfford(option, gold - 1, hp + 500), false, `${event.id}：金币不够却能选`);
+        assert.equal(canAfford(option, gold, hp + 500, 2), true, `${event.id}：金币刚好够却被挡住`);
+        assert.equal(canAfford(option, gold - 1, hp + 500, 2), false, `${event.id}：金币不够却能选`);
       }
       if (hp > 0) {
         // Strictly greater, and this is the line that keeps an event from ever being lethal.
-        assert.equal(canAfford(option, gold + 500, hp + 1), true, `${event.id}：付完还剩 1 点血，应当允许`);
-        assert.equal(canAfford(option, gold + 500, hp), false,
+        assert.equal(canAfford(option, gold + 500, hp + 1, 2), true, `${event.id}：付完还剩 1 点血，应当允许`);
+        assert.equal(canAfford(option, gold + 500, hp, 2), false,
           `${event.id}：付完正好 0 血，必须挡住——奇遇不能是杀死玩家的东西`);
       }
     }

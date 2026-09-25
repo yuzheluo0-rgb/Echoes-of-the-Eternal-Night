@@ -22,6 +22,14 @@
  * were already out there rather than as a separate fiction bolted on.
  */
 
+import { REFINE_LABEL, type RefineTier } from '../relics/relics.ts';
+import { JUNK, isHazard } from './enemies.ts';
+
+/** The printed name of a hazard, for the line that says what an option cost you. */
+function hazardName(cardId: string): string {
+  return isHazard(cardId) ? JUNK[cardId].name : cardId;
+}
+
 export type EventEffect =
   /** Coin, positive or negative. */
   | { kind: 'gold'; amount: number }
@@ -39,6 +47,26 @@ export type EventEffect =
   | { kind: 'duplicate' }
   /** Three cards, take one. */
   | { kind: 'cards'; count: number }
+  /**
+   * 淬炼 one of the relics you are carrying — **and the relic can be destroyed by it**.
+   *
+   * The only effect in the table with a chance of going wrong, which is why it is its own kind rather
+   * than a rider on `relic`. Everything else here is a price you can read before you pay; this one is
+   * a price you *might* pay. `chance` is a percentage, and it is on the option rather than in the
+   * engine so the two tiers can be visibly, readably different bets.
+   *
+   * The relic itself is chosen by the player afterwards (see `ChapterRun.relicTask`), because with two
+   * slots there is a real decision about which one to risk and the event has no way to know it.
+   */
+  | { kind: 'refine'; tier: RefineTier; chance: number }
+  /**
+   * A **hazard** card forced into the deck: 「你拿走了它，它也跟着你走」.
+   *
+   * The only effect whose payoff is a *cost*, and it lives on the option that also pays well — an
+   * option with nothing but this on it is just a worse `nothing`. It is what makes 「换一条更近的路」
+   * a real question: the shortcut is real, and so is what you picked up on it.
+   */
+  | { kind: 'junk'; cardId: string; with?: EventEffect }
   /** Nothing at all, which is sometimes the right answer. */
   | { kind: 'nothing' };
 
@@ -49,8 +77,13 @@ export interface EventOption {
   hint: string;
   /** The line printed once it resolves. */
   outcome: string;
-  /** A cost that must be payable, or the option is disabled. Absent means always available. */
-  requires?: { gold?: number; hp?: number };
+  /**
+   * A cost that must be payable, or the option is disabled. Absent means always available.
+   *
+   * `relic` is not a cost but the same thing operationally: 淬炼 needs something to quench, and an
+   * option that opens a picker with nothing in it reads as a broken button rather than as an answer.
+   */
+  requires?: { gold?: number; hp?: number; relic?: boolean };
   effect: EventEffect;
 }
 
@@ -88,6 +121,16 @@ const polish = (): EventEffect => ({ kind: 'polish' });
 const copy = (): EventEffect => ({ kind: 'duplicate' });
 const cards = (count: number): EventEffect => ({ kind: 'cards', count });
 const nothing = (): EventEffect => ({ kind: 'nothing' });
+const quench = (tier: RefineTier, chance: number): EventEffect => ({ kind: 'refine', tier, chance });
+/**
+ * A hazard, forced on you as the price of something else.
+ *
+ * `with` is not decoration: a hazard **on its own is never worth an option** — it would be a strictly
+ * worse `nothing`, and 「白跑一趟」 is already the thing `lean:'loss'` exists for. The card is the price
+ * of the payoff beside it, which is what makes 「近路」 a question worth asking.
+ */
+const jinx = (cardId: string, with_?: EventEffect): EventEffect =>
+  ({ kind: 'junk', cardId, with: with_ });
 
 export const EVENTS: EventSpec[] = [
   // ---------------------------------------------------------------- the caravan
@@ -341,6 +384,62 @@ export const EVENTS: EventSpec[] = [
       { label: '买他一角纸', hint: '他不收钱，只收东西。', outcome: '你把随身的干粮推过去。他挑了一角撕下来，上面画着一条你没见过的路。', requires: { gold: 35 }, effect: relic() },
     ],
   },
+
+  // ------------------------------------------------------------- the fire again
+  // 淬炼. The only thing in the table that can **take something away and give nothing back** — which is
+  // why the odds are printed on the option: a gamble the player cannot price is not a decision.
+  {
+    id: 'quench-stone', name: '淬火石',
+    blurb: '一块烧得发白的石头半埋在土里，周围的草早就焦了。靠近时，你带着的东西开始发烫。',
+    lean: 'loss',
+    options: [
+      { label: '把它贴上去，慢慢来', hint: '火候小，成算大。', outcome: '你把东西按在石头上，等了很久。它慢慢红起来，但一直没有裂。', requires: { relic: true }, effect: quench('small', 78) },
+      { label: '架到最烫的那一面', hint: '出来要么更好，要么没有。', outcome: '石头白得刺眼。你听见一声很细的响，像冰在裂——但还没断。', requires: { relic: true }, effect: quench('large', 45) },
+      { label: '把土推回去', hint: '不该由你动它。', outcome: '你用脚把土踩实。走出去很远，手心还是烫的。', effect: nothing() },
+    ],
+  },
+  {
+    id: 'cold-anvil', name: '冷铁砧',
+    blurb: '一个铁砧立在路边，砧面是凉的，底下却还有没烧透的炭。',
+    lean: 'cost',
+    options: [
+      { label: '扒开炭，把东西搁上去', hint: '费时间，也烫手。', outcome: '你用树枝把炭拨开。砧面慢慢热起来，你的手背起了泡。', requires: { relic: true, hp: 7 }, effect: quench('large', 62) },
+      { label: '敲一块铁下来带走', hint: '卖得掉，但碎屑会跟你一路。', outcome: '你敲下一块。铁屑嵌进衣服里，怎么拍都拍不干净，往后一路都在硌你。', effect: jinx('ballast', gold(75)) },
+      { label: '绕过去', hint: '砧子不是给你用的。', outcome: '你从旁边走过去。走了一段才想起来，一路上没听见有人打铁。', effect: nothing() },
+    ],
+  },
+
+  // ------------------------------------------------------------- the deck
+  {
+    id: 'burn-pit', name: '焚坑',
+    blurb: '一个方方正正的坑，坑底还有没烧完的东西。有人在这儿按规矩处理过什么。',
+    lean: 'cost',
+    options: [
+      { label: '把自己的东西也丢进去', hint: '轻一点走路。', outcome: '你把一张牌扔进坑里。它烧得很快，像是早就想走了。', effect: burn() },
+      { label: '把没烧完的捞出来', hint: '烫，而且不知道是什么。', outcome: '你捞出一张边角焦掉的牌。手指上留下一道印子，很久没消。', requires: { hp: 5 }, effect: cards(3) },
+      { label: '在坑边站一会儿', hint: '有人在这儿站过很久。', outcome: '你站着看火。火很小，但一直没灭。起身的时候腿麻了。', effect: nothing() },
+    ],
+  },
+  {
+    id: 'same-face', name: '一模一样的两张',
+    blurb: '地上并排摆着两张完全一样的牌，摆得很齐，像是特意给谁看的。',
+    lean: 'gain',
+    options: [
+      { label: '照着自己已有的做一张', hint: '同样的东西，再要一份。', outcome: '你把手上的一张和地上的并在一起对。它们严丝合缝，像本来就是一张。', effect: copy() },
+      { label: '把地上那张也拿走', hint: '放着也是放着。', outcome: '你把它收进怀里。走了很远才发现，它比看上去沉得多。', requires: { hp: 6 }, effect: gold(85) },
+      { label: '从两张中间跨过去', hint: '摆得太整齐了。', outcome: '你一步跨了过去，没有踩到。之后一路都很安静。', effect: nothing() },
+    ],
+  },
+  {
+    id: 'shortcut', name: '近路',
+    blurb: '一条踩出来的小路斜插过草甸，比大路近得多。路上有几处被踩塌的地方。',
+    lean: 'cost',
+    options: [
+      { label: '走小路', hint: '近。路上有什么不好说。', outcome: '你抄了近路，省下大半天。走到一半时，脚踝上多了一圈灰，拍不掉。', effect: jinx('dross', gold(70)) },
+      { label: '先把拖累的东西留在路边', hint: '轻装才走得快。', outcome: '你把一张牌用石头压住，留在路边。走出去很远，还在想它。', requires: { hp: 4 }, effect: burn() },
+      { label: '还是走大路', hint: '慢一点。', outcome: '你沿着大路走，多花了半天。路上什么也没发生。', effect: nothing() },
+    ],
+  },
 ];
 
 export const EVENT_BY_ID = new Map(EVENTS.map(event => [event.id, event]));
@@ -357,11 +456,12 @@ export const EVENT_BY_ID = new Map(EVENTS.map(event => [event.id, event]));
  * Callers pass `run.hp` / `run.maxHp` as they stand *before* the cost, which is also what the run
  * pays against — both sides of the deal read the same number.
  */
-export function canAfford(option: EventOption, gold: number, hp: number): boolean {
+export function canAfford(option: EventOption, gold: number, hp: number, relics = 0): boolean {
   const needs = option.requires;
   if (!needs) return true;
   if (needs.gold !== undefined && gold < needs.gold) return false;
   if (needs.hp !== undefined && hp <= needs.hp) return false;
+  if (needs.relic && relics < 1) return false;
   return true;
 }
 
@@ -393,6 +493,13 @@ export function describeEffect(effect: EventEffect): string {
     case 'polish': return '打磨牌组里的一张牌';
     case 'duplicate': return '复制牌组里的一张牌';
     case 'cards': return `从 ${effect.count} 张牌里挑一张`;
+    // The odds are printed. A gamble the player cannot price is not a decision, and this is the only
+    // option in the table where the stake is not knowable from the label.
+    case 'refine': return `${REFINE_LABEL[effect.tier]}一件遗物 · ${effect.chance}% 成功，失败则碎`;
+    case 'junk': {
+      const cost = `牌组里多一张「${hazardName(effect.cardId)}」`;
+      return effect.with ? `${describeEffect(effect.with)} · ${cost}` : cost;
+    }
     // Not an empty string. 「你换了一条路」 reads as an outcome, and the player is owed the plain
     // fact that it left them nothing — a blank line here would be the same silence this fixes.
     case 'nothing': return '没有收获';

@@ -46,12 +46,13 @@ import {
 } from '../relics/unlocks.ts';
 import { creditAndSave, earnedCards, unlocksFor } from './cardUnlocks.ts';
 import {
-  canEnterNode, campfire, chooseCard, claimRelic, claimReward, deckFor, discardRelic, dismissCard, enterNode, repairCard,
+  answerRefine, canEnterNode, campfire, chooseCard, claimRelic, claimReward, deckFor, discardRelic,
+  dismissCard, dismissRefine, enterNode, repairCard,
   nodeAt, offerDraw, resolveEvent, rollOffer, rollPendingReward, swapRelics,
 } from './run.ts';
 import { REWARD_BY_ID } from './rewards.ts';
 import { eventForNode, type EventOption } from './events.ts';
-import { CampfireScreen, CardPicker, EventScreen, RewardScreen, type CampfirePick } from './NodeScreen.tsx';
+import { CampfireScreen, CardPicker, EventScreen, RefineScreen, RewardScreen, type CampfirePick } from './NodeScreen.tsx';
 import { ALL_ENCOUNTERS, ENCOUNTER_BY_ID } from './enemies.ts';
 import { BOSS_ROW } from './map.ts';
 import TowerMapView from './TowerMap.tsx';
@@ -594,7 +595,8 @@ export default function BattleDemo() {
     // `maxHp` goes in with the HP: the run's ceiling is the fight's ceiling. Without it every
     // 「生命上限 +N」 the player had earned was silently reset to 60 the moment a battle began.
     const fresh = startBattle(encounterId, next.main, battleSeed(next, encounterId),
-      { hp: next.hp, maxHp: next.maxHp, sub: next.sub, relics: next.relics, cards: deckFor('r', next) });
+      { hp: next.hp, maxHp: next.maxHp, sub: next.sub, relics: next.relics, refined: next.refined,
+        cards: deckFor('r', next) });
     resetFx();
     setState(fresh);
     setOutcome(null);
@@ -695,6 +697,23 @@ export default function BattleDemo() {
       ? repairCard(run, index)
       : chooseCard(run, index);
     saveRun(next); setRun(next);
+  }
+
+  /**
+   * Put one relic in the fire. **This is where the gamble lands** — `answerRefine` rolls off the run's
+   * own stream and either lifts the relic's numbers or destroys it.
+   *
+   * Like 打磨, the run is changed *without* clearing `relicTask`, so the reveal screen stays mounted to
+   * show what happened; `dismissRefine`, from its 继续, is what closes it.
+   */
+  function putRelicInFire(relicId: string) {
+    if (!run) return;
+    const next = answerRefine(run, relicId);
+    if (next === run) return;
+    saveRun(next); setRun(next);
+    // 成了 gets the bell; 碎了 gets the same sound an enemy makes when it comes apart, which is the
+    // closest thing the set has to a shatter.
+    sound(next.relicTask?.done?.won ? 'bell' : 'death', audioOn);
   }
 
   /** Swap which half of the locked pair leads. The only deck decision a run allows after it starts. */
@@ -884,6 +903,13 @@ export default function BattleDemo() {
   // --- the screens that take the whole frame, in the order they can be outstanding ----------------
   // A card choice is the tail of a reward, so it comes first; the reward it came from is already
   // spent by then. Then the reward itself, then the relic draw, then the floor's own question.
+  // 淬炼 comes first: it is the tail of a 奇遇, and the floor's own screen must not come back while the
+  // reveal is still on it.
+  if (run.relicTask) {
+    return <RefineScreen run={run} onPick={putRelicInFire}
+      onDismiss={() => { const next = dismissRefine(run); saveRun(next); setRun(next); }}
+      audioOn={audioOn} />;
+  }
   if (run.cardTask) {
     return <CardPicker task={run.cardTask} run={run} options={run.cardOptions ?? []}
       onChoose={index => answerCard(index)}

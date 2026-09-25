@@ -30,9 +30,9 @@ import type { RefineTier } from './relics.ts';
 import { generateMap, reachableFrom, type MapNode, type TowerMap } from './map.ts';
 import { isUpgradable } from './upgrades.ts';
 import { REWARD_BY_ID, rollReward, rewardCardPool } from './rewards.ts';
-import type { EventOption } from './events.ts';
+import type { EventEffect, EventOption } from './events.ts';
 import { SUB_SLOT_CHANCE, offerRelics } from './relicDraw.ts';
-import { PLAYER_MAX_HP, relicModifier, type BattleCard, type BattleState } from './engine.ts';
+import { PLAYER_MAX_HP, isJunkId, relicModifier, type BattleCard, type BattleState } from './engine.ts';
 import { ALL_ENCOUNTERS, ENCOUNTERS, POOLS, type Encounter } from './enemies.ts';
 
 /** One card in the run's deck. `upgraded` is per copy, so a run can hold a polished 割线 and a plain
@@ -130,6 +130,36 @@ export interface ChapterRun {
   cardTask?: 'pick' | 'remove' | 'polish' | 'duplicate';
   /** The cards a `pick` task is offering. */
   cardOptions?: string[];
+  /**
+   * A 淬炼 the player still owes — **which relic** is the decision, so it waits for a pick like
+   * `cardTask` does. The tier and the odds come from the option they chose, so both are carried here
+   * rather than re-read from the event: the event's identity is derived from the node, and a save
+   * reloaded onto a different node must not change what the player bet.
+   */
+  relicTask?: {
+    tier: RefineTier;
+    chance: number;
+    /**
+     * Set once the gamble has landed, and **kept** until the player dismisses the reveal.
+     *
+     * Same split as 打磨's `repairCard` / `dismissCard`, and for the same reason: the dispatcher stops
+     * treating this floor as a 奇遇 the instant `relicTask` clears, so clearing it on the roll would
+     * unmount the result screen on the very frame it has something to show. It doubles as the
+     * idempotence guard — a second `answerRefine` sees `done` and refuses to roll again.
+     */
+    done?: {
+      relicId: string;
+      won: boolean;
+      /**
+       * Which slot it was in **when it went in the fire**.
+       *
+       * Recorded rather than looked up, because the lookup is impossible exactly when it matters: a
+       * failed quench removes the relic, so by the time the reveal renders, `run.relics[slot]` no
+       * longer names it and 「主槽空了」 would have come out as 「副槽空了」 every single time.
+       */
+      slot: 'main' | 'sub';
+    };
+  };
   /** Every node stepped on, in order — the route drawn on the map, and what an upgrade owes to
    *  `cleared` being a chapter fact rather than a route fact. */
   path: string[];
@@ -333,7 +363,14 @@ export function resolveEvent(run: ChapterRun, option: EventOption): ChapterRun {
     gold: paid.gold - (option.requires.gold ?? 0),
     hp: paid.hp - (option.requires.hp ?? 0),
   } : paid;
-  const effect = option.effect;
+  return applyEventEffect(afterCost, option.effect);
+}
+
+/**
+ * The effect half of an event, split out so a `junk`'s companion effect can be applied without running
+ * the cost pass twice — 「拿走 75 金币，但牌组多一张废牌」 is one option with one price.
+ */
+function applyEventEffect(afterCost: ChapterRun, effect: EventEffect): ChapterRun {
   switch (effect.kind) {
     case 'gold': return { ...afterCost, gold: Math.max(0, afterCost.gold + effect.amount) };
     // Floored at 1: an event that kills you is a bug, not a difficulty.
@@ -348,6 +385,15 @@ export function resolveEvent(run: ChapterRun, option: EventOption): ChapterRun {
     case 'remove': return { ...afterCost, cardTask: 'remove' };
     case 'polish': return { ...afterCost, cardTask: 'polish' };
     case 'duplicate': return { ...afterCost, cardTask: 'duplicate' };
+    // The relic is not chosen yet — `relicTask` holds the bet until the player picks which one to put
+    // in the fire. See `answerRefine`.
+    case 'refine': return { ...afterCost, relicTask: { tier: effect.tier, chance: effect.chance } };
+    // A hazard. It goes straight into the deck — no picker, because the whole point is that you did
+    // not choose it. Whatever it came attached to lands after it, so the option's own ledger line
+    // still reads cost-first.
+    case 'junk': return effect.with
+      ? applyEventEffect(addCard(afterCost, effect.cardId), effect.with)
+      : addCard(afterCost, effect.cardId);
     case 'cards': return { ...afterCost, cardTask: 'pick', cardOptions: rollOffers(afterCost, effect.count) };
     case 'nothing': return afterCost;
   }
@@ -520,6 +566,40 @@ export function shatterRelic(run: ChapterRun, relicId: string): ChapterRun {
   const relics = { ...run.relics };
   for (const slot of ['main', 'sub'] as const) if (relics[slot] === relicId) delete relics[slot];
   return { ...run, relics, refined: withoutRefinement(run.refined, relicId) };
+}
+
+/**
+ * Put the chosen relic in the fire. **This is where the gamble lands.**
+ *
+ * The roll comes off the run's own stream, so a run replays to the same outcome — the same reason the
+ * between-fight heal does. It is spent here rather than at `resolveEvent` because the odds are a
+ * property of the *option* and the outcome is a property of the *pick*, and a player who backs out of
+ * the picker must not have burned a roll for it.
+ *
+ * The failure is `shatterRelic`, not `discardRelic`: it takes the relic wherever it is and there is
+ * nothing to put in the slot afterwards. That is the entire price of the bet, and it is why the event
+ * prints the percentage.
+ */
+export function answerRefine(run: ChapterRun, relicId: string): ChapterRun {
+  const task = run.relicTask;
+  if (!task || task.done || !holdsRelic(run, relicId)) return run;
+  const slot = run.relics.main === relicId ? 'main' as const : 'sub' as const;
+  const rolled: ChapterRun = { ...run };
+  const won = nextRandom(rolled) * 100 < task.chance;
+  const applied = won ? refineRelic(rolled, relicId, task.tier) : shatterRelic(rolled, relicId);
+  return { ...applied, relicTask: { ...task, done: { relicId, won, slot } } };
+}
+
+/**
+ * Close the reveal without changing anything.
+ *
+ * Split from `answerRefine` for the same reason `dismissCard` is split from `repairCard`: the result
+ * screen has to stay mounted to show what happened, and it stays mounted for exactly as long as
+ * `relicTask` is set. The run has already taken the outcome by the time this is called.
+ */
+export function dismissRefine(run: ChapterRun): ChapterRun {
+  if (!run.relicTask) return run;
+  return { ...run, relicTask: undefined };
 }
 
 /** Is this relic one of the two the run is carrying? */
@@ -755,7 +835,12 @@ export function isValidRun(value: unknown): value is ChapterRun {
   // The run's own deck. It replaced a per-fight `chapterDeck` call, so a save without one has no
   // deck at all — and every card in it has to be a card that exists.
   if (!Array.isArray(run.deck) || !run.deck.length) return false;
-  if (!run.deck.every(card => card && typeof card.cardId === 'string' && CARD_BY_ID.has(card.cardId)
+  // Junk counts as a card here. A 奇遇 can put a hazard in the deck (`events.ts`'s `junk` effect), and
+  // this check used to accept only library cards — so taking a shortcut would have written a save that
+  // `loadRun` throws away, losing the whole run on the next reload. The deck screen already knows how
+  // to print a card with no `CARD_BY_ID` entry; the validator did not.
+  if (!run.deck.every(card => card && typeof card.cardId === 'string'
+    && (CARD_BY_ID.has(card.cardId) || isJunkId(card.cardId))
     && (card.upgraded === undefined || typeof card.upgraded === 'boolean'))) return false;
   if (!run.relics || typeof run.relics !== 'object') return false;
   for (const id of [run.relics.main, run.relics.sub]) {
@@ -789,6 +874,29 @@ export function isValidRun(value: unknown): value is ChapterRun {
   if (run.resolved !== undefined && typeof run.resolved !== 'string') return false;
   if (run.pendingReward !== undefined && !REWARD_BY_ID.has(run.pendingReward)) return false;
   if (run.cardTask !== undefined && !['pick', 'remove', 'polish', 'duplicate'].includes(run.cardTask)) return false;
+  if (run.relicTask !== undefined) {
+    const task = run.relicTask;
+    if (!task || (task.tier !== 'small' && task.tier !== 'large')) return false;
+    if (!Number.isInteger(task.chance) || task.chance < 0 || task.chance > 100) return false;
+    if (task.done !== undefined) {
+      // The reveal is on screen: the outcome has already been applied, so a save reloaded here must
+      // find the relic in the state the roll left it. `won` and the relic have to agree.
+      if (typeof task.done.won !== 'boolean' || typeof task.done.relicId !== 'string') return false;
+      if (task.done.slot !== 'main' && task.done.slot !== 'sub') return false;
+      if (!RELIC_BY_ID.has(task.done.relicId)) return false;
+      const isRefined = run.refined?.[task.done.relicId] !== undefined;
+      const stillHeld = run.relics.main === task.done.relicId || run.relics.sub === task.done.relicId;
+      if (task.done.won !== (isRefined && stillHeld)) return false;
+    }
+    // A 淬炼 with nothing to quench would open a picker with no cards in it. Unreachable through the
+    // UI (`requires.relic` gates the option), which is exactly why it is worth refusing here.
+    //
+    // ⚠️ **Only while the bet is still open.** Once `done` is set, an empty pair of slots is the
+    // *expected* state — it is what 碎了 leaves behind, and the reveal screen is still mounted on it.
+    // Checking it unconditionally rejected exactly the save the player was looking at, so a refresh
+    // there threw the whole run away.
+    if (!task.done && !run.relics.main && !run.relics.sub) return false;
+  }
   if (run.cardOptions !== undefined) {
     if (!Array.isArray(run.cardOptions) || !run.cardOptions.length) return false;
     if (!run.cardOptions.every(id => typeof id === 'string' && CARD_BY_ID.has(id))) return false;

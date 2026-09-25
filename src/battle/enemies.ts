@@ -169,7 +169,30 @@ export const MUTATION_CHANCE = .12;
 export const ENEMY_BY_ID = new Map(ENEMIES.map(enemy => [enemy.id, enemy]));
 
 /** Junk card enemies can force into your deck: no effect, and it clogs a draw. */
-export const JUNK = { ash: { name: '灰烬', cost: 1, text: '什么也不做。' } } as const;
+/**
+ * Cards that are not in the library: the junk shoved into your deck, and the hazards you pick up.
+ *
+ * They are all the same shape — a cost, and nothing to show for it — because that *is* the penalty.
+ * A dead card is the most honest cost this game charges: it does not delete 生命 you might have
+ * needed, it takes a slot in a 30-card deck and a card in a five-card hand, and its price is paid
+ * every single shuffle for the rest of the run.
+ *
+ * The three hazards differ by **what they cost to be rid of**, not by what they do. 渣滓 is free to
+ * draw and dead; 空话 costs two, which is enough to make you think about playing it and be wrong.
+ */
+export const JUNK = {
+  ash: { name: '灰烬', cost: 1, text: '什么也不做。' },
+  dross: { name: '渣滓', cost: 0, text: '什么也不做。它只是占着那个位置。' },
+  ballast: { name: '压舱石', cost: 1, text: '什么也不做。你背着它走了一路。' },
+  'hollow-word': { name: '空话', cost: 2, text: '什么也不做。说这话的人已经不在了。' },
+} as const;
+
+/** The hazards a 奇遇 can hand you, by id — see `events.ts`'s `junk` effect. Not `ash`, which only
+ *  an enemy ever gives you. */
+export type HazardId = 'dross' | 'ballast' | 'hollow-word';
+export const HAZARD_IDS: HazardId[] = ['dross', 'ballast', 'hollow-word'];
+export const isHazard = (cardId: string): cardId is HazardId =>
+  (HAZARD_IDS as string[]).includes(cardId);
 
 /** The boss's card. It is genuinely good for you, and every copy you play heals the boss. */
 export const OATH = { id: 'oath', name: '未熄的誓言', cost: 0, text: '获得 3 层余烬，抽 1 张牌。打出时，守望者回复 6 点生命并获得 1 点力量。' } as const;
