@@ -576,12 +576,21 @@ export function isJunkId(cardId: string): boolean {
 }
 
 /** Drops `count` cards at random out of hand. Removed from the back so indices stay valid. */
-function discardRandom(s: BattleState, count: number) {
+/**
+ * Drops `count` cards out of hand at random.
+ *
+ * ⚠️ **`label` is who did it, and it used to be hardcoded to 「遗物」.** It was written for the two
+ * relics that make you discard (蜡头's lesser slot, 绳结's), and 砺石 later became the first *card*
+ * to call it — so playing 砺石 printed 「遗物 · 弃掉「楔石」。」 with no relic involved anywhere. The
+ * one line a player reads to find out what a card did was naming the wrong thing, and the card reads
+ * as broken even though it worked.
+ */
+function discardRandom(s: BattleState, count: number, label = '遗物') {
   const picks = shuffled(s, s.hand.map((_, index) => index)).slice(0, Math.max(0, Math.floor(count)));
   for (const index of picks.sort((a, b) => b - a)) {
     const [card] = s.hand.splice(index, 1);
     s.discard.push(card);
-    log(s, `遗物 · 弃掉「${cardName(card.cardId)}」。`, 'neutral');
+    log(s, `${label} · 弃掉「${cardName(card.cardId)}」。`, 'neutral');
   }
 }
 
@@ -937,11 +946,12 @@ function makeContext(
     },
     discard: count => {
       // 流转 draws first, then drops one, and it would happily drop the card it just drew — that is the
-      // card's whole feel. Logged, because a random discard the player cannot see is indistinguishable
-      // from a bug.
-      const before = s.hand.length;
-      discardRandom(s, count);
-      if (s.hand.length < before) log(s, `${label} · 你随机弃掉了 ${before - s.hand.length} 张牌。`, 'neutral');
+      // card's whole feel.
+      //
+      // Named by **this card**, and logged once: `discardRandom` already prints which card went, and a
+      // second summary line underneath it said the same thing twice — which for a hand that does not
+      // change size (draw 1, discard 1) is the whole of what the player has to go on.
+      discardRandom(s, count, label);
     },
     reclaim: count => reclaimCards(s, Math.max(0, plus(count, upgrade?.reclaim))),
     addToHand: cardId => addToHand(s, cardId, label),

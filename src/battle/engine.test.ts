@@ -1105,3 +1105,28 @@ test('isValidBattle 拒绝损坏的存档', () => {
     assert.equal(isValidBattle(broken), false, `本该拒绝：${JSON.stringify(broken)?.slice(0, 60)}`);
   }
 });
+
+test('砺石弃掉的牌算在砺石头上，不算在遗物头上', () => {
+  // ⚠️ `discardRandom` 是给遗物写的，来源那个词**硬编码成「遗物」**。砺石成了第一张调用它的**卡牌**，
+  // 于是打出砺石会印一行「遗物 · 弃掉「楔石」。」——场上根本没有遗物。
+  //
+  // 而这一行不是装饰：砺石是**抽 1 弃 1**，手牌张数不变，所以日志是玩家唯一能看出这张牌做了什么的
+  // 地方。它报错了来源，卡牌读起来就是坏的——尽管它工作得好好的。
+  const base = startBattle('ch1-1', 'bone', 9);
+  const others = base.hand.filter(c => c.cardId !== 'bone-05').slice(0, 4).map(c => c.cardId);
+  const s: BattleState = {
+    ...base,
+    hand: [{ uid: 'rig-0', cardId: 'bone-05' }, ...others.map((cardId, i) => ({ uid: `rig-${i + 1}`, cardId }))],
+    player: { ...base.player, energy: 3 },
+  };
+  const after = playCard(s, 'rig-0', s.enemies[0].uid);
+  const said = after.log.map(line => line.text).join('\n');
+
+  assert.ok(said.includes('「砺石」 · 弃掉'), `砺石弃牌没记在自己头上：\n${said}`);
+  assert.ok(!said.includes('遗物 ·'), `砺石打出时场上一件遗物都没有，日志却提到了遗物：\n${said}`);
+  // 而且**只说一遍**。`discardRandom` 已经印了是哪一张，旧的总结行是在重复同一件事。
+  assert.equal(said.split('弃掉').length - 1, 1, `一次弃牌印了不止一行：\n${said}`);
+  // 效果本身：手牌换了一张（抽 1 弃 1，所以张数只少掉打出去的那一张）。
+  assert.equal(after.hand.length, s.hand.length - 1, '砺石应当换掉一张手牌，而不是把手牌抽掉');
+  assert.equal(after.draw.length, s.draw.length - 1, '没抽牌');
+});
