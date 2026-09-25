@@ -229,3 +229,12 @@
   25% { opacity: 1; }
   100% { opacity: 0; transform: scale(1.5); }
 }
+
+/* 未解锁 — a card the run's pool does not contain. Bottom-right, because the top-left corner already
+   carries the cost disc and the bottom-left carries the type line. */
+.nd-card-beyond {
+  position: absolute; right: -6px; bottom: -6px; z-index: 3;
+  padding: 3px 8px; font-size: 10px; letter-spacing: 2px; border-radius: 2px;
+  color: #0b1114; background: linear-gradient(180deg, #9fd8e8, #5f9fb4);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .6);
+}

@@ -15,7 +15,7 @@ import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { sound } from '../audio';
 import { CardFace } from '../cards/CardFace';
 import { CARD_BY_ID } from '../cards/index.ts';
-import { RARITY_COLOR, RARITY_LABEL, type RewardSpec } from './rewards.ts';
+import { RARITY_COLOR, RARITY_LABEL, type CardOffer, type RewardSpec } from './rewards.ts';
 import { isUpgradable } from './upgrades.ts';
 import { canAfford, outcomeLine, type EventOption, type EventSpec } from './events.ts';
 import { sceneArt, SCENE_BY_KEY } from './scenes.ts';
@@ -291,7 +291,7 @@ const TASK_COPY: Record<CardTask, { title: string; kicker: string; hint: string;
  * remember what a card does at the exact moment they are deciding whether they want it.
  */
 export function CardPicker({ task, run, options, onChoose, onDismiss, onPass, audioOn }: {
-  task: CardTask; run: ChapterRun; options: string[];
+  task: CardTask; run: ChapterRun; options: CardOffer[];
   onChoose: (index: number) => void;
   /** Settle the task and close the picker. Only 打磨 keeps it open past the choice. */
   onDismiss?: () => void;
@@ -326,12 +326,19 @@ export function CardPicker({ task, run, options, onChoose, onDismiss, onPass, au
   // For `pick` the source is the offer; for the rest it is the deck, shown grouped so a deck of
   // twenty-eight does not read as twenty-eight separate decisions.
   const entries = useMemo(() => {
-    if (task === 'pick') return options.map((cardId, index) => ({ cardId, index, upgraded: false, count: 1 }));
+    // An offer carries whether it is 已打磨 and whether it comes from outside the run's pool, and both
+    // have to reach the face — the whole reason they exist is that the player can see them.
+    if (task === 'pick') {
+      return options.map((offer, index) => ({
+        cardId: offer.cardId, index, upgraded: !!offer.upgraded, count: 1, beyond: !!offer.beyond,
+      }));
+    }
     return deckCounts(run).map(entry => ({
       cardId: entry.cardId,
       index: run.deck.findIndex(card => card.cardId === entry.cardId && !!card.upgraded === entry.upgraded),
       upgraded: entry.upgraded,
       count: entry.count,
+      beyond: false,
     }));
   }, [task, options, run]);
 
@@ -396,6 +403,10 @@ export function CardPicker({ task, run, options, onChoose, onDismiss, onPass, au
               different facts. */}
           <CardFace card={card} selected={picked === entry.index} upgraded={entry.upgraded} />
           {entry.count > 1 && <span className="nd-card-count">×{entry.count}</span>}
+          {/* 未解锁 has to be *said*. A card the player has never seen, offered with no mark, reads as
+              a card they simply do not remember — and the point of the tease is that it is a glimpse
+              of what the rest of the library holds. */}
+          {entry.beyond && <span className="nd-card-beyond">未解锁</span>}
         </button>;
       })}
       {!offered.length && <p className="nd-empty">

@@ -25,7 +25,11 @@ export const DECK_BONE: CardDefinition[] = [
     text: '失去 5 点格挡，造成 9 点伤害。', keywords: [],
     lore: '拱顶正中那一块，替所有人受着力。' },
   { id: 'bone-05', name: '砺石', deck: 'bone', tier: 'cinder', cost: 0, type: 'skill', pattern: 'discard',
-    text: '流转：抽 1 张牌，然后弃 1 张牌。', keywords: ['cycle'],
+    // 「随机」 is printed because that is what the engine does. `playCard` carries a target and nothing
+    // else, so there is no channel for a hand-selection prompt — the same constraint that made 拾回
+    // take the top of the pile. A card that says 「弃 1 张牌」 and then picks for you is the 打磨 bug in
+    // a different coat: the printed text is the one the player believes.
+    text: '流转：抽 1 张牌，然后随机弃 1 张牌。', keywords: ['cycle'],
     lore: '磨得越薄，留下的刃就越亮。' },
   { id: 'bone-06', name: '骨棘', deck: 'bone', tier: 'cinder', cost: 1, type: 'skill', pattern: 'retaliate',
     text: '反震：本回合内每次被攻击时，对攻击者造成 3 点伤害。', keywords: ['retaliate'],

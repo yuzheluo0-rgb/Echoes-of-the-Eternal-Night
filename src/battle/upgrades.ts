@@ -103,10 +103,14 @@ export const UPGRADES: Record<string, Upgrade> = {
   'bone-03': { text: '获得 1 层壁垒和 7 点格挡。', block: 3 },                       // 沉垒
   'bone-04': { text: '失去 5 点格挡，造成 12 点伤害。', hit: 3 },                    // 楔石
   // The only upgrade here that moves a *count* rather than an amount.
-  'bone-05': { text: '流转：抽 2 张牌，然后弃 1 张牌。', draw: 1 },                   // 砺石
+  // 砺石 / 殉道 — the two cards `CHAPTER_1.unlocked.bone` carried into the player's deck for a whole
+  // round **with no behaviour at all**. `engine.test.ts`'s 「凡是第一章发到手的牌，必有实现」 now checks
+  // the whole unlocked set rather than one named group, so the next one cannot slip through either.
+  'bone-05': { text: '流转：抽 2 张牌，然后随机弃 1 张牌。', draw: 1 },               // 砺石
   'bone-06': { text: '反震：本回合内每次被攻击时，对攻击者造成 5 点伤害。', status: { retaliate: 2 } },
   'bone-07': { text: '拾回：从弃牌堆取回 2 张牌。空明：额外抽 1 张牌。', reclaim: 1 },  // 拾骨
   'bone-08': { text: '获得 13 点格挡。空明：改为获得 18 点格挡。', block: 4 },         // 白骨墙
+  // The blood price stays 5 — a polish buys wall, not a bigger wound. Same rule as 献薪 and 透骨.
   'bone-09': { text: '祭火：失去 5 点生命，获得 16 点格挡和 1 层壁垒。', block: 4 },   // 殉道
   'bone-11': { text: '消耗 5 点格挡，获得 4 层锋锐。', status: { edge: 1 } },          // 砺锋
   'bone-13': { text: '造成 7 点伤害。烙印：被标记的敌人受到你的攻击时额外受到 3 点伤害。', hit: 3 },  // 骨钉

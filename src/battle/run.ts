@@ -29,7 +29,9 @@ import { RELIC_BY_ID, type RelicDefinition } from '../relics/relics.ts';
 import type { RefineTier } from './relics.ts';
 import { generateMap, reachableFrom, type MapNode, type TowerMap } from './map.ts';
 import { isUpgradable } from './upgrades.ts';
-import { REWARD_BY_ID, rollReward, rewardCardPool } from './rewards.ts';
+import {
+  REWARD_BY_ID, fullDeckPool, rewardCardPool, rollCardOffer, rollReward, type CardOffer,
+} from './rewards.ts';
 import type { EventEffect, EventOption } from './events.ts';
 import { SUB_SLOT_CHANCE, offerRelics } from './relicDraw.ts';
 import { PLAYER_MAX_HP, isJunkId, relicModifier, type BattleCard, type BattleState } from './engine.ts';
@@ -129,7 +131,7 @@ export interface ChapterRun {
    */
   cardTask?: 'pick' | 'remove' | 'polish' | 'duplicate';
   /** The cards a `pick` task is offering. */
-  cardOptions?: string[];
+  cardOptions?: CardOffer[];
   /**
    * A 淬炼 the player still owes — **which relic** is the decision, so it waits for a pick like
    * `cardTask` does. The tier and the odds come from the option they chose, so both are carried here
@@ -205,8 +207,8 @@ export function newRun(main: DeckId, sub: DeckId, seed = 7): ChapterRun {
 
 /** Take a new card into the deck. Draws are dealt off `draw` in order, so a new card is appended —
  *  it will be met late in the first fight and normally from then on. */
-export function addCard(run: ChapterRun, cardId: string): ChapterRun {
-  return { ...run, deck: [...run.deck, { cardId }] };
+export function addCard(run: ChapterRun, cardId: string, upgraded?: boolean): ChapterRun {
+  return { ...run, deck: [...run.deck, upgraded ? { cardId, upgraded: true } : { cardId }] };
 }
 
 /** Burn a card. `index` is into `run.deck`, which is what the picker shows. */
@@ -255,7 +257,11 @@ export function claimReward(run: ChapterRun): ChapterRun {
     case 'relic': return { ...paid, drawDue: 'reward', nextSlot: 'main' };
     case 'cards': return effect.pick
       ? { ...paid, cardTask: 'pick', cardOptions: rollOffers(paid, effect.count) }
-      : { ...paid, deck: [...paid.deck, ...rollOffers(paid, effect.count).map(cardId => ({ cardId }))] };
+      : {
+        ...paid,
+        deck: [...paid.deck, ...rollOffers(paid, effect.count).map(offer =>
+          offer.upgraded ? { cardId: offer.cardId, upgraded: true } : { cardId: offer.cardId })],
+      };
     case 'remove': return { ...paid, cardTask: 'remove' };
     case 'polish': return { ...paid, cardTask: 'polish' };
     case 'duplicate': return { ...paid, cardTask: 'duplicate' };
@@ -263,14 +269,9 @@ export function claimReward(run: ChapterRun): ChapterRun {
 }
 
 /** Roll `count` card ids for the player to choose between, advancing the run's stream. */
-function rollOffers(run: ChapterRun, count: number): string[] {
-  const pool = rewardCardPool(run.main, run.sub);
-  const left = [...pool];
-  const picked: string[] = [];
-  for (let i = 0; i < count && left.length; i++) {
-    picked.push(left.splice(Math.floor(nextRandom(run) * left.length), 1)[0]);
-  }
-  return picked;
+function rollOffers(run: ChapterRun, count: number): CardOffer[] {
+  return rollCardOffer(rewardCardPool(run.main, run.sub), count, () => nextRandom(run),
+    fullDeckPool([run.main, run.sub]));
 }
 
 /**
@@ -285,9 +286,11 @@ export function chooseCard(run: ChapterRun, index: number | null): ChapterRun {
   if (!task) return run;
   if (task === 'pick') {
     if (index === null) return { ...run, cardTask: undefined, cardOptions: undefined };
-    const cardId = run.cardOptions?.[index];
-    if (!cardId) return run;
-    return { ...addCard(run, cardId), cardTask: undefined, cardOptions: undefined };
+    const offer = run.cardOptions?.[index];
+    if (!offer) return run;
+    // The 已打磨 flag travels with the card into the deck — a polished offer that arrived unpolished
+    // would be the offer screen lying about what the player picked.
+    return { ...addCard(run, offer.cardId, offer.upgraded), cardTask: undefined, cardOptions: undefined };
   }
   if (index === null) return { ...run, cardTask: undefined, cardOptions: undefined };
   const next = task === 'remove' ? removeCard(run, index)
@@ -899,8 +902,17 @@ export function isValidRun(value: unknown): value is ChapterRun {
   }
   if (run.cardOptions !== undefined) {
     if (!Array.isArray(run.cardOptions) || !run.cardOptions.length) return false;
-    if (!run.cardOptions.every(id => typeof id === 'string' && CARD_BY_ID.has(id))) return false;
-    if (new Set(run.cardOptions).size !== run.cardOptions.length) return false;
+    // ⚠️ Each entry is a **`CardOffer`**, not a bare id — it carries whether the card is 已打磨 and
+    // whether it came from outside the run's pool, and both have to survive a reload to still be true.
+    // The check still read `typeof id === 'string'` after the shape changed, so **every save taken on
+    // the card-picker screen was silently refused** and the run vanished on refresh.
+    for (const offer of run.cardOptions) {
+      if (!offer || typeof offer !== 'object') return false;
+      if (typeof offer.cardId !== 'string' || !CARD_BY_ID.has(offer.cardId)) return false;
+      if (offer.upgraded !== undefined && typeof offer.upgraded !== 'boolean') return false;
+      if (offer.beyond !== undefined && typeof offer.beyond !== 'boolean') return false;
+    }
+    if (new Set(run.cardOptions.map(offer => offer.cardId)).size !== run.cardOptions.length) return false;
   }
   if (!Array.isArray(run.cleared)) return false;
   if (!run.cleared.every(id => typeof id === 'string')) return false;

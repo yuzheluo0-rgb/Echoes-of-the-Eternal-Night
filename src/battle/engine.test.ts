@@ -7,7 +7,7 @@ import {
 } from './engine.ts';
 import { CARD_EFFECTS } from './effects.ts';
 import { ENCOUNTERS, ENEMY_BY_ID, MUTATIONS, MUTATION_BY_ID, MUTABLE_RANKS, OATH, POOLS } from './enemies.ts';
-import { starterDeck } from './chapter.ts';
+import { CHAPTER_1, starterDeck } from './chapter.ts';
 import type { DeckId } from '../cards/index.ts';
 
 /** The decks chapter I hands out — three, since 燎原余烬 joined. */
@@ -269,6 +269,21 @@ function dealt(state: BattleState): { damage: number; after: BattleState } {
   const after = playCard(state, 'rig-0', state.enemies[0].uid);
   return { damage: before - after.enemies[0].hp, after };
 }
+
+test('凡是第一章发到手的牌，必有实现 —— 一张白板都不许进玩家的牌组', () => {
+  // ⚠️ **This check used to cover only `BLAZE`** — the eight cards the boss unlocks. Everything the
+  // chapter hands out from the start was assumed to be fine, and it was not: **砺石 and 殉道 sat in
+  // `CHAPTER_1.unlocked.bone` for a whole round with no behaviour at all**, drawable, dealable into the
+  // opening hand, and playable into a log line reading 「还没有实装效果」. They were put into the deck to
+  // fix 长明壁垒 having no 0-cost cards, and the effect was never written beside them.
+  //
+  // The criterion is now the unlock list itself rather than a hand-kept group, so the next card added
+  // to `chapter.ts` without an implementation fails here on the same commit.
+  const unlocked = [...new Set(Object.values(CHAPTER_1.unlocked).flat())];
+  assert.ok(unlocked.length > 20, '第一章的解锁名单不该这么小');
+  const blank = unlocked.filter(id => !CARD_EFFECTS[id]);
+  assert.deepEqual(blank, [], '这些牌在解锁名单里却没有实现，玩家拿到的是白板');
+});
 
 test('明焰阶八张牌都真的实现了，一张白板都没有', () => {
   // The whole reason this set was left locked. `nextUnlock` promised them for a chapter that could

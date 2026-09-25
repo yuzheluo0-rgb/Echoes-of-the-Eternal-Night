@@ -14,9 +14,10 @@
  * not drift apart as rows are added.
  */
 
-import { CARD_BY_ID } from '../cards/index.ts';
+import { CARDS, CARD_BY_ID } from '../cards/index.ts';
 import { CHAPTER_1 } from './chapter.ts';
 import { earnedCards } from './cardUnlocks.ts';
+import { CARD_EFFECTS } from './effects.ts';
 
 export type RewardRarity = 'common' | 'uncommon' | 'rare';
 
@@ -143,6 +144,71 @@ export function rollCards(pool: string[], count: number, roll: () => number): st
     picked.push(left.splice(Math.floor(roll() * left.length), 1)[0]);
   }
   return picked;
+}
+
+/**
+ * A card on offer. **Not a bare id**, because one of them may be 已打磨 or a card the chapter has not
+ * unlocked — and those are the two reasons a pick is worth reading rather than clicking through.
+ */
+export interface CardOffer {
+  cardId: string;
+  upgraded?: boolean;
+  /** True when this card is **not** in the run's pool — a glimpse of what the rest of the library
+   *  holds. The picker says so, because a card the player cannot otherwise get should look like one. */
+  beyond?: boolean;
+}
+
+/**
+ * One offer in six is 已打磨, and one in nine comes from outside the run's pool.
+ *
+ * Two different teases, and they are deliberately different sizes. **已打磨** is a straight upgrade the
+ * player can evaluate on sight — it is the same card with bigger numbers, and the card face prints
+ * them. **未解锁** is a card they have never seen, which is why it is rarer: a taste of the rest of the
+ * library is a reason to keep playing, but a pick that is usually unfamiliar cards stops being a
+ * choice between things the player already has opinions about.
+ */
+export const UPGRADE_OFFER_CHANCE = 17;
+export const BEYOND_OFFER_CHANCE = 11;
+
+/**
+ * Every card of a deck that the engine can actually **play**, unlocked or not — the pool the 未解锁
+ * tease draws from.
+ *
+ * The `CARD_EFFECTS` filter is the whole point. A card with no behaviour is a blank: it is drawable,
+ * playable, and does nothing but write 「还没有实装效果」 into the log. Handing one to the player as a
+ * *reward* would be the worst place in the game to find that out, and the tease deliberately reaches
+ * outside the unlocked pool — which is exactly where the unimplemented cards live (they are locked
+ * precisely because nobody has written them yet).
+ */
+export function fullDeckPool(decks: string[]): string[] {
+  const wanted = new Set(decks);
+  return CARDS.filter(card => wanted.has(card.deck) && CARD_EFFECTS[card.id]).map(card => card.id);
+}
+
+/**
+ * Roll an offer of `count` cards: the run's own pool, with the two teases folded in.
+ *
+ * The roll order is fixed — one draw per offer slot for the card, then two more for its flags — so a
+ * run still replays identically, and so adding a tease later cannot silently reshuffle which cards
+ * come up.
+ */
+export function rollCardOffer(pool: string[], count: number, roll: () => number, beyond: string[]): CardOffer[] {
+  const left = [...pool];
+  const wide = beyond.filter(id => !pool.includes(id));
+  const offers: CardOffer[] = [];
+  for (let i = 0; i < count && left.length; i++) {
+    const goWide = wide.length > 0 && roll() * 100 < BEYOND_OFFER_CHANCE;
+    const from = goWide ? wide : left;
+    const [id] = from.splice(Math.floor(roll() * from.length), 1);
+    // Taken out of the narrow pool too, so the same card cannot arrive twice in one offer.
+    if (goWide) {
+      const dup = left.indexOf(id);
+      if (dup >= 0) left.splice(dup, 1);
+    }
+    const upgraded = roll() * 100 < UPGRADE_OFFER_CHANCE;
+    offers.push({ cardId: id, ...(upgraded ? { upgraded: true } : {}), ...(goWide ? { beyond: true } : {}) });
+  }
+  return offers;
 }
 
 /** Every card id the reward table can name, for the test that keeps the pool honest. */

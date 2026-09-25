@@ -22,10 +22,12 @@ import {
   PLAYER_MAX_HP, canPlay, endTurn, isValidBattle, livingEnemies, playCard, startBattle, type BattleState,
 } from './engine.ts';
 import { ALL_ENCOUNTERS, POOLS } from './enemies.ts';
+import { effectFor } from './effects.ts';
+import { fullDeckPool, rewardCardPool, rollCardOffer } from './rewards.ts';
 import { generateMap } from './map.ts';
 import {
   HEAL_MAX, HEAL_MIN, RUN_ENCOUNTERS, addCard, answerRefine, battleSeed, canEnter, canEnterNode,
-  currentEncounter, deckFor, dismissRefine, encounterFor, enterNode, finishBattle, healRoll, holdsRelic,
+  chooseCard, currentEncounter, deckFor, dismissRefine, encounterFor, enterNode, finishBattle, healRoll, holdsRelic,
   isValidRun, newRun, nextChoices, removeCard, restHeal, spendGold, swapDecks, upgradeCard,
   isChapterCleared, type ChapterRun,
 } from './run.ts';
@@ -669,4 +671,66 @@ test('淬炼：等着被裁决的存档必须能过校验，而且结果与遗�
   assert.equal(guaranteed.relicTask?.done?.won, true);
   assert.equal(isValidRun({ ...guaranteed, relics: {}, refined: undefined }), false,
     '一份「说成了但遗物没了」的存档被放行了');
+});
+
+// ------------------------------------------------------------ 选牌的两种彩头
+
+test('选牌会出「已打磨」与「未解锁」的牌', () => {
+  const pool = rewardCardPool('blade', 'bone');
+  const wide = fullDeckPool(['blade', 'bone']);
+  const roll = lcg(7);
+  let upgraded = 0;
+  let beyond = 0;
+  for (let i = 0; i < 400; i++) {
+    const offers = rollCardOffer(pool, 3, roll, wide);
+    assert.equal(new Set(offers.map(offer => offer.cardId)).size, offers.length, '一次选牌里出现了两张一样的牌');
+    for (const offer of offers) {
+      if (offer.upgraded) upgraded++;
+      if (offer.beyond) beyond++;
+    }
+  }
+  assert.ok(upgraded > 0, '掷了 1200 张牌，一次「已打磨」都没有');
+  assert.ok(beyond > 0, '一次「未解锁」都没有');
+});
+
+test('未解锁的牌必须是**有实现**的，而且真的在池子之外', () => {
+  // ⚠️ 这条是这一组里最重要的。未解锁的那条彩头是**唯一**绕开解锁名单的路，而没写效果的牌在引擎里
+  // 是白板——打得出去，只写一行「还没有实装效果」。把它当成奖励发到玩家手上，是这类 bug 最糟的
+  // 发现方式：玩家会以为是自己看不懂这张牌。
+  //
+  // 另一半同样重要：一张**本来就在池子里**的牌被标上「未解锁」，是在跟玩家说假话。
+  const pool = rewardCardPool('blade', 'bone');
+  const wide = fullDeckPool(['blade', 'bone']);
+  const roll = lcg(11);
+  const seen = new Set<string>();
+  for (let i = 0; i < 400; i++) {
+    for (const offer of rollCardOffer(pool, 3, roll, wide)) {
+      if (!offer.beyond) continue;
+      seen.add(offer.cardId);
+      assert.ok(effectFor(offer.cardId), `${offer.cardId} 没有实现，却被当成「未解锁」发了出去`);
+      assert.ok(!pool.includes(offer.cardId), `${offer.cardId} 本来就在池子里，却被标成「未解锁」`);
+    }
+  }
+  assert.ok(seen.size > 0, '一条未解锁的彩头都没有抽到，这条测试什么都没验');
+});
+
+test('已打磨的彩头进牌组时真的带着打磨标记', () => {
+  // 界面上的「已打磨」必须**跟着牌进牌组**。少了这一步，选牌屏会说「这是一张打磨过的牌」，
+  // 而玩家拿到的是一张原版的——和打磨那一轮的 bug 是同一种形状，只是换了个地方。
+  const pool = rewardCardPool('blade', 'bone');
+  const wide = fullDeckPool(['blade', 'bone']);
+  const roll = lcg(3);
+  let checked = 0;
+  for (let i = 0; i < 300 && checked < 5; i++) {
+    const offers = rollCardOffer(pool, 3, roll, wide);
+    const index = offers.findIndex(offer => offer.upgraded);
+    if (index < 0) continue;
+    checked++;
+    const run = { ...newRun('blade', 'bone', i + 1), cardTask: 'pick' as const, cardOptions: offers };
+    const after = chooseCard(run, index);
+    const added = after.deck[after.deck.length - 1];
+    assert.equal(added.cardId, offers[index].cardId);
+    assert.equal(added.upgraded, true, '选牌屏说已打磨，进牌组却是原版');
+  }
+  assert.equal(checked, 5, '三次里都没抽到已打磨的牌，这条测试没验到东西');
 });

@@ -935,6 +935,14 @@ function makeContext(
       if (buried) log(s, `${label} · 你手牌里的 ${buried} 张牌变成了「灰烬」。`, 'bad');
       return buried;
     },
+    discard: count => {
+      // 流转 draws first, then drops one, and it would happily drop the card it just drew — that is the
+      // card's whole feel. Logged, because a random discard the player cannot see is indistinguishable
+      // from a bug.
+      const before = s.hand.length;
+      discardRandom(s, count);
+      if (s.hand.length < before) log(s, `${label} · 你随机弃掉了 ${before - s.hand.length} 张牌。`, 'neutral');
+    },
     reclaim: count => reclaimCards(s, Math.max(0, plus(count, upgrade?.reclaim))),
     addToHand: cardId => addToHand(s, cardId, label),
     gainEnergy: count => {

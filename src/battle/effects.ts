@@ -78,6 +78,15 @@ export interface EffectContext {
    */
   heal(count: number): void;
   draw(count: number): void;
+  /**
+   * 流转's other half: drops `count` cards out of hand **at random**.
+   *
+   * Random, not chosen, and the card that uses it says so. `playCard` carries a target and nothing
+   * else, so there is no channel for a hand-selection prompt — the same constraint that made 拾回 take
+   * the top of the discard pile and 翻找 bury in-engine. A printed 「弃 1 张牌」 that let the engine
+   * pick would be the 打磨 bug again: the card says one thing and does another.
+   */
+  discard(count: number): void;
   /** Turns `count` cards in the player's hand into 灰烬. */
   bury(count: number): void;
   /** Moves up to `count` cards from the discard pile into the hand. */
@@ -147,6 +156,10 @@ export const CARD_EFFECTS: Record<string, (ctx: EffectContext) => void> = {
   // 空明 is read before the reclaim, or it could never be true.
   'bone-07': ctx => { const was = empty(ctx); ctx.reclaim(1); if (was) ctx.draw(1); },  // 拾骨
   'bone-08': ctx => { ctx.block(empty(ctx) ? 14 : 9); },                       // 白骨墙
+  // 砺石 — 流转. The discard is at random and the printed text says so; see `discard` above.
+  'bone-05': ctx => { ctx.draw(1); ctx.discard(1); },
+  // 殉道 — 祭火 in the wall deck: 生命 now, bought back as a wall nobody has to stand behind.
+  'bone-09': ctx => { ctx.loseHp(5); ctx.block(12); ctx.gain('rampart', 1); },
   'bone-11': ctx => { const spent = ctx.spendBlock(5); if (spent) ctx.gain('edge', Math.max(1, Math.round(spent * 3 / 5))); },  // 砺锋
   'bone-13': ctx => { ctx.hit(4); ctx.mark(1); },                              // 骨钉
   'bone-14': ctx => { ctx.gain('rampart', chained(ctx) ? 4 : 1); },            // 垒壁
