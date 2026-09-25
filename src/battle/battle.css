@@ -977,6 +977,14 @@
 .bd-hand-relics {
   position: absolute; left: 16px; bottom: 10px; z-index: 3;
   display: flex; gap: 14px; align-items: flex-end;
+  /* ⚠️ **它压在手牌上面，所以必须让点击穿过去。**
+     遗物轨 `left: 16px`、两个槽合计约 446 宽（空槽是未缩放的 240），而手牌行是居中的——
+     一手五张约 1060 宽，在 1600 的屏上从 x≈270 开始，于是**最左边那张牌整张被压在底下**。
+     实测：第一个牌位的中心点 `elementFromPoint` 命中的是 `.bd-hand-relic-blank`（「副遗物 空」），
+     牌根本点不动。手牌是这一屏唯一要点的东西，而这一轨在战斗里是**只读**的
+     （可操作的那一组在准备页，走的是 `.bd-relic-slots`），所以让出点击没有任何损失——
+     代价只是战斗里的遗物卡面不再跟着指针倾斜。**一张点不动的牌比一张不倾斜的牌糟得多。** */
+  pointer-events: none;
 }
 /* The card is scaled inside a fixed box: `.rl` owns its own `transform` for the pointer tilt, so the
    scale has to live on a wrapper or the two would overwrite each other. */
