@@ -1,6 +1,7 @@
 /** Layered local sound design with cathedral convolution, no external audio requests. */
 import { WorldSoundscape } from './world/WorldSoundscape';
 import type { Biome } from './world/worldData';
+import { BATTLE_SCORES, parseBattleScore, type BattleScore } from './battle/battleScores';
 export type SoundKind = 'hover' | 'select' | 'draw' | 'shuffle' | 'play' | 'strike' | 'flame' | 'shield' | 'death' | 'bell' | 'combo' | 'win' | 'relic' | 'relic-set' | 'polish';
 
 /** One card sliding off the top of a deck: paper has almost no body, so the whole sound is a short
@@ -167,4 +168,197 @@ export function setAmbience(enabled: boolean) {
     wind.onended = () => { wind.disconnect(); filter.disconnect(); quiet.disconnect(); };
     ambience = { gain, sources };
   } catch { /* Visual experience remains complete without audio. */ }
+}
+
+// ------------------------------------------------------------ 战斗页的配乐
+
+/**
+ * 战斗页的现场合成，和 `WorldSoundscape` 同一套调度：谱面在 `src/battle/battleScores.ts` 里是数据，
+ * 这里只负责把音排出去。
+ *
+ * **为什么不是同一个类。** 那个类是一个乐器（弓弦铺底、玻璃铃、以及按地貌走的虫鸣与风声），它和
+ * 地貌、和世界那两首谱子是焊在一起的；这一边要的是另一件乐器：锯齿铺底、方波主奏、钟只在守望者
+ * 那一首响。两边真正共用的只有「把一个 MIDI 音排进时间轴」那三行，而为了共享那三行去改一段现在
+ * 工作正常的声音，是拿确定的东西换不确定的。
+ *
+ * 交换的代价是**谱面格式必须一致**（同一个 `Score` 类型），这一点由 `battleScores.test.ts` 守着。
+ */
+class BattleMusic {
+  private sources = new Set<AudioScheduledSourceNode>();
+  private bus: GainNode;
+  /** 每条音都会额外送一份到这里，再经延迟回到混响。电子乐的空气感几乎全长在这条线上。 */
+  private echo: GainNode;
+  private timer = 0;
+  private tick = 0;
+  private nextTime = 0;
+  private stopped = false;
+  private score: BattleScore;
+  constructor(
+    private ctx: AudioContext, output: AudioNode, private reverb: AudioNode, private noise: AudioBuffer, track: string,
+  ) {
+    this.score = BATTLE_SCORES.find(entry => entry.id === parseBattleScore(track))!;
+    this.bus = ctx.createGain();
+    this.bus.gain.value = 0;
+    this.bus.gain.setTargetAtTime(.60, ctx.currentTime, 1.1);
+    this.bus.connect(output);
+    const wet = ctx.createGain(); wet.gain.value = this.score.timbre.space ?? .18;
+    this.bus.connect(wet); wet.connect(reverb);
+    // 延迟时间**由谱面推出来**：三格 = 十六分音符下的附点八分、八分音符下的附点四分，
+    // 两种都是那个「呼吸长度」。所以换曲子不用另配一个延迟时间。
+    const delay = ctx.createDelay(2);
+    delay.delayTime.value = Math.min(1.9, this.score.step * 3);
+    const feedback = ctx.createGain(); feedback.gain.value = .34;
+    delay.connect(feedback); feedback.connect(delay);
+    delay.connect(reverb);
+    this.echo = ctx.createGain(); this.echo.gain.value = this.score.timbre.echo ?? 0;
+    this.echo.connect(delay);
+    this.nextTime = ctx.currentTime + .12;
+    this.schedule();
+    this.timer = window.setInterval(() => this.schedule(), 100);
+  }
+  private track(source: AudioScheduledSourceNode, nodes: AudioNode[]) {
+    this.sources.add(source);
+    source.onended = () => { this.sources.delete(source); source.disconnect(); nodes.forEach(node => node.disconnect()); };
+  }
+  private note(midi: number, when: number, duration: number, amplitude: number, type: OscillatorType, attack: number, pan: number) {
+    if (this.stopped) return;
+    const oscillator = this.ctx.createOscillator(), envelope = this.ctx.createGain(), stereo = this.ctx.createStereoPanner();
+    oscillator.type = type;
+    oscillator.frequency.value = 440 * 2 ** ((midi - 69) / 12);
+    stereo.pan.value = pan;
+    envelope.gain.setValueAtTime(0, when);
+    envelope.gain.linearRampToValueAtTime(amplitude, when + attack);
+    envelope.gain.exponentialRampToValueAtTime(.00001, when + duration);
+    oscillator.connect(envelope); envelope.connect(stereo); stereo.connect(this.bus);
+    stereo.connect(this.echo);
+    oscillator.start(when); oscillator.stop(when + duration + .025);
+    this.track(oscillator, [envelope, stereo]);
+  }
+  /**
+   * 鼓。三件都是**噪声加一条极短的包络**，不是采样——谱面里只有一个字符，所以它必须是合成的。
+   *
+   *   底鼓  正弦从 120Hz 掉到 45Hz。掉音高那一下才是「击」，只压包络会听起来像敲桌子。
+   *   军鼓  一段带通噪声叠一个 190Hz 的短音。纯噪声没有「响」，纯音没有「沙」。
+   *   镲    高通噪声，极短。开镲（`o`）只是把衰减放长到六倍。
+   */
+  private drum(kind: string, when: number) {
+    if (this.stopped) return;
+    const level = .30;
+    if (kind === 'k') {
+      const oscillator = this.ctx.createOscillator(), envelope = this.ctx.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(120, when);
+      oscillator.frequency.exponentialRampToValueAtTime(45, when + .07);
+      envelope.gain.setValueAtTime(level * 2.1, when);
+      envelope.gain.exponentialRampToValueAtTime(.00001, when + .30);
+      oscillator.connect(envelope); envelope.connect(this.bus);
+      oscillator.start(when); oscillator.stop(when + .32);
+      this.track(oscillator, [envelope]);
+      return;
+    }
+    if (kind === 's' || kind === 'x') {
+      const ping = kind === 'x' ? 260 : 190;
+      const source = this.ctx.createBufferSource(), filter = this.ctx.createBiquadFilter(), envelope = this.ctx.createGain();
+      source.buffer = this.noise; source.loop = true;
+      filter.type = 'bandpass'; filter.frequency.value = kind === 'x' ? 2100 : 1750; filter.Q.value = .7;
+      envelope.gain.setValueAtTime(level * (kind === 'x' ? 1.3 : 1.5), when);
+      envelope.gain.exponentialRampToValueAtTime(.00001, when + .17);
+      source.connect(filter); filter.connect(envelope); envelope.connect(this.bus); envelope.connect(this.echo);
+      source.start(when, (when * 3.1) % this.noise.duration); source.stop(when + .19);
+      this.track(source, [filter, envelope]);
+      const body = this.ctx.createOscillator(), bodyGain = this.ctx.createGain();
+      body.type = 'triangle'; body.frequency.value = ping;
+      bodyGain.gain.setValueAtTime(level * .5, when);
+      bodyGain.gain.exponentialRampToValueAtTime(.00001, when + .12);
+      body.connect(bodyGain); bodyGain.connect(this.bus);
+      body.start(when); body.stop(when + .14);
+      this.track(body, [bodyGain]);
+      return;
+    }
+    const source = this.ctx.createBufferSource(), filter = this.ctx.createBiquadFilter(), envelope = this.ctx.createGain();
+    source.buffer = this.noise; source.loop = true;
+    filter.type = 'highpass'; filter.frequency.value = 7200;
+    const decay = kind === 'o' ? .34 : .055;
+    envelope.gain.setValueAtTime(level * .5, when);
+    envelope.gain.exponentialRampToValueAtTime(.00001, when + decay);
+    source.connect(filter); filter.connect(envelope); envelope.connect(this.bus);
+    source.start(when, (when * 5.7) % this.noise.duration); source.stop(when + decay + .02);
+    this.track(source, [filter, envelope]);
+  }
+  /** 钟：泛音**故意不成整数倍**。整倍的和弦只会听起来像另一层铺底，偏掉的那几个才是金属。 */
+  private bell(root: number, when: number, amplitude: number) {
+    const partials: [number, number, number][] = [[1, .052, 4.4], [2.01, .027, 3.3], [2.41, .016, 2.5], [3.02, .010, 1.9], [4.22, .006, 1.3]];
+    for (const [ratio, gain, decay] of partials) this.note(root + 12 * Math.log2(ratio), when, decay, gain * amplitude, 'sine', .004, 0);
+  }
+  private schedule() {
+    if (this.stopped) return;
+    // 挂起或节流之后不要补播积压的音。
+    if (this.nextTime < this.ctx.currentTime - .15) this.nextTime = this.ctx.currentTime + .08;
+    const { chords, melody, arpeggio, steps, step, timbre, bass, drums, harmony } = this.score;
+    const bar = steps * step;
+    while (this.nextTime < this.ctx.currentTime + .28) {
+      const index = Math.floor(this.tick / steps) % chords.length, slot = this.tick % steps;
+      const chord = chords[index], time = this.nextTime;
+      if (slot === 0) {
+        chord.forEach((midi, i) => this.note(midi, time, bar + .45, .026, timbre.pad, timbre.swell, (i - 1) * .23));
+        // 有低音线的时候**不放持续根音**——两条抢同一个低频，结果是一团糊而不是更厚。
+        if (!bass) this.note(chord[0] - 12, time, bar * timbre.pedal, .040, timbre.pad, timbre.swell * .28, 0);
+        if (this.score.bells?.includes(index)) this.bell(chord[0] + 24, time, timbre.bell);
+      }
+      const pluck = arpeggio[slot];
+      if (pluck >= 0) this.note(chord[pluck] + 12, time, step * 2.8, .022 * timbre.pluck, timbre.harp, .021, slot % 2 ? .30 : -.30);
+      const lead = melody[index][slot];
+      if (lead) { this.note(lead, time, 2.1, .056, timbre.lead, .010, .10); this.note(lead + 12, time, 1.08, .008, 'sine', .006, -.14); }
+      // 会走的低音：值是**相对该小节根音**的半音数，`-1` 是空拍。
+      const low = bass?.[index]?.[slot];
+      if (low !== undefined && low >= 0) this.note(chord[0] + low - 12, time, step * 1.9, .075, 'triangle', .008, 0);
+      // 对位声部比主奏轻、比主奏靠后，它就是「后面还有东西」。
+      const second = harmony?.[index]?.[slot];
+      if (second) this.note(second, time, 1.7, .032, timbre.lead, .012, -.22);
+      const hit = drums?.[index]?.[slot];
+      if (hit && hit !== '-') this.drum(hit, time);
+      this.tick++; this.nextTime += step;
+    }
+  }
+  /** 换曲不停机：旧曲子渐下去、新曲子从下一小节淡进来，中间那一下听不出来是「切」的。 */
+  setTrack(track: string) {
+    if (this.stopped) return;
+    const next = BATTLE_SCORES.find(entry => entry.id === track);
+    if (!next || next === this.score) return;
+    const now = this.ctx.currentTime;
+    this.score = next; this.tick = 0;
+    this.echo.gain.setTargetAtTime(next.timbre.echo ?? 0, now, .3);
+    this.bus.gain.cancelScheduledValues(now);
+    this.bus.gain.setValueAtTime(this.bus.gain.value, now);
+    this.bus.gain.linearRampToValueAtTime(0, now + .18);
+    this.bus.gain.setTargetAtTime(.62, now + .60, .5);
+    this.nextTime = now + .60;
+  }
+  stop() {
+    if (this.stopped) return;
+    this.stopped = true; clearInterval(this.timer);
+    const now = this.ctx.currentTime;
+    this.bus.gain.cancelScheduledValues(now);
+    this.bus.gain.setTargetAtTime(0, now, .06);
+    for (const source of this.sources) try { source.stop(now + .28); } catch { /* 有的音可能已经结束了。 */ }
+    window.setTimeout(() => this.bus.disconnect(), 400);
+  }
+}
+
+let battleMusic: BattleMusic | undefined;
+
+/**
+ * 战斗页的配乐开关与换曲。`track` 是 `scoreForMood()` 给出的那一首。
+ *
+ * ⚠️ **换曲不能重建播放器**：重建会让整条时间轴从头开始，于是「踏进一场战斗」听起来像另一张唱片
+ * 启动了，而不是同一座塔的声音变凶了。所以同一条命里只构造一次，之后走 `setTrack`。
+ */
+export function setBattleAudio(enabled: boolean, track: string) {
+  try {
+    if (!enabled) { battleMusic?.stop(); battleMusic = undefined; return; }
+    const ctx = audio();
+    void ctx.resume();
+    if (!battleMusic) battleMusic = new BattleMusic(ctx, output, reverb, noiseBuffer, track);
+    else battleMusic.setTrack(track);
+  } catch { /* 声音受限从不应该挡住玩。 */ }
 }

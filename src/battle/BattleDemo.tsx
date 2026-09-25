@@ -27,10 +27,11 @@ import {
   ArrowLeftRight, BookOpen, ChevronLeft, ChevronRight, Eye, Flame, Layers, RotateCcw, Shield, Skull,
   Sparkles, Swords, Volume2, VolumeX, Zap,
 } from 'lucide-react';
-import { sound, type SoundKind } from '../audio';
+import { setBattleAudio, sound, type SoundKind } from '../audio';
 import { CardBack, CardFace } from '../cards/CardFace';
 import { CARD_BY_ID, DECKS, type DeckId } from '../cards/index.ts';
 import { CHAPTER_1, chapterDeck, openingForms } from './chapter.ts';
+import { scoreForMood, type BattleMood } from './battleScores.ts';
 import {
   KINDLING_DISCOUNT, canPlay, cardAccent, cardCost, cardName, cardRules, cardTag, endTurn, enemyName,
   intentFor, intentText, livingEnemies, playCard, startBattle, type BattleCard, type BattleState,
@@ -524,6 +525,21 @@ export default function BattleDemo() {
   const living = state ? livingEnemies(state) : [];
   const target = state ? (living.find(enemy => enemy.uid === state.targetUid) ?? living[0]) : undefined;
   const ended = state ? state.phase === 'won' || state.phase === 'lost' : false;
+
+  /**
+   * 配乐跟**玩家在看什么**走，不跟组件挂载走。
+   *
+   * 四类：塔上待机 / 寻常的战斗 / 守望者 / 营火。首领用**池子**判而不是名字——`首领战` 那个池子里
+   * 只有一场，而名字是翻译可以改的东西（见 `battleScores.ts` 的 `scoreForMood`）。
+   *
+   * 营火那一屏是「站在一个还没解决的营火层上」：`floor.kind === 'rest'` 且这一层还没 `resolved`。
+   */
+  const mood: BattleMood = state && !ended ? (encounter?.pool === 'boss' ? 'boss' : 'fight')
+    : inFight || !floor || floor.kind !== 'rest' || run?.resolved === run?.at ? 'tower'
+      : 'rest';
+  useEffect(() => { setBattleAudio(audioOn, scoreForMood(mood)); }, [audioOn, mood]);
+  // 离开这一页就停：这一整块是 `#/battle` 自己的声音，切到地图还响着就成了背景噪声。
+  useEffect(() => () => setBattleAudio(false, ''), []);
 
   // Every effect and every sound is scheduled off the same event list, so the picture and the noise
   // always agree about when a hit happened.
