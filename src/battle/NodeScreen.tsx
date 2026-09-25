@@ -17,9 +17,9 @@ import { CardFace } from '../cards/CardFace';
 import { CARD_BY_ID } from '../cards/index.ts';
 import { RARITY_COLOR, RARITY_LABEL, type RewardSpec } from './rewards.ts';
 import { isUpgradable } from './upgrades.ts';
-import { canAfford, type EventOption, type EventSpec } from './events.ts';
+import { canAfford, outcomeLine, type EventOption, type EventSpec } from './events.ts';
 import { sceneArt, SCENE_BY_KEY } from './scenes.ts';
-import { deckCounts, type ChapterRun } from './run.ts';
+import { deckCounts, resolveEvent, type ChapterRun } from './run.ts';
 import type { NodeKind } from './map.ts';
 import './node.css';
 
@@ -153,13 +153,26 @@ export function EventScreen({ event, run, onContinue, audioOn }: {
   const [answer, setAnswer] = useState<EventOption | null>(null);
 
   if (answer) {
+    /**
+     * The run as it will be **once 继续 is pressed** — not as it stands now.
+     *
+     * Two things were wrong with showing the current run here. The footer read 「生命 60/60」 on the
+     * screen that had just cost the player 6 of them, and `outcome` is prose by design, so it never
+     * said the number either — which left `金币` / `生命` / `生命上限` printed **nowhere at all**.
+     *
+     * Computed through `resolveEvent` rather than by hand: it is the same function `commitEvent`
+     * calls, so this screen and the run cannot drift apart about what an option does. It is pure and
+     * the result is only read, never stored — the run still moves exactly once, on the click.
+     */
+    const settled = resolveEvent(run, answer);
     return <NodeShell kind="event" scene="event" kicker="奇遇" title={event.name}
       actions={<button className="nd-primary" onPointerEnter={() => sound('hover', audioOn)}
         onClick={() => { sound('bell', audioOn); onContinue(answer); }}>
         继续
       </button>}
-      footer={`生命 ${run.hp}/${run.maxHp} · 金币 ${run.gold}`}>
+      footer={`生命 ${settled.hp}/${settled.maxHp} · 金币 ${settled.gold}`}>
       <p className="nd-copy nd-outcome">{answer.outcome}</p>
+      <p className="nd-delta">{outcomeLine(answer)}</p>
     </NodeShell>;
   }
 

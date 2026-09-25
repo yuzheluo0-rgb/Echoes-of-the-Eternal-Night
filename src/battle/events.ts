@@ -365,6 +365,60 @@ export function canAfford(option: EventOption, gold: number, hp: number): boolea
   return true;
 }
 
+// ------------------------------------------------------------- saying it in numbers
+
+/**
+ * What an effect does, as a number rather than as a sentence.
+ *
+ * **The outcome line is deliberately prose and this is the other half of it.** 「你站了很久，风很大」
+ * is what the floor is like; it is not allowed to be 「你失去 6 点生命」 — see rule 3 at the top of
+ * this file. But a table where *every* line is prose has no way to say what changed, and that is
+ * exactly what happened: `gold`, `hp` and `maxHp` were rendered **nowhere in the entire flow**. The
+ * player paid 6 生命 for 「顺着脚印走」 and the screen went on reading 「生命 60/60」 — the footer is
+ * drawn from the run as it stands *before* the answer is committed.
+ *
+ * So the prose stays prose and this says the ledger. Two lines, two jobs.
+ *
+ * It lives here rather than in `NodeScreen.tsx` because `node --experimental-strip-types` cannot
+ * parse JSX, so a helper defined next to its screen is a helper no test can reach — and this one has
+ * to be testable, because the whole point is that no effect may ever go undescribed again.
+ */
+export function describeEffect(effect: EventEffect): string {
+  switch (effect.kind) {
+    case 'gold': return `金币 ${signed(effect.amount)}`;
+    case 'hp': return `生命 ${signed(effect.amount)}`;
+    case 'maxHp': return `生命上限 ${signed(effect.amount)}`;
+    case 'relic': return '抽取一件遗物';
+    case 'remove': return '焚掉牌组里的一张牌';
+    case 'polish': return '打磨牌组里的一张牌';
+    case 'duplicate': return '复制牌组里的一张牌';
+    case 'cards': return `从 ${effect.count} 张牌里挑一张`;
+    // Not an empty string. 「你换了一条路」 reads as an outcome, and the player is owed the plain
+    // fact that it left them nothing — a blank line here would be the same silence this fixes.
+    case 'nothing': return '没有收获';
+  }
+}
+
+/**
+ * The whole exchange on one line, cost first: 「生命 −6 · 抽取一件遗物」.
+ *
+ * Paid-before-gained is the order the event actually settles in (see `resolveEvent`), so the line
+ * reads in the order it happened. An option with no cost prints only its gain, and one whose only
+ * content is a price prints only the price.
+ */
+export function outcomeLine(option: EventOption): string {
+  const parts: string[] = [];
+  if (option.requires?.gold) parts.push(`金币 ${signed(-option.requires.gold)}`);
+  if (option.requires?.hp) parts.push(`生命 ${signed(-option.requires.hp)}`);
+  parts.push(describeEffect(option.effect));
+  return parts.join(' · ');
+}
+
+/** `+90` / `−6`. The minus is U+2212, matching how the keyword rules are written. */
+function signed(amount: number): string {
+  return amount < 0 ? `−${Math.abs(amount)}` : `+${amount}`;
+}
+
 /**
  * The event a floor turned out to hold.
  *

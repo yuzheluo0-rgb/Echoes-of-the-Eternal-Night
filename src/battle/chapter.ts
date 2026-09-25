@@ -1,4 +1,5 @@
 import { CARDS, CARD_BY_ID, MAIN_SHARE, RESOURCES, TIER_BY_ID, type DeckId } from '../cards/index.ts';
+import { isEarned } from './cardUnlocks.ts';
 
 /**
  * Chapter I. The protagonist starts with two decks unlocked and only part of each one — the rest of
@@ -22,11 +23,39 @@ export const CHAPTER_1: Chapter = {
   id: 'ch1',
   name: '第一章 · 余烬营地',
   subtitle: 'CHAPTER I · THE LAST HEARTH',
-  decks: ['blade', 'bone'],
+  /**
+   * Three decks, and the third one is what makes the cycle a cycle.
+   *
+   * The library's four decks form a ring — 刃 攒余烬 → 焰 烧成灼烧 → 骨 把灼烧变成壁垒 → 镜 复制 → 回刃 —
+   * and chapter I carried only the first and the third of them. **Both decks in a chapter-I run were
+   * missing the two links between them**, so 「联动」 was a thing the card text promised and the deck
+   * list made impossible; the only real traffic was 余烬, which 焰 is the deck that spends it.
+   *
+   * 燎原余烬 also brings the damage. 断罪之刃 opened with six attack cards out of twenty-two and
+   * 长明壁垒 with three, which is the 「拿到手里没得打」 half of the same complaint — the burn deck is
+   * the one that always has something to cast.
+   */
+  decks: ['blade', 'flame', 'bone'],
   // This used to name 三叠 and 垒壁, which were already in `unlocked` above — the promise was empty
   // from the day it was written. It now names the明焰阶 cards that are genuinely still locked.
-  nextUnlock: '击破「草原守望者」后解锁两副牌组的明焰阶：断罪之刃 断罪 / 刃雨 / 裂甲 / 借焰，长明壁垒 回震 / 照壁 / 炭墙 / 封炉',
+  // 18 ids, spelled out. It is long, and it is the one place the player can read what beating the boss
+  // is worth — a summary ("六张副牌组") would be shorter and would not be a promise anyone could check.
+  nextUnlock: '击破「草原守望者」后，三副牌组各解锁六张 —— '
+    + '断罪之刃 断罪 / 刃雨 / 裂甲 / 借焰 / 万刃 / 千刃，'
+    + '燎原余烬 灰烬雨 / 透骨 / 火墙 / 长明灯 / 焚炉 / 骨炭，'
+    + '长明壁垒 回震 / 照壁 / 炭墙 / 封炉 / 崩城 / 天倾',
   unlocked: {
+    // The burn archetype, and the middle of the ring. 残烬 come in threes, so seven of these carry
+    // the deck's damage: 火种 lights the fire, 舔焰 and 裂焰 cash it in, 引信 is a free swing.
+    // 扬灰 and 炭衣 are the two links — 余烬 in, 壁垒 out — and they are why this deck is worth
+    // splashing into either of the other two.
+    flame: ['flame-01', 'flame-02', 'flame-03', 'flame-04', 'flame-05', 'flame-06', 'flame-07',
+      'flame-08', 'flame-09', 'flame-12', 'flame-14', 'flame-15',
+      // The four holes that cannot wait for the boss: 拾灰 / 取暖 are the only 回血 the deck has and
+      // it pays for three of its own cards in 生命, 燎原 is its only affordable AOE, and 添薪 is a
+      // straightforward place to put 余烬. A reward is the wrong shape for a card the deck cannot
+      // function without.
+      'flame-29', 'flame-30', 'flame-32', 'flame-37'],
     // Attack and tempo. Teaches 余烬 (build a resource), 烙印 (make one target die faster),
     // 反震 (punish being hit), 蓄火 (plan a turn ahead).
     blade: ['blade-01', 'blade-02', 'blade-03', 'blade-04', 'blade-07', 'blade-08', 'blade-09', 'blade-11', 'blade-14', 'blade-18', 'blade-21', 'blade-25'],
@@ -43,11 +72,43 @@ export const CHAPTER_1: Chapter = {
   },
 };
 
+/**
+ * What each deck splashes into, and how the opening screen describes the pair.
+ *
+ * ⚠️ **The opening screen is built from this and `CHAPTER_1.decks`, not from a written-out list.**
+ * It used to be a two-entry array in `BattleDemo.tsx`, and adding 燎原余烬 to the chapter changed
+ * nothing a player could see — the deck was legal in every save and absent from the only screen that
+ * offers one. Deriving it here means a deck added to `decks` cannot silently miss being offered, and
+ * `run.test.ts` holds the two lists against each other so it stays that way.
+ */
+export const SPLASH_INTO: Record<string, { sub: DeckId; blurb: string }> = {
+  blade: { sub: 'flame', blurb: '以断罪之刃为主：低费多段攻击堆余烬，燎原余烬再把它一次烧成灼烧。' },
+  flame: { sub: 'bone', blurb: '以燎原余烬为主：先铺灼烧让敌人自己烂掉，长明壁垒把烧过的东西接成墙。' },
+  bone: { sub: 'blade', blurb: '以长明壁垒为主：把格挡当燃料磨死对手，断罪之刃只掺几张余烬牌做引信。' },
+};
+
+/** The pairs the chapter offers, one per deck it hands out. */
+export function openingForms(): { main: DeckId; sub: DeckId; blurb: string }[] {
+  return CHAPTER_1.decks
+    .filter(id => SPLASH_INTO[id])
+    .map(id => ({ main: id, sub: SPLASH_INTO[id].sub, blurb: SPLASH_INTO[id].blurb }));
+}
+
 const UNLOCKED = new Set(Object.values(CHAPTER_1.unlocked).flat());
 
-/** A card the protagonist cannot draw yet. The library still shows it, greyed, with a padlock. */
+/**
+ * A card the protagonist cannot draw yet. The library still shows it, greyed, with a padlock.
+ *
+ * Two ways to be unlocked, and the second one is what `nextUnlock` has been promising all along:
+ * the starting pool, or the 明焰阶 set that 击破草原守望者 hands over. The earned half is
+ * meta-progression (`cardUnlocks.ts`), so it survives the run that earned it — that is the point of
+ * putting a boss behind it.
+ *
+ * Note what this does *not* change: `starterDeck` still reads `CHAPTER_1.unlocked` directly, so an
+ * unlock widens what you can be **offered** and never what you begin with.
+ */
 export function isUnlocked(cardId: string) {
-  return UNLOCKED.has(cardId);
+  return UNLOCKED.has(cardId) || isEarned(cardId);
 }
 export function isDeckUnlocked(deck: string) {
   return CHAPTER_1.decks.includes(deck as DeckId);

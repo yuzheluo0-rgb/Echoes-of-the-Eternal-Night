@@ -421,6 +421,55 @@
   box-shadow: inset 0 0 34px rgba(0, 0, 0, .7);
 }
 .bd-junk h3 { font-size: 19px; letter-spacing: 4px; color: #cfc7ae; }
+/* Not everything off the library is junk. 灰烬 is — an enemy put it there — but 残壁 is a card the
+   player bought with two energy, and drawing it in the same grey would say the opposite. */
+.bd-junk-accent {
+  border-color: color-mix(in srgb, var(--junk) 42%, transparent);
+  background:
+    repeating-linear-gradient(118deg, rgba(255, 255, 255, .022) 0 2px, transparent 2px 5px),
+    linear-gradient(160deg, #2c2820, #171512 70%);
+  box-shadow: inset 0 0 34px rgba(0, 0, 0, .6), 0 0 24px -8px var(--junk);
+}
+.bd-junk-accent h3 {
+  color: var(--junk);
+  text-shadow: 0 0 16px color-mix(in srgb, var(--junk) 38%, transparent);
+}
+.bd-junk-accent .bd-junk-tag {
+  color: color-mix(in srgb, var(--junk) 72%, #6d7d77);
+  border-top-color: color-mix(in srgb, var(--junk) 30%, transparent);
+}
+/* The photograph behind a card the library does not know. Absolutely positioned, so it takes no part
+   in the column's layout: the cost disc, name, rules line and tag keep the exact positions they have
+   on the faces with no art, and a junk card that happens to have a picture does not become a
+   different size from one that does not. */
+.bd-junk-art {
+  position: absolute; inset: 0;
+  border-radius: 10px;
+  background-position: 50% 42%;
+  background-size: cover;
+  filter: brightness(.72) saturate(.75);
+}
+/**
+ * The scrim, and it is the load-bearing half rather than a tint.
+ *
+ * A photograph cannot simply be darkened until text is legible — 残壁's is pale limestone in
+ * daylight, and at a brightness low enough for the gold name to read, the wall stops being a wall.
+ * What the text actually needs is **contrast against what it sits on**, so the picture is left
+ * visible and a weighted gradient is laid over it: heaviest at the bottom, where the rules line is,
+ * and at the top, where the cost disc is.
+ *
+ * `::after` rather than a second background on `.bd-junk-art`, because the filter applies to that
+ * element — a gradient inside it would be darkened along with the photograph.
+ */
+.bd-junk::after {
+  content: ''; position: absolute; inset: 0; border-radius: 10px; pointer-events: none;
+  background: linear-gradient(180deg,
+    rgba(9, 11, 13, .74) 0%, rgba(9, 11, 13, .46) 34%,
+    rgba(9, 11, 13, .58) 62%, rgba(9, 11, 13, .9) 100%);
+}
+/* Everything but the photograph reads above it. */
+.bd-junk > *:not(.bd-junk-art) { position: relative; z-index: 1; }
+
 .bd-junk p { font-size: 12.5px; line-height: 1.85; color: #9aa8a1; }
 .bd-junk-cost {
   position: absolute;
@@ -812,6 +861,26 @@
 .bd-spoils-note { font-size: 11.5px; line-height: 1.85; color: #7f9189; margin: 14px 0 0; }
 .bd-spoils-actions { margin-top: 22px; display: flex; justify-content: center; }
 .bd-spoils-actions .bd-over-btn { margin: 0; }
+
+/* 击破守望者 — what the chapter handed over. This is the only place the reward for finishing the
+   chapter is ever stated, and it is meta-progression rather than loot, so it is set as a moment
+   rather than as another row in the spoils table. */
+.bd-unlock {
+  margin: 20px auto 0; padding: 16px 22px 15px;
+  max-width: 470px; text-align: center;
+  border: 1px solid rgba(217, 188, 128, .25); border-radius: 4px;
+  background: linear-gradient(180deg, rgba(217, 188, 128, .07), transparent);
+  animation: bd-unlock-in .55s ease-out both;
+}
+.bd-unlock-kicker { font-size: 9px; letter-spacing: 4px; color: #d9bc80; margin-bottom: 13px; }
+.bd-unlock-cards { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px 20px; }
+.bd-unlock-cards b {
+  font-size: 22px; font-weight: 400; letter-spacing: 2px;
+  font-family: Georgia, 'Songti SC', serif;
+  color: #f0cf87; text-shadow: 0 0 16px rgba(240, 207, 135, .35);
+}
+.bd-unlock-note { font-size: 11.5px; color: #7f9189; margin-top: 13px; line-height: 1.8; }
+@keyframes bd-unlock-in { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
 
 /* --------------------------------------------------------------- relics */
 

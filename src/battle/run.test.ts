@@ -6,7 +6,8 @@
  * checked here is the run's actual contract:
  *
  *   1. the heal always lands in 9–15, is capped by 生命上限, and is reproducible from the run seed;
- *   2. the chapter is a line — no save and no transition can skip an encounter;
+ *   2. `cleared` is a log of wins over a tower that deals from pools — a save can name no encounter
+ *      it did not fight, and can name no encounter twice, but the order is the map's business;
  *   3. a victory advances and a defeat does not, so the caller can safely discard a dead run;
  *   4. the 主/副 composition holds `MAIN_SHARE`, keeps the main deck whole, and splashes one copy each;
  *   5. a whole run driven through *real* battles keeps every invariant at every step, and replays
@@ -16,8 +17,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CARD_BY_ID, DECK_IDS, MAIN_SHARE, type DeckId } from '../cards/index.ts';
-import { CHAPTER_1, chapterDeck, isDeckUnlocked, starterDeck } from './chapter.ts';
-import { canPlay, endTurn, isValidBattle, livingEnemies, playCard, startBattle, type BattleState } from './engine.ts';
+import { CHAPTER_1, chapterDeck, isDeckUnlocked, openingForms, starterDeck } from './chapter.ts';
+import {
+  PLAYER_MAX_HP, canPlay, endTurn, isValidBattle, livingEnemies, playCard, startBattle, type BattleState,
+} from './engine.ts';
 import { ALL_ENCOUNTERS, POOLS } from './enemies.ts';
 import { generateMap } from './map.ts';
 import {
@@ -26,8 +29,8 @@ import {
   isChapterCleared, isValidRun, newRun, swapDecks, type ChapterRun,
 } from './run.ts';
 
-/** The two decks chapter I hands out. */
-const DECKS: DeckId[] = ['blade', 'bone'];
+/** The decks chapter I hands out. Three since 燎原余烬 joined — the middle link of the cycle. */
+const DECKS: DeckId[] = ['blade', 'flame', 'bone'];
 
 /** The engine never uses `Math.random`, and neither do the tests. */
 function lcg(seed: number) {
@@ -37,7 +40,7 @@ function lcg(seed: number) {
 
 // ----------------------------------------------------------- 1. creating a run
 
-test('新 run：满血、零进度、合法，且两副牌都必须在第一章可用', () => {
+test('新 run：满血、零进度、合法，且三副牌都必须在第一章可用', () => {
   const run = newRun('blade', 'bone', 11);
   assert.equal(run.hp, 60);
   assert.deepEqual(run.cleared, []);
@@ -46,7 +49,9 @@ test('新 run：满血、零进度、合法，且两副牌都必须在第一章�
   assert.ok(isValidRun(run), '新 run 必须合法');
   assert.equal(currentEncounter(run)?.id, 'ch1-1', '第一场是荒野巡夜');
   assert.equal(isChapterCleared(run), false);
-  assert.throws(() => newRun('flame', 'bone', 1), /不能携带/, '未解锁的牌组不能开局');
+  // 燎原余烬 joined in chapter I (it is the ring's missing middle), so the deck that must still be
+  // refused is 千面回廊 — and it must go on being refused in both slots.
+  assert.throws(() => newRun('mirror', 'bone', 1), /不能携带/, '未解锁的牌组不能开局');
   assert.throws(() => newRun('blade', 'mirror', 1), /不能携带/);
 });
 
@@ -247,7 +252,7 @@ test('isValidRun 拒绝损坏的存档', () => {
     null, undefined, 42, 'run', {},
     { ...run, version: 2 },
     { ...run, chapterId: 'ch2' },
-    { ...run, main: 'flame' },
+    { ...run, main: 'mirror' },
     { ...run, sub: 'mirror' },
     { ...run, main: 'nope' },
     { ...run, hp: -1 },
@@ -261,7 +266,7 @@ test('isValidRun 拒绝损坏的存档', () => {
     { ...run, cleared: ['ch1-1', 'ch1-2', 'ch1-3', 'ch1-4', 'ch1-5', 'ch1-1'] },
     { ...run, cleared: ['nope'] },
     { ...run, cleared: ['ch1-1', 'ch1-1', 'ch1-2'] },
-    { ...run, cleared: ['ch1-1', 'w-hollowrim'] },
+    { ...run, cleared: ['ch1-1', 'w-hollowrim', 'nope'] },
     { ...run, seed: 1.5 },
     { ...run, rng: -1 },
     { ...run, rng: 0x100000000 },
@@ -278,9 +283,39 @@ test('isValidRun 拒绝损坏的存档', () => {
     ['ch1-2'],
     ['ch1-1', 'ch1-2', 'ch1-4', 'ch1-3'],
     ['ch1-5'],
+    // **Pool fights belong here too**, and this list used to assert the opposite. The tower deals
+    // `w-*` / `s-*` / `e-brood` far more often than it deals an anchor, and `finishBattle` logs
+    // whatever it was handed — so refusing these ids meant the save from a normal run failed
+    // validation and `loadRun` dropped it. See the round-trip test below for the whole path.
+    ['w-hollowrim'],
+    ['ch1-1', 'w-shadepack', 's-ambush'],
+    ['e-brood', 's-nightwatch'],
   ]) {
     assert.equal(isValidRun({ ...run, cleared }), true, `本该接受：${JSON.stringify(cleared)}`);
   }
+});
+
+test('打赢一场池子里的遭遇战，存档必须还能读回来', () => {
+  // Regression. `cleared` used to be validated against the five chapter anchors only, while the map
+  // deals its fights from pools — so this exact sequence (win a pool fight → the save is written →
+  // the page reloads) threw the whole chapter away. It was not an edge case: about half of every
+  // run's fights are pool fights, so it fired on essentially every run.
+  const run = newRun('blade', 'bone', 33);
+  const pool = POOLS.strong[0];
+  assert.ok(!RUN_ENCOUNTERS.some(entry => entry.id === pool.id), '这场必须不是章节锚点，否则测不到东西');
+
+  const settled = finishBattle(run, wonBattle(pool.id, run));
+  assert.ok(settled.won, '必须先真的赢下来');
+  assert.ok(settled.run.cleared.includes(pool.id), '池子仗必须写进 cleared');
+
+  // Through the wire, exactly as the browser stores it — the map is derived, never serialised.
+  const { map, ...wire } = settled.run;
+  void map;
+  const round = JSON.parse(JSON.stringify(wire)) as ChapterRun;
+  assert.equal(isValidRun(round), true, '这一局必须能通过校验');
+  // And it still has to be legal after more pool fights land on top of it.
+  const deeper: ChapterRun = { ...round, cleared: [...round.cleared, POOLS.weak[0].id, POOLS.elite[0].id] };
+  assert.equal(isValidRun(deeper), true, '多打几场之后仍然必须合法');
 });
 
 // --------------------------------------------------- 7. a whole run, for real
@@ -482,10 +517,27 @@ test('起始血量被钳进 [0, 60]，未解锁的副牌组直接拒绝', () => 
   assert.equal(withHp(-5).player.hp, 0);
   assert.equal(withHp(undefined).player.hp, 60, '不给血量就是满血开局');
   assert.ok(isValidBattle(withHp(43)), '钳过之后必须仍然合法');
-  assert.throws(() => startBattle('ch1-1', 'blade', 7, { sub: 'flame' }), /不能携带/, '未解锁的副牌组必须拒绝');
-  assert.throws(() => startBattle('ch1-1', 'flame', 7), /不能携带/, '未解锁的主牌组必须拒绝');
+  assert.throws(() => startBattle('ch1-1', 'blade', 7, { sub: 'mirror' }), /不能携带/, '未解锁的副牌组必须拒绝');
+  assert.throws(() => startBattle('ch1-1', 'mirror', 7), /不能携带/, '未解锁的主牌组必须拒绝');
   // Passing the main deck as its own sub is a no-op, not an error — the splash is just empty.
   assert.equal(startBattle('ch1-1', 'blade', 7, { sub: 'blade' }).sub, 'blade');
+});
+
+test('run 的 生命上限 必须进战斗，而且只能升不能降', () => {
+  // Regression. The ceiling used to be pinned to `PLAYER_MAX_HP` + whatever the relics added, so a
+  // run that had earned +12 生命上限 walked into every fight at 60/60 — and 生命上限 is a good share
+  // of both the reward table and the event table. The run layer and the battle layer disagreed about
+  // the same number, and the run layer is the one the player had been reading.
+  const withMax = (maxHp?: number) => startBattle('ch1-1', 'blade', 7, { hp: 72, maxHp });
+  assert.equal(withMax(72).player.maxHp, 72, 'run 的上限必须带进战斗');
+  assert.equal(withMax(72).player.hp, 72, '带进来的血不能被 60 削掉');
+  assert.equal(withMax(undefined).player.maxHp, PLAYER_MAX_HP, '不给就是基准值');
+  assert.equal(withMax(undefined).player.hp, PLAYER_MAX_HP, '基准上限下多出来的血要削掉');
+  // Downwards is illegal, not merely ignored: 60 is the number every constant was tuned against.
+  for (const low of [40, 0, -10]) {
+    assert.equal(withMax(low).player.maxHp, PLAYER_MAX_HP, `maxHp=${low} 必须被抬回基准值`);
+  }
+  assert.ok(isValidBattle(withMax(72)), '抬高之后的战斗必须仍然合法');
 });
 
 // ---------------------------------------------------------------- 9. guard rails
@@ -499,11 +551,40 @@ test('battleSeed 由 run 种子派生：同 run 稳定，不同 run 不同', () 
   }
   const seeds = RUN_ENCOUNTERS.map(e => battleSeed(run, e.id));
   assert.equal(new Set(seeds).size, seeds.length, '五场必须各有各的洗牌');
+
+  // Regression: the index used to be into the five anchors, so every *pool* encounter — which is
+  // most of what the tower deals — got `findIndex → -1` and hashed to one shared seed. Every
+  // `w-*` / `s-*` / `e-brood` floor in a run therefore opened on the same shuffle.
+  const poolSeeds = ALL_ENCOUNTERS.map(e => battleSeed(run, e.id));
+  assert.equal(new Set(poolSeeds).size, ALL_ENCOUNTERS.length, '每一场遭遇战都必须有自己的洗牌');
   const other = newRun('blade', 'bone', 100);
   assert.notEqual(battleSeed(run, 'ch1-1'), battleSeed(other, 'ch1-1'), '不同 run 不该撞种子');
 });
 
-test('第一章的两副牌都能当主牌组，别的不能', () => {
+test('章节给出的每一副牌组，开场屏都真的能选', () => {
+  // Regression, and a nasty shape of one: `OPENING_FORMS` was a two-entry literal in
+  // `BattleDemo.tsx`, so adding 燎原余烬 to `CHAPTER_1.decks` produced a deck that was legal in every
+  // save, unlocked in every check, and **absent from the only screen that offers one**. Every unit
+  // test passed. It took a screenshot to see it.
+  //
+  // The screen is a `.tsx` file, which `node --experimental-strip-types` cannot parse, so the check
+  // has to live here against the same function the screen calls.
+  const forms = openingForms();
+  assert.equal(forms.length, CHAPTER_1.decks.length, '每一副牌组都该有一个开局形态');
+  for (const deck of CHAPTER_1.decks) {
+    assert.ok(forms.some(form => form.main === deck), `${deck} 没有开局形态，玩家选不到它`);
+  }
+  for (const form of forms) {
+    assert.ok(CHAPTER_1.decks.includes(form.main), `${form.main} 不是第一章的牌组`);
+    assert.ok(CHAPTER_1.decks.includes(form.sub), `${form.sub} 不是第一章的牌组`);
+    assert.notEqual(form.main, form.sub, '主副不能是同一副');
+    assert.ok(form.blurb.length >= 8, '开局形态得有话说');
+    assert.ok(chapterDeck(form.main, form.sub).length > chapterDeck(form.main).length,
+      `${form.main} 的副牌组一张都没掺进去，这个形态是假的`);
+  }
+});
+
+test('第一章的三副牌都能当主牌组，别的不能', () => {
   for (const deck of DECKS) {
     assert.equal(isDeckUnlocked(deck), true);
     assert.ok(chapterDeck(deck).length > 0, `${deck} 必须能组出牌堆`);

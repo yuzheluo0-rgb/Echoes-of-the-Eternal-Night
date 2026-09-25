@@ -30,9 +30,9 @@ import {
 import { sound, type SoundKind } from '../audio';
 import { CardBack, CardFace } from '../cards/CardFace';
 import { CARD_BY_ID, DECKS, type DeckId } from '../cards/index.ts';
-import { CHAPTER_1, chapterDeck } from './chapter.ts';
+import { CHAPTER_1, chapterDeck, openingForms } from './chapter.ts';
 import {
-  KINDLING_DISCOUNT, PLAYER_MAX_HP, canPlay, cardCost, cardName, cardRules, endTurn, enemyName,
+  KINDLING_DISCOUNT, canPlay, cardAccent, cardCost, cardName, cardRules, cardTag, endTurn, enemyName,
   intentFor, intentText, livingEnemies, playCard, startBattle, type BattleCard, type BattleState,
 } from './engine.ts';
 import { ENEMY_BY_ID, MUTATION_BY_ID, type Encounter } from './enemies.ts';
@@ -41,6 +41,7 @@ import { RELIC_BY_ID, TIER_BY_ID, type RelicDefinition } from '../relics/relics.
 import {
   availableRelics, creditProgress, loadProgress, saveProgress, type RelicProgress,
 } from '../relics/unlocks.ts';
+import { creditAndSave, earnedCards, unlocksFor } from './cardUnlocks.ts';
 import {
   canEnterNode, campfire, chooseCard, claimRelic, claimReward, deckFor, discardRelic, dismissCard, enterNode, repairCard,
   nodeAt, offerDraw, resolveEvent, rollOffer, rollPendingReward, swapRelics,
@@ -52,7 +53,7 @@ import { ALL_ENCOUNTERS, ENCOUNTER_BY_ID } from './enemies.ts';
 import { BOSS_ROW } from './map.ts';
 import TowerMapView from './TowerMap.tsx';
 import {
-  HEAL_MAX, HEAL_MIN, RUN_ENCOUNTERS, battleSeed, clearRun, finishBattle, isChapterCleared,
+  HEAL_MAX, HEAL_MIN, RUN_ENCOUNTERS, battleSeed, chapterProgress, clearRun, finishBattle, isChapterCleared,
   loadRun, newRun, saveRun, swapDecks,
   type BattleOutcome, type ChapterRun,
 } from './run.ts';
@@ -66,10 +67,14 @@ import './battle.css';
 const TOUR_KEY = 'eternal-night-battle-tutorial-v1';
 
 /** The deck the chapter opens on. The pair is locked at that point; only 主/副 moves after it. */
-const OPENING_FORMS: { main: DeckId; sub: DeckId; blurb: string }[] = [
-  { main: 'blade', sub: 'bone', blurb: '以断罪之刃为主：低费多段攻击堆余烬，长明壁垒只掺一层墙与反震做底。' },
-  { main: 'bone', sub: 'blade', blurb: '以长明壁垒为主：把格挡当燃料磨死对手，断罪之刃只掺几张余烬牌做引信。' },
-];
+/**
+ * The pairs the opening screen offers — **derived from the chapter, not written out here**.
+ *
+ * This was a two-entry literal, and when 燎原余烬 joined `CHAPTER_1.decks` nothing on this screen
+ * changed: the deck was legal in every save and invisible to every player. The list lives in
+ * `chapter.ts` now, where the deck list is, and `openingForms()` reads it.
+ */
+const OPENING_FORMS = openingForms();
 
 const deckName = (id: DeckId) => DECKS.find(deck => deck.id === id)?.name ?? id;
 const deckAccent = (id: DeckId) => DECKS.find(deck => deck.id === id)?.accent ?? '#d4bd87';
@@ -422,13 +427,25 @@ function EnemyPills({ enemy }: { enemy: EnemyState }) {
     title={`${STATUS_LABEL[id]} · ${STATUS_RULE[id]}`}>{STATUS_LABEL[id]}<b>{enemy.statuses[id]}</b></span>)}</>;
 }
 
-/** A card the library does not know: 灰烬 and 未熄的誓言 live in the engine, not in `CARD_BY_ID`. */
+/**
+ * A card the library does not know: 灰烬, 未熄的誓言 and 照壁's echo live in the engine, not in
+ * `CARD_BY_ID`.
+ *
+ * The grey face is right for two of the three — junk the enemy shoved into your deck, and the boss's
+ * oath. 残壁 is the opposite kind of card, something the player *earned*, so a card may carry an
+ * accent and the face picks it up rather than making a gift look like rubbish.
+ */
 function JunkFace({ card }: { card: BattleCard }) {
-  return <article className="bd-junk">
+  const accent = cardAccent(card.cardId);
+  return <article className={`bd-junk ${accent ? 'bd-junk-accent' : ''}`}
+    style={accent ? ({ '--junk': accent } as CSSProperties) : undefined}>
+    {/* 灰烬 and 未熄的誓言 have no photograph of their own and keep the plain wash. 残壁 does, and a
+        card the player was *given* should not be the one card in hand with nothing behind it. */}
+    <span className="bd-junk-art" style={{ backgroundImage: `url(/assets/cards/${card.cardId}.webp)` }} />
     <span className="bd-junk-cost">{cardCost(card.cardId) >= 0 ? cardCost(card.cardId) : '—'}</span>
     <h3>{cardName(card.cardId)}</h3>
     <p>{cardRules(card.cardId)}</p>
-    <span className="bd-junk-tag">牌堆里的异物</span>
+    <span className="bd-junk-tag">{cardTag(card.cardId)}</span>
   </article>;
 }
 
@@ -444,6 +461,8 @@ export default function BattleDemo() {
   // Meta-progression, not run state: beating 头狼 widens the pool for the *next* run, which is why it
   // lives beside the run rather than inside it.
   const [progress, setProgress] = useState<RelicProgress>(loadProgress);
+  /** The 明焰阶 cards 击破守望者 just unlocked, held only so the result panel can name them. */
+  const [unlockedCards, setUnlockedCards] = useState<string[]>([]);
   const [picked, setPicked] = useState<string | null>(null);
   const [audioOn, setAudioOn] = useState(true);
   const [fx, setFx] = useState<{ seq: number; events: FxEvent[] }>({ seq: 0, events: [] });
@@ -569,8 +588,10 @@ export default function BattleDemo() {
     // showing this fight's briefing since then, and re-rolling now would make the screen a lie.
     const encounterId = next.currentFight;
     if (!encounterId) return;
+    // `maxHp` goes in with the HP: the run's ceiling is the fight's ceiling. Without it every
+    // 「生命上限 +N」 the player had earned was silently reset to 60 the moment a battle began.
     const fresh = startBattle(encounterId, next.main, battleSeed(next, encounterId),
-      { hp: next.hp, sub: next.sub, relics: next.relics, cards: deckFor('r', next) });
+      { hp: next.hp, maxHp: next.maxHp, sub: next.sub, relics: next.relics, cards: deckFor('r', next) });
     resetFx();
     setState(fresh);
     setOutcome(null);
@@ -589,6 +610,9 @@ export default function BattleDemo() {
     saveRun(next);
     setRun(next);
     setOutcome(null);
+    // The unlock panel belongs to the win that earned it. Carrying it into the next run would show
+    // 「明焰阶 · 已解锁」 on a chapter that has not been cleared yet.
+    setUnlockedCards([]);
     setState(null);
     sound('bell', audioOn);
   }
@@ -744,6 +768,7 @@ export default function BattleDemo() {
     clearRun();
     resetFx();
     setRun(null);
+    setUnlockedCards([]);
     setState(null);
     setOutcome(null);
     sound('bell', audioOn);
@@ -792,6 +817,11 @@ export default function BattleDemo() {
       // A graded win may unlock relics for good. Idempotent, so a replayed fight cannot farm it.
       const widened = creditProgress(progress, state.encounterId);
       if (widened !== progress) { setProgress(widened); saveProgress(widened); }
+      // And 击破守望者 widens the *card* pool — the promise `nextUnlock` has carried since the
+      // chapter was written. Read what is new *before* crediting, because afterwards the answer is
+      // always "nothing". Also idempotent.
+      const opened = unlocksFor(state.encounterId).filter(id => !earnedCards().includes(id));
+      if (opened.length) { creditAndSave(state.encounterId); setUnlockedCards(opened); }
     } else {
       // The run is dead. Drop the save so a reload cannot resume a chapter that was already lost.
       clearRun();
@@ -1078,12 +1108,22 @@ export default function BattleDemo() {
             <div><dt>带进下一场</dt><dd>{outcome.run.hp}<i>/{state.player.maxHp}</i></dd></div>
             <div><dt>{outcome.chapterCleared ? '最后一程' : '营火回血'}</dt>
               <dd className="good">+{outcome.heal}</dd></div>
-            <div><dt>进度</dt><dd>{outcome.run.cleared.length}<i>/{RUN_ENCOUNTERS.length}</i></dd></div>
+            {/* Anchors beaten, not `cleared.length` — the tower's pool fights are logged in `cleared`
+                too, so the raw length reads 「7/5」 on any run that has fought more than five times. */}
+            <div><dt>进度</dt><dd>{chapterProgress(outcome.run)}<i>/{RUN_ENCOUNTERS.length}</i></dd></div>
           </dl>
           {outcome.healed < outcome.heal && <p className="bd-spoils-note">
             营火给了 {outcome.heal} 点，但生命已到上限，实际只收回 {outcome.healed} 点。
           </p>}
         </>}
+
+        {!!unlockedCards.length && <div className="bd-unlock">
+          <p className="bd-unlock-kicker">明焰阶 · 已解锁</p>
+          <div className="bd-unlock-cards">
+            {unlockedCards.map(id => <b key={id}>{cardName(id)}</b>)}
+          </div>
+          <p className="bd-unlock-note">往后每一局，它们都可能出现在战利品里。</p>
+        </div>}
 
         {!outcome.won && <p className="bd-spoils-note">
           这一章到此为止。火熄了就得重新点——新的牌序，新的血量，从头再来。
@@ -1379,7 +1419,9 @@ function BattlePrep({ run, outcome, audioOn, onAudio, onSwap, onFight, onClaimDr
       <section className="bd-runbar">
         <div className="bd-run-hp">
           <p className="bd-run-label">带进这一场的生命</p>
-          <HealthBar hp={run.hp} maxHp={PLAYER_MAX_HP} block={0} tone="player" />
+          {/* `run.maxHp`, not `PLAYER_MAX_HP` — the bar has to agree with what the fight will open
+              with, and that is now the run's own ceiling. */}
+          <HealthBar hp={run.hp} maxHp={run.maxHp} block={0} tone="player" />
           {lastOutcome?.won && <p className="bd-run-heal">
             上一场营火回血 <b>+{lastOutcome.heal}</b>
             {lastOutcome.healed < lastOutcome.heal && <i>（生命已满，实收 {lastOutcome.healed}）</i>}

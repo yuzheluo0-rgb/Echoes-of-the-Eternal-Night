@@ -67,6 +67,20 @@ export const CARD_QUERY: Record<string, string> = {
   'flame-26': 'charcoal pieces close up',
   'flame-27': 'inferno hellfire',
   'flame-28': 'everlasting flame lamp',
+  // The twelve that fill the deck's four holes. Queries are literal, because the scoring pass
+  // rewards saturation and edge density and a phrase like 「灰烬」 alone returns sunset skies.
+  'flame-29': 'burnt wood ashes grey',
+  'flame-30': 'hands warming by campfire close up',
+  'flame-31': 'glowing charcoal embers bed',
+  'flame-32': 'burning grass field wildfire',
+  'flame-33': 'dark storm clouds dramatic sky',
+  'flame-34': 'explosion fire burst sparks dark',
+  'flame-35': 'burned forest aftermath blackened trees',
+  'flame-36': 'forging hot steel glowing',
+  'flame-37': 'feeding logs into fire',
+  'flame-38': 'intense bright flames close up',
+  'flame-39': 'match igniting flame start',
+  'flame-40': 'dying embers last glow',
 
   // 长明壁垒 — stone, bone, fortification, and things that do not move.
   'bone-01': 'ornate round shield',
@@ -139,6 +153,11 @@ export const CARD_QUERY: Record<string, string> = {
   'neutral-08': 'stone wall with flames',
   'neutral-09': 'molten metal pouring',
   'neutral-10': 'afterglow sunset dramatic sky',
+
+  // 照壁's echo. Not a library card — it is conjured by 回响 and lives in `OFF_DECK_CARDS` — but the
+  // player holds it in their hand and looks at it, so it gets a face like any other. The search is
+  // deliberately literal: a wall that has come apart, which is what 「残壁」 means.
+  'echo-01': 'broken stone wall rubble collapse',
 };
 
 /**

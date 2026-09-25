@@ -66,6 +66,16 @@
   font-size: 21px; line-height: 1.85; color: var(--gold);
   font-family: 'Noto Serif SC', 'Songti SC', serif;
 }
+/* The ledger: what the answer actually changed. It sits under the prose above and is deliberately
+   **sans-serif, not the serif** — that line is the floor talking, this one is the game talking, and
+   the two have different jobs. Before this existed, `金币` / `生命` / `生命上限` were rendered nowhere
+   in the whole flow: the outcome line is prose by design and the footer is drawn from the run as it
+   stood *before* the answer was committed, so a cost the player had just paid was invisible. */
+.nd-delta {
+  margin-top: 16px; padding-left: 21px;
+  font-size: 19px; letter-spacing: 1.2px; color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
 
 /* ------------------------------------------------------------------- choices */
 
@@ -164,7 +174,7 @@
   .nd-panel { padding: 26px 20px 24px; }
   .nd-title { font-size: 30px; letter-spacing: 5px; }
   .nd-copy { font-size: 16px; }
-  .nd-effect, .nd-outcome { font-size: 17px; }
+  .nd-effect, .nd-outcome, .nd-delta { font-size: 17px; }
   .nd-choices { grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 20px; }
   .nd-choice { padding: 18px 18px; }
   .nd-choice-label { font-size: 20px; letter-spacing: 3px; }

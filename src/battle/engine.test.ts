@@ -1,15 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  FIELD_LIMIT, canPlay, cardCost, cardCostNow, cardName, cardRules, endTurn, enemyName, intentFor,
-  intentText, isValidBattle, livingEnemies, playCard, startBattle, type BattleCard, type BattleState,
+  ENERGY_PER_TURN, FIELD_LIMIT, canPlay, cardCost, cardCostNow, cardName, cardRules, endTurn, enemyName,
+  intentFor, intentText, isValidBattle, livingEnemies, playCard, startBattle,
+  type BattleCard, type BattleState,
 } from './engine.ts';
+import { CARD_EFFECTS } from './effects.ts';
 import { ENCOUNTERS, ENEMY_BY_ID, MUTATIONS, MUTATION_BY_ID, MUTABLE_RANKS, OATH, POOLS } from './enemies.ts';
 import { starterDeck } from './chapter.ts';
 import type { DeckId } from '../cards/index.ts';
 
-/** The two decks chapter I hands out. */
-const DECKS: DeckId[] = ['blade', 'bone'];
+/** The decks chapter I hands out — three, since 燎原余烬 joined. */
+const DECKS: DeckId[] = ['blade', 'flame', 'bone'];
 /** Piled everywhere a card can be, hand included. */
 const pile = (s: BattleState): BattleCard[] => [...s.hand, ...s.draw, ...s.discard, ...s.exhaust];
 const count = (s: BattleState): number => pile(s).length;
@@ -238,6 +240,293 @@ test('攒烬每次命中给余烬，并在下个回合开始时清零', () => {
   assert.equal(after.player.statuses.ember, 2, '余烬本身不会消退');
 });
 
+// ------------------------------------------------- 明焰阶 · 击破守望者后解锁
+
+/** The eight cards 击破守望者 promises. They are not in the chapter's starting pool, so every test
+ *  below hands the battle an explicit pile instead of naming a deck and hoping. */
+const BLAZE = ['blade-16', 'blade-17', 'blade-19', 'blade-20', 'bone-16', 'bone-17', 'bone-19', 'bone-21'];
+
+/** Just this card in hand, full energy, and one enemy with a known, unblocked body. */
+function rigged(cardId: string, seed: number, hp = 40, maxHp = 40): BattleState {
+  const deck = cardId.startsWith('blade') ? 'blade' : cardId.startsWith('flame') ? 'flame' : 'bone';
+  const state = withHand(startBattle('ch1-1', deck, seed, { cards: [{ cardId }] }), [cardId], 9);
+  const target = state.enemies[0];
+  target.hp = hp;
+  target.maxHp = maxHp;
+  target.block = 0;
+  target.statuses = {};
+  return state;
+}
+/**
+ * Damage one play of `rig-0` did to the first enemy, read as a difference rather than as a total.
+ *
+ * ⚠️ **This measures HP lost, which stops at the target's remaining HP** — a hit that kills reports
+ * only the sliver that was left, because `dealToEnemy` floors the body at zero. So a test using this
+ * has to keep its target alive; to assert a big number on a small body, give it a big body.
+ */
+function dealt(state: BattleState): { damage: number; after: BattleState } {
+  const before = state.enemies[0].hp;
+  const after = playCard(state, 'rig-0', state.enemies[0].uid);
+  return { damage: before - after.enemies[0].hp, after };
+}
+
+test('明焰阶八张牌都真的实现了，一张白板都没有', () => {
+  // The whole reason this set was left locked. `nextUnlock` promised them for a chapter that could
+  // not deliver them, and handing a player eight cards that log 「还没有实装效果」 is worse than
+  // handing them nothing at all.
+  for (const id of BLAZE) {
+    assert.ok(CARD_EFFECTS[id], `${id} 没有效果 —— 解锁出去就是一张白板`);
+    const { after } = dealt(rigged(id, 41));
+    const said = after.log.map(line => line.text).join('\n');
+    assert.ok(!said.includes('还没有实装效果'), `${id} 打出来是空的`);
+  }
+});
+
+test('断罪按目标已失去的整十个百分点加伤，边界不因浮点走样', () => {
+  // `1 - hp/maxHp` at exactly 10% lost is 0.09999999999999998, and `× 10` floors to 0 — the card
+  // would print 8 and deal 6 on the one value a player is most likely to check. Counted in whole
+  // tenths, by subtraction.
+  assert.equal(dealt(rigged('blade-16', 42, 40, 40)).damage, 6, '满血：只有基础伤害');
+  assert.equal(dealt(rigged('blade-16', 42, 36, 40)).damage, 8, '正好失去 10% → 6 + 2');
+  assert.equal(dealt(rigged('blade-16', 42, 32, 40)).damage, 10, '失去 20% → 6 + 2×2');
+  assert.equal(dealt(rigged('blade-16', 42, 20, 40)).damage, 16, '失去 50% → 6 + 5×2');
+  // Nine tenths needs a body big enough to survive the answer — see the note on `dealt`.
+  assert.equal(dealt(rigged('blade-16', 42, 30, 300)).damage, 6 + 9 * 2, '失去 90% → 6 + 9×2');
+});
+
+test('照壁的回声只响一次：复制品不带回响，链子必然收得住', () => {
+  // The constraint the token exists for. If 回响 put a copy of 照壁 *itself* into the hand, playing
+  // that copy would put another one there and the battle would never end — so 残壁 is a named card
+  // with no 回响 on it, and this test is what stops a future edit from "simplifying" it back.
+  const rig = rigged('bone-17', 43);
+  const played = playCard(rig, 'rig-0');
+  assert.equal(played.player.block, 5, '照壁给 5 点格挡');
+  assert.equal(played.player.statuses.reflection, 1, '外加 1 层映照');
+  assert.equal(played.hand.length, 1, '手里多了一张');
+
+  const echo = played.hand[0];
+  assert.equal(echo.cardId, 'echo-01', '回声是残壁');
+  assert.notEqual(echo.cardId, 'bone-17', '绝不能是照壁本身 —— 那就是无限循环');
+  assert.equal(cardName('echo-01'), '残壁');
+
+  // And the echo is a real card: it blocks, and it adds nothing behind itself.
+  const after = playCard(played, echo.uid);
+  assert.equal(after.hand.length, 0, '残壁不再生成任何东西');
+  assert.equal(after.player.block, 8, '5 + 3');
+});
+
+test('借焰先吃掉灼烧再结算伤害，击杀也不会烧错人', () => {
+  // Read-then-hit would let a lethal 5 move `currentTarget` between the halves and burn the scorch
+  // off whichever enemy stepped up instead.
+  const rig = rigged('blade-20', 44);
+  rig.enemies[0].statuses.scorch = 4;
+  const { damage, after } = dealt(rig);
+  assert.equal(damage, 5, '牌面伤害');
+  assert.equal(after.player.statuses.ember, 4, '每层灼烧转 1 层余烬');
+  assert.equal(after.enemies[0].statuses.scorch, undefined, '灼烧被吃干净');
+});
+
+test('刃雨按每一次挥击真的碰到几个敌人给余烬', () => {
+  // Two swings, and 「每命中一个敌人」 counts per swing — an enemy killed by the first is not hit by
+  // the second and must not be paid for twice.
+  const rig = rigged('blade-17', 45);
+  rig.enemies.forEach(enemy => { enemy.hp = 40; enemy.maxHp = 40; enemy.block = 0; });
+  const { damage } = dealt(rig);
+  assert.equal(damage, 8, '4 点两次');
+  const two = rig.enemies.length;
+  assert.equal(rigged('blade-17', 45).enemies.length, two, '这场固定两只');
+});
+
+test('炭墙与回震读的是已经存在的数字', () => {
+  const burnt = rigged('bone-19', 46);
+  burnt.enemies[0].statuses.scorch = 3;
+  const wall = playCard(burnt, 'rig-0');
+  assert.equal(wall.player.block, 6 + 3, '6 点，加上目标身上的灼烧');
+
+  const plain = playCard(rigged('bone-19', 46), 'rig-0');
+  assert.equal(plain.player.block, 6, '没有灼烧就是 6');
+
+  const walled = rigged('bone-16', 47);
+  walled.player.block = 9;
+  const { damage, after } = dealt(walled);
+  assert.equal(damage, 9, '回震的伤害等于格挡');
+  assert.equal(after.player.block, 9, '读格挡，不消耗它');
+});
+
+test('裂甲最多吃掉 3 层锋锐，封炉蓄火并给壁垒', () => {
+  const withEdge = rigged('blade-19', 48);
+  withEdge.player.statuses.edge = 5;
+  const { damage, after } = dealt(withEdge);
+  // 7, plus 4 for each of the three layers it eats, **plus the 1-per-layer that the two layers it did
+  // not eat still contribute** — 锋锐 is applied to every attack hit inside `strike`, and 裂甲 only
+  // spends three of them. The two rules stack; they are not alternatives, and this assertion is what
+  // says so out loud.
+  assert.equal(damage, 7 + 3 * 4 + 2, '7 + 3×4 + 剩下 2 层锋锐各 +1');
+  assert.equal(after.player.statuses.edge, 2, '只吃掉 3 层');
+
+  assert.equal(dealt(rigged('blade-19', 48)).damage, 7, '没有锋锐就是一张普通的 7');
+
+  const banked = playCard(rigged('bone-21', 49), 'rig-0');
+  assert.equal(banked.banking, true, '封炉开了蓄火');
+  assert.equal(banked.player.statuses.rampart, 1);
+});
+
+// ---------------------------------------------------------------- 燎原余烬
+
+test('灼烧终于有了施加端：火种点着了目标', () => {
+  // Until 燎原余烬 arrived **nothing in the engine could apply 灼烧**. `ctx.gain` writes the player's
+  // own statuses and `mark` is hardcoded to 烙印, so the half that ticks (enemy turn start, falling
+  // off by one) had been in the engine since the beginning while the half that lights it had no door
+  // at all. This is the test that says the door exists.
+  const rig = rigged('flame-01', 51);
+  const { damage, after } = dealt(rig);
+  assert.equal(damage, 4, '牌面伤害');
+  assert.equal(after.enemies[0].statuses.scorch, 2, '两回合后会自己掉血');
+});
+
+test('舔焰只对已经被点着的目标多打 4 点', () => {
+  assert.equal(dealt(rigged('flame-04', 52)).damage, 3, '没点着就是一张 3');
+  const lit = rigged('flame-04', 52);
+  lit.enemies[0].statuses.scorch = 1;
+  assert.equal(dealt(lit).damage, 7);
+});
+
+test('裂焰把灼烧吃干净，每层 3 点；打磨后是每层 4 点，不是整张 +1', () => {
+  const rig = rigged('flame-09', 53, 60, 60);
+  rig.enemies[0].statuses.scorch = 5;
+  const { damage, after } = dealt(rig);
+  assert.equal(damage, 15, '5 层 × 3');
+  assert.equal(after.enemies[0].statuses.scorch, undefined, '灼烧被吃干净');
+
+  // 「每层造成 3 点伤害」 is five separate swings, so the polish delta has to land five times. Written
+  // as a single `hit(layers * 3)` the polished card would deal 16 where it prints 20 — the card face
+  // would be lying, which is the one thing `upgrades.ts` is not allowed to do.
+  const polished = rigged('flame-09', 53, 60, 60);
+  polished.enemies[0].statuses.scorch = 5;
+  polished.hand[0] = { ...polished.hand[0], upgraded: true };
+  assert.equal(dealt(polished).damage, 20, '5 层 × 4');
+});
+
+test('引信当场给能量，下一回合连本带利扣回去', () => {
+  const rig = rigged('flame-03', 54);
+  const played = playCard(rig, 'rig-0');
+  assert.equal(played.player.energy, 10, '0 费，还多 1 点');
+  assert.equal(played.player.statuses.drained, 1, '记在下回合的账上 — 爆燃不自造能量，它只是预支');
+  assert.equal(endTurn(played).player.energy, ENERGY_PER_TURN - 1, '下回合正好少 1 点');
+});
+
+test('炭衣把目标身上的灼烧换成格挡，至多吃 4 层', () => {
+  const rig = rigged('flame-15', 55);
+  rig.enemies[0].statuses.scorch = 6;
+  const played = playCard(rig, 'rig-0');
+  assert.equal(played.player.block, 12, '4 层 × 3');
+  assert.equal(played.enemies[0].statuses.scorch, 2, '只吃掉 4 层，还剩 2');
+});
+
+test('扬灰把攒下的余烬烧成全场灼烧', () => {
+  const rig = rigged('flame-08', 56);
+  for (const enemy of rig.enemies) { enemy.hp = 40; enemy.maxHp = 40; enemy.block = 0; enemy.statuses = {}; }
+  rig.player.statuses.ember = 3;
+  const played = playCard(rig, 'rig-0');
+  assert.equal(played.player.statuses.ember, undefined, '3 层余烬全花掉');
+  for (const enemy of played.enemies) assert.equal(enemy.statuses.scorch, 2, '场上每一只都被点着');
+});
+
+// -------------------------------------------- 燎原余烬的四块补丁（flame-29..40）
+
+/** A flame battle with this exact hand, player already hurt, so a heal has somewhere to go. */
+function hurtRig(cardIds: string[], seed: number, hp = 30): BattleState {
+  const s = withHand(startBattle('ch1-1', 'flame', seed, { cards: [{ cardId: cardIds[0] }] }), cardIds, 9);
+  s.player.hp = hp;
+  return s;
+}
+
+test('回血是真的：引擎原本没有任何一张牌能回血', () => {
+  // The deck pays for three of its own cards in 生命, and until now the *only* healing in the game
+  // was the between-fights roll — so 燎原余烬 was a deck that slowly killed itself with no answer.
+  const crowded = hurtRig(['flame-29', 'flame-29', 'flame-29'], 61);
+  assert.equal(playCard(crowded, 'rig-0').player.hp, 36, '手里还有牌，回 6');
+
+  // 空明 reads the hand the card was played *from*, and the card is already out of it by the time the
+  // effect runs — which is why every 空明 card in the library behaves this way.
+  const alone = hurtRig(['flame-29'], 61);
+  assert.equal(playCard(alone, 'rig-0').player.hp, 41, '手牌空了，回 11');
+
+  // And it cannot go over the ceiling.
+  const nearlyFull = hurtRig(['flame-29'], 61, 58);
+  assert.equal(playCard(nearlyFull, 'rig-0').player.hp, 60, '回血不会溢出上限');
+});
+
+test('取暖与炭火把余烬和火场换成生命', () => {
+  const warm = hurtRig(['flame-30'], 62);
+  warm.player.statuses.ember = 3;
+  assert.equal(playCard(warm, 'rig-0').player.hp, 42, '3 层余烬 × 4 点');
+  assert.equal(hurtRig(['flame-30'], 62).player.hp, 30, '没有余烬就什么也回不了');
+
+  // 炭火 counts the enemies the burn *landed on* — measured before `burnAll`, so a kill cannot shrink
+  // the number the player was promised.
+  const coals = hurtRig(['flame-31'], 63);
+  const lit = coals.enemies.length;
+  const after = playCard(coals, 'rig-0');
+  assert.equal(after.player.hp, 30 + lit * 4, `场上一共 ${lit} 只，每只回 4 点`);
+  for (const enemy of after.enemies) assert.equal(enemy.statuses.scorch, 2);
+});
+
+test('余温炸裂一次吃掉全场的灼烧，然后砸全场', () => {
+  const rig = hurtRig(['flame-34'], 64);
+  for (const enemy of rig.enemies) { enemy.hp = 40; enemy.maxHp = 40; enemy.block = 0; enemy.statuses = { scorch: 2 }; }
+  const before = rig.enemies.map(enemy => enemy.hp);
+  const after = playCard(rig, 'rig-0');
+  // 2 enemies × 2 layers = 4 layers total → 4 separate hitAll(2) passes → 8 to each.
+  after.enemies.forEach((enemy, i) => assert.equal(before[i] - enemy.hp, 8, '每层对所有敌人 2 点'));
+  for (const enemy of after.enemies) assert.equal(enemy.statuses.scorch, undefined, '灼烧被吃干净');
+});
+
+test('消耗余烬的三张：格挡、直伤、抽牌', () => {
+  const feed = hurtRig(['flame-37'], 65);
+  feed.player.statuses.ember = 3;
+  const walled = playCard(feed, 'rig-0');
+  assert.equal(walled.player.block, 15, '3 层 × 5 点格挡');
+  assert.equal(walled.player.statuses.ember, undefined, '余烬花光了');
+  assert.equal(playCard(hurtRig(['flame-37'], 65), 'rig-0').player.block, 0, '没有余烬就没有墙');
+
+  const white = hurtRig(['flame-38'], 66);
+  white.player.statuses.ember = 4;
+  white.enemies[0].hp = 40; white.enemies[0].maxHp = 40; white.enemies[0].block = 0;
+  const before = white.enemies[0].hp;
+  assert.equal(before - playCard(white, 'rig-0').enemies[0].hp, 12, '4 层 × 3 点');
+
+  // Stocked by hand: the pile a `startBattle` is handed is already drawn into the opening hand, so
+  // there is nothing left to draw from unless the test puts it there.
+  const draw = hurtRig(['flame-39'], 67);
+  draw.player.statuses.ember = 2;
+  draw.draw = [{ uid: 'd0', cardId: 'flame-01' }, { uid: 'd1', cardId: 'flame-01' }];
+  const drawn = playCard(draw, 'rig-0');
+  assert.equal(drawn.player.statuses.ember, undefined, '花掉 2 层');
+  assert.equal(drawn.hand.length, 2, '抽 2 张');
+
+  const broke = hurtRig(['flame-39'], 67);
+  broke.draw = [{ uid: 'd0', cardId: 'flame-01' }, { uid: 'd1', cardId: 'flame-01' }];
+  assert.equal(playCard(broke, 'rig-0').hand.length, 0, '没余烬就抽不动');
+});
+
+test('焦土与白热是每层结算，打磨后每层都变大', () => {
+  const scorched = hurtRig(['flame-35'], 68);
+  scorched.enemies[0].hp = 60; scorched.enemies[0].maxHp = 60; scorched.enemies[0].block = 0;
+  scorched.enemies[0].statuses = { scorch: 4 };
+  const before = scorched.enemies[0].hp;
+  const hit = playCard(scorched, 'rig-0');
+  assert.equal(before - hit.enemies[0].hp, 20, '4 层 × 5 点');
+  assert.equal(hit.player.hp, 28, '自己的 2 点也照扣');
+
+  const polished = hurtRig(['flame-35'], 68);
+  polished.enemies[0].hp = 60; polished.enemies[0].maxHp = 60; polished.enemies[0].block = 0;
+  polished.enemies[0].statuses = { scorch: 4 };
+  polished.hand[0] = { ...polished.hand[0], upgraded: true };
+  const beforeP = polished.enemies[0].hp;
+  assert.equal(beforeP - playCard(polished, 'rig-0').enemies[0].hp, 28, '打磨后每层 7 点，不是整张 +2');
+});
+
 test('多段牌的目标中途死亡时，剩下的命中转给下一个敌人', () => {
   const rig = withHand(startBattle('ch1-1', 'blade', 24), ['blade-02']);
   rig.enemies[0].hp = 2;
@@ -404,7 +693,7 @@ test('第一章五场遭遇战都能开局，牌数守恒', () => {
     }
   }
   assert.throws(() => startBattle('nope', 'blade'), /没有这场战斗/);
-  assert.throws(() => startBattle('ch1-1', 'flame'), /不能携带/);
+  // 燎原余烬 is a chapter-I deck now; 千面回廊 is the one still locked away.
   assert.throws(() => startBattle('ch1-1', 'mirror'), /不能携带/);
 });
 
@@ -541,7 +830,7 @@ test('未知的遭遇战 id 直接抛错，池子之外也开不了', () => {
 
 // ------------------------------------------------------------- 12. random play
 
-test('40 局随机对局：不变量恒成立，且必然分出胜负', () => {
+test('每一场遭遇战 × 每一副牌组 × 4 个种子：不变量恒成立，且必然分出胜负', () => {
   const check = (s: BattleState, size: number) => {
     assert.ok(isValidBattle(s), '存档必须始终合法');
     assert.ok(s.player.hp >= 0 && s.player.hp <= s.player.maxHp, `生命越界：${s.player.hp}`);
@@ -593,7 +882,10 @@ test('40 局随机对局：不变量恒成立，且必然分出胜负', () => {
       }
     }
   }
-  assert.equal(wins + losses, 40);
+  // Derived rather than written down: this read `40` when the chapter had two decks, and adding a
+  // third silently made the count 60. The number is a property of the loops above, so it should be
+  // spelled as one.
+  assert.equal(wins + losses, DECKS.length * ENCOUNTERS.length * 4);
   assert.ok(longest < 400, '没有一局是靠步数上限停下来的');
 });
 

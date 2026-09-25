@@ -21,10 +21,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CHAPTER_1 } from './chapter.ts';
 import { UPGRADES, upgradeFor, upgradedText, isUpgradable } from './upgrades.ts';
+import { BOSS_IDS } from './cardUnlocks.ts';
 import { CARD_BY_ID } from '../cards/index.ts';
 
-/** Every card chapter I can put in a deck. Two decks overlap on the neutral cards, hence the Set. */
-const UNLOCKED = [...new Set(Object.values(CHAPTER_1.unlocked).flat())];
+/**
+ * Every card chapter I can put in a deck: the starting pool, plus the 明焰阶 set 击破守望者 unlocks.
+ * The two decks overlap on the neutral cards, hence the Set.
+ *
+ * The unlocked half belongs here even though a fresh save cannot draw it yet — once the boss is down
+ * these are dealt like any other card, and a polish row missing from one of them would be a campfire
+ * that offers nothing without saying why.
+ */
+const UNLOCKED = [...new Set([...Object.values(CHAPTER_1.unlocked).flat(), ...BOSS_IDS])];
 
 /**
  * The numbers a rules text prints, in order. `undefined` for a text with none.
@@ -71,6 +79,15 @@ test('打磨：文案里的数字个数不能凭空多出来或少下去', () =>
     const card = CARD_BY_ID.get(id)!;
     const upgrade = UPGRADES[id]!;
     const before = digits(card.text) ?? [], after = digits(upgrade.text) ?? [];
+    // 回震 is the exception, and it is a real one rather than a hole: its text prints **no numbers at
+    // all**, because it deals 「等同于你当前格挡」. The rule below is unsatisfiable *and* meaningless
+    // for it — there is no printed number to move — so the only polish a player could possibly see is
+    // one that makes a number appear. What the check becomes for that card is exactly that.
+    if (!before.length) {
+      assert.ok(after.length > 0,
+        `${card.name} 牌面上一个数字都没有，升级必须让某个数字出现，否则打磨完全看不见`);
+      continue;
+    }
     // Every upgrade in chapter I raises a number that was already printed. A text that *adds* a
     // number is describing an effect the delta cannot produce, because the delta shapes are only
     // `hit` / `block` / `draw` / `reclaim` / `status` / `power` — all of them "more of something that
@@ -103,7 +120,7 @@ test('打磨：升级不是另一张牌，类型和费用都不动', () => {
     // `Upgrade` has no field for cost or type, and that is the design: 打磨 is the same card with
     // bigger numbers. If the shape ever grows one, this test is where the decision has to be made
     // deliberately rather than by someone adding a field.
-    assert.deepEqual(Object.keys(upgrade).filter(key => !['text', 'hit', 'block', 'draw', 'reclaim', 'status', 'power'].includes(key)),
+    assert.deepEqual(Object.keys(upgrade).filter(key => !['text', 'hit', 'block', 'draw', 'reclaim', 'status', 'power', 'heal'].includes(key)),
       [], `${card.name} 的升级条目带了未知字段`);
     assert.ok(upgradedText(id, card.text) !== card.text, `${card.name}：upgradedText 没有换文案`);
   }

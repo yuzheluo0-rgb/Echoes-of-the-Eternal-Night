@@ -13,8 +13,10 @@
  *      on top, capped at `PLAYER_MAX_HP`. A defeat ends the run.
  *   2. **The deck *pair* is locked, the orientation is not.** `main` and `sub` are chosen once and
  *      `swapDecks` only ever exchanges them, so a run cannot smuggle in a third deck.
- *   3. **The chapter is a line.** `cleared` is always a prefix of `ENCOUNTERS`, enforced by
- *      `isValidRun` as well as by `canEnter`, so no save can skip 头狼 and walk into the boss.
+ *   3. **`cleared` is a log of wins, not a sequence.** The tower deals fights from pools, so the order
+ *      they are won in has nothing to do with the chapter's order, and the same fight can come round
+ *      twice. `isValidRun` therefore checks membership and uniqueness rather than a prefix, and the
+ *      chapter is done when each of the five anchors has been beaten *at some point*.
  *
  * Randomness is the engine's own LCG, copied verbatim, over the run's private `rng` stream. Drawing
  * a fight's shuffle from `battleSeed()` and the between-fight heal from `rng` keeps the two uses
@@ -513,6 +515,17 @@ export function isChapterCleared(run: ChapterRun): boolean {
 }
 
 /**
+ * How many of the chapter's five anchors have been beaten — **not** `cleared.length`.
+ *
+ * The two were the same number back when the chapter was five fights in a row. Now the tower deals
+ * from pools, so `cleared` also logs `w-*` / `s-*` / `e-brood` wins and is routinely longer than the
+ * chapter: rendering its length against five printed 「7/5」. Progress means anchors.
+ */
+export function chapterProgress(run: ChapterRun): number {
+  return RUN_ENCOUNTERS.filter(entry => run.cleared.includes(entry.id)).length;
+}
+
+/**
  * Exchange the main and sub decks. The pair is what the chapter locks; which half leads is the one
  * lever the player gets between fights, so this is the whole of the per-fight deck decision.
  */
@@ -520,9 +533,17 @@ export function swapDecks(run: ChapterRun): ChapterRun {
   return { ...run, main: run.sub, sub: run.main };
 }
 
-/** The shuffle seed for one fight. Derived from the run seed, so a run replays identically. */
+/**
+ * The shuffle seed for one fight. Derived from the run seed, so a run replays identically.
+ *
+ * ⚠️ **The index is into `ALL_ENCOUNTERS`, not the five anchors.** It was the anchors, and the map
+ * deals pool fights far more often than anchors — so `findIndex` returned **-1 for every pool fight**
+ * and they all hashed to the same seed. Every `w-*` / `s-*` / `e-brood` floor in a run opened on a
+ * byte-identical shuffle: about four fights per run dealt the same hand. Anchors still get their own
+ * seed each, because their indices are still distinct.
+ */
 export function battleSeed(run: ChapterRun, encounterId: string): number {
-  const index = RUN_ENCOUNTERS.findIndex(entry => entry.id === encounterId);
+  const index = ALL_ENCOUNTERS.findIndex(entry => entry.id === encounterId);
   return (Math.imul(run.seed, 31) + index + 1) >>> 0;
 }
 
@@ -715,10 +736,20 @@ export function isValidRun(value: unknown): value is ChapterRun {
   // deals its fights: every pool holds the chapter's anchors, so 头狼 can be dealt after 余烬守望者
   // would have been, and the log ends up out of sequence through no fault of the player's. The prefix
   // rule threw those runs away on reload. What it was actually protecting against — a hand-edited
-  // save that skips to the boss — is membership: an id that is not a chapter encounter is refused.
-  // Duplicates are refused too, which is what keeps the no-skip property: five entries of which one
-  // repeats cannot cover all five chapter encounters.
-  if (!run.cleared.every(id => RUN_ENCOUNTERS.some(entry => entry.id === id))) return false;
+  // save that skips to the boss — is membership.
+  //
+  // ⚠️ **Membership is `ALL_ENCOUNTERS`, not the five anchors.** It was the anchors, and that made
+  // every run that won a *pool* fight save itself into a state this function refuses — `finishBattle`
+  // logs whatever `state.encounterId` it was handed, and the map deals `w-*` / `s-*` / `e-brood` far
+  // more often than it deals an anchor. `loadRun` drops an invalid run rather than repairing it, so
+  // the player's whole chapter vanished on the next reload. Roughly half of every run's fights are
+  // pool fights, so this was not an edge case; it was the normal path.
+  //
+  // No-skip still holds because `cleared` is not what decides the chapter any more — `isChapterCleared`
+  // asks whether each of the five anchors is in it. An id that names no encounter at all is still
+  // refused, and duplicates are still refused, so five entries cannot cover five anchors while naming
+  // something else.
+  if (!run.cleared.every(id => ALL_ENCOUNTERS.some(entry => entry.id === id))) return false;
   if (new Set(run.cleared).size !== run.cleared.length) return false;
   if (!Number.isInteger(run.seed) || !Number.isInteger(run.rng) || run.rng < 0 || run.rng > 0xFFFFFFFF) return false;
   return true;

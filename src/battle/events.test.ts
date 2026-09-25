@@ -17,7 +17,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EVENTS, EVENT_BY_ID, canAfford, eventForNode, type EventEffect } from './events.ts';
+import { EVENTS, EVENT_BY_ID, canAfford, describeEffect, eventForNode, outcomeLine, type EventEffect } from './events.ts';
 import { generateMap, reachableFrom, type MapNode } from './map.ts';
 import { canEnterNode, enterNode, newRun, resolveEvent, type ChapterRun } from './run.ts';
 
@@ -63,6 +63,72 @@ function hasPrice(option: (typeof EVENTS)[number]['options'][number]): boolean {
 function isFreeGain(option: (typeof EVENTS)[number]['options'][number]): boolean {
   return !hasPrice(option) && isGain(option.effect);
 }
+
+// ------------------------------------------------------------ saying it in numbers
+
+/** One representative of every kind, so the completeness check below has something to call. */
+const SAMPLE: Record<EventEffect['kind'], EventEffect> = {
+  gold: { kind: 'gold', amount: 1 },
+  hp: { kind: 'hp', amount: 1 },
+  maxHp: { kind: 'maxHp', amount: 1 },
+  relic: { kind: 'relic' },
+  remove: { kind: 'remove' },
+  polish: { kind: 'polish' },
+  duplicate: { kind: 'duplicate' },
+  cards: { kind: 'cards', count: 3 },
+  nothing: { kind: 'nothing' },
+};
+
+/**
+ * Every effect can say, in numbers, what it did — and says the *right* number.
+ *
+ * This is the missing half of the outcome line. `outcome` is prose **by design** (rule 3 at the top
+ * of `events.ts`) and the result screen's footer is drawn from the run as it stood *before* the
+ * answer was committed, so `outcomeLine` is the only place a change is ever printed. An effect kind
+ * it did not handle would therefore be silent twice over, which is exactly the state this test was
+ * written to end: `金币` / `生命` / `生命上限` used to be rendered nowhere in the entire flow, and a
+ * player who had just paid 6 生命 watched the screen go on reading 「生命 60/60」.
+ *
+ * `resolveEvent`'s switch has no `default`, so a new kind that nobody settles is already a compile
+ * error. This is the same guarantee one layer up, and it is a *runtime* list because a type cannot
+ * be iterated — the same reason `GAINING` above is written out by hand. Add the kind here too.
+ *
+ * Not just "non-empty": the check is that the number the effect carries actually appears in the line.
+ * A description that renders 「生命 +?」 would pass a mere emptiness check and help nobody.
+ */
+test('每一种效果都说得出来，而且印的是它自己的数字', () => {
+  for (const kind of Object.keys(SAMPLE) as EventEffect['kind'][]) {
+    const described = describeEffect(SAMPLE[kind]);
+    assert.ok(described.trim().length >= 2, `${kind} 描述不出来：${JSON.stringify(described)}`);
+  }
+  assert.equal(new Set(Object.keys(SAMPLE)).size, Object.keys(SAMPLE).length, 'SAMPLE 里不能有重复');
+  assert.deepEqual(Object.keys(SAMPLE).sort(), [...GAINING].sort(),
+    'SAMPLE 与 GAINING 必须覆盖同一组 kind —— 加了新效果要同时登记这两处');
+
+  for (const event of EVENTS) {
+    for (const option of event.options) {
+      const where = `${event.id} / ${option.label}`;
+      const line = outcomeLine(option);
+      assert.ok(line.trim().length >= 2, `${where}：结果行是空的`);
+
+      const effect = option.effect;
+      if (effect.kind === 'gold' || effect.kind === 'hp' || effect.kind === 'maxHp') {
+        assert.ok(line.includes(String(Math.abs(effect.amount))),
+          `${where}：效果是 ${effect.amount}，可结果行里没有这个数 —— ${line}`);
+      }
+      if (effect.kind === 'cards') {
+        assert.ok(line.includes(String(effect.count)), `${where}：结果行没印张数 —— ${line}`);
+      }
+      // A cost is half the exchange and has to be on the line the same way.
+      if (option.requires?.gold) {
+        assert.ok(line.includes(String(option.requires.gold)), `${where}：付出的金币没印出来 —— ${line}`);
+      }
+      if (option.requires?.hp) {
+        assert.ok(line.includes(String(option.requires.hp)), `${where}：付出的生命没印出来 —— ${line}`);
+      }
+    }
+  }
+});
 
 // ------------------------------------------------------------------- the table
 

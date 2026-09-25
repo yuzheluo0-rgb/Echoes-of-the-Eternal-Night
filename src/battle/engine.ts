@@ -72,10 +72,28 @@ const LOG_KEEP = 160;
 
 const TONES: LogLine['tone'][] = ['good', 'bad', 'neutral', 'special'];
 const PHASES: Phase[] = ['player', 'enemy', 'won', 'lost'];
-/** The two cards that live in a deck but not in `CARD_BY_ID`: junk, and the boss's oath. */
-const OFF_DECK_CARDS: Record<string, { name: string; cost: number; text: string }> = {
+
+/**
+ * 残壁 — 照壁's 回响.
+ *
+ * The weakened copy the keyword promises, and it is a **named token rather than a copy of the card
+ * that made it**. That is not a shortcut, it is the only sound shape: a duplicate carrying 回响 would
+ * produce another duplicate on its way out, and the chain would never close. A distinct id with no
+ * 回响 on it ends after one card, which is what 「一个弱化复制品」 says.
+ *
+ * Weaker than 照壁 on both axes that matter: half the block for half the cost, so it is strictly
+ * worse per energy and worth less per card. It is still a real card — an extra body is an extra body —
+ * which is the point of paying 2 energy for 照壁 in the first place.
+ */
+const ECHO_WALL = { name: '残壁', cost: 1, text: '获得 3 点格挡。', tag: '回声', accent: '#d9a45f' };
+
+/** Cards that live in a deck but not in `CARD_BY_ID`: junk, the boss's oath, and 照壁's echo. */
+const OFF_DECK_CARDS: Record<string, {
+  name: string; cost: number; text: string; tag?: string; accent?: string;
+}> = {
   ash: JUNK.ash,
   [OATH.id]: OATH,
+  'echo-01': ECHO_WALL,
 };
 
 /**
@@ -252,6 +270,24 @@ function isAttackCard(cardId: string): boolean {
 /** Rules text for a card in hand — read from here, because junk and oaths are not in `CARD_BY_ID`. */
 export function cardRules(cardId: string): string {
   return cardText(cardId);
+}
+/**
+ * The line under the name on a card the library does not know. Junk and the oath have no tag of their
+ * own and read as what they are; 照壁's echo does, because calling a card you were *given* 「牌堆里的
+ * 异物」 would be telling the player it is a piece of junk.
+ */
+export function cardTag(cardId: string): string {
+  return OFF_DECK_CARDS[cardId]?.tag ?? '牌堆里的异物';
+}
+/**
+ * The colour to draw a card the library does not know in. Absent means the plain grey the junk face
+ * has always used, which is right for 灰烬 — a card an enemy shoved into your deck.
+ *
+ * 残壁 carries one because it is the opposite kind of card: something you were *given*, by a card you
+ * spent two energy on. Drawing it in the same grey as junk tells the player their echo is rubbish.
+ */
+export function cardAccent(cardId: string): string | undefined {
+  return OFF_DECK_CARDS[cardId]?.accent;
 }
 
 // --------------------------------------------------------------- enemy traits
@@ -563,6 +599,27 @@ function copyHand(s: BattleState, count: number, extra: number) {
   }
 }
 
+/**
+ * 回响 — puts a card the library does not have straight into the player's hand.
+ *
+ * Only `OFF_DECK_CARDS` ids are accepted, and that is deliberate rather than incidental: this is the
+ * one funnel that conjures a card from nothing, and letting it name anything in the library would put
+ * 「打出这张牌，把随便哪张牌加入手牌」 one typo away. The token it is built for (残壁) is registered
+ * next to 灰烬 and 未熄的誓言, which is where cards-that-are-not-in-the-library already live.
+ *
+ * A fresh `uid` with the `r` prefix, like `copyHand` — the card is a genuinely separate instance, not
+ * a second reference to one already in a pile.
+ */
+function addToHand(s: BattleState, cardId: string, label: string) {
+  if (!OFF_DECK_CARDS[cardId]) return;
+  if (s.hand.length >= HAND_LIMIT) {
+    log(s, `手牌已满（${HAND_LIMIT} 张），回声没有落脚的地方。`, 'neutral');
+    return;
+  }
+  s.hand.push({ uid: `r${s.uidSeq++}`, cardId });
+  log(s, `${label} · 「${cardName(cardId)}」留在了你手里。`, 'good');
+}
+
 // ------------------------------------------------------------------- the piles
 
 function drawCards(s: BattleState, count: number) {
@@ -811,6 +868,36 @@ function makeContext(
       if (!target) return;
       gainStatus(s, target.statuses, 'mark', count, nameOf(target));
     },
+    // 长明灯 (`scorchBonus`) stacks on top of the polish delta for both of these — they are the only
+    // two places the player lights anything, so it is the whole of the card's effect.
+    burn: count => {
+      const target = currentTarget(s);
+      if (!target) return;
+      gainStatus(s, target.statuses, 'scorch',
+        plus(count, upgrade?.status?.scorch) + s.powers.scorchBonus, nameOf(target));
+    },
+    burnAll: count => {
+      const amount = plus(count, upgrade?.status?.scorch) + s.powers.scorchBonus;
+      for (const target of livingEnemies(s)) gainStatus(s, target.statuses, 'scorch', amount, nameOf(target));
+    },
+    flare: count => {
+      if (!count) return;
+      s.player.energy += count;
+      log(s, `${label} · 能量 +${count}（${s.player.energy}）。`, 'good');
+      // 爆燃 borrows from the next turn rather than creating energy — `beginTurn` reads this, subtracts
+      // it, and clears it, so two 引信 in one turn cost two on the next.
+      gainStatus(s, s.player.statuses, 'drained', count, '爆燃');
+    },
+    spendEnemyStatus: (status, max) => {
+      const target = currentTarget(s);
+      if (!target) return 0;
+      const had = statusOf(target.statuses, status);
+      const spent = Math.min(had, Math.max(0, Math.floor(max)));
+      if (spent <= 0) return 0;
+      setStatus(target.statuses, status, had - spent);
+      log(s, `${label} · 消耗 ${nameOf(target)} 身上的 ${spent} 层${STATUS_LABEL[status]}（${had - spent}）。`, 'neutral');
+      return spent;
+    },
     draw: count => drawCards(s, Math.max(0, plus(count, upgrade?.draw))),
     bury: count => {
       const buried = buryHand(s, count);
@@ -818,6 +905,7 @@ function makeContext(
       return buried;
     },
     reclaim: count => reclaimCards(s, Math.max(0, plus(count, upgrade?.reclaim))),
+    addToHand: cardId => addToHand(s, cardId, label),
     gainEnergy: count => {
       if (!count) return;
       s.player.energy += count;
@@ -831,6 +919,38 @@ function makeContext(
     handSize: () => s.hand.length,
     played: () => s.playedThisTurn,
     stacks: status => statusOf(s.player.statuses, status),
+    // Re-resolved against the current target, like everything else here — a card that reads 灼烧 off
+    // 「目标」 means the enemy the player picked, not whichever one happened to be first.
+    enemyStacks: status => {
+      const target = currentTarget(s);
+      return target ? statusOf(target.statuses, status) : 0;
+    },
+    clearEnemyStatus: status => {
+      const target = currentTarget(s);
+      if (!target) return 0;
+      const had = statusOf(target.statuses, status);
+      if (had <= 0) return 0;
+      setStatus(target.statuses, status, 0);
+      log(s, `${label} · 消耗 ${nameOf(target)} 身上的 ${had} 层${STATUS_LABEL[status]}。`, 'neutral');
+      return had;
+    },
+    clearAllEnemyStatus: status => {
+      let taken = 0;
+      for (const enemy of livingEnemies(s)) {
+        const had = statusOf(enemy.statuses, status);
+        if (had <= 0) continue;
+        setStatus(enemy.statuses, status, 0);
+        taken += had;
+      }
+      if (taken) log(s, `${label} · 消耗全场 ${taken} 层${STATUS_LABEL[status]}。`, 'neutral');
+      return taken;
+    },
+    heal: count => {
+      const healed = Math.min(Math.max(0, plus(count, upgrade?.heal)), s.player.maxHp - s.player.hp);
+      if (healed <= 0) return;
+      s.player.hp += healed;
+      log(s, `${label} · 你回复 ${healed} 点生命（${s.player.hp}）。`, 'good');
+    },
     playerBlock: () => s.player.block,
     bank: () => {
       if (s.banking) return;
@@ -1153,8 +1273,16 @@ function endPlayerTurn(s: BattleState) {
 
 /** What a chapter run hands to a fight that the fight cannot work out on its own. */
 export interface StartOptions {
-  /** Carried-over HP. Clamped into `[0, PLAYER_MAX_HP]` — the run owns the value, not the battle. */
+  /** Carried-over HP. Clamped into `[0, the fight's ceiling]` — the run owns the value, not the battle. */
   hp?: number;
+  /**
+   * The run's 生命上限, if it has been raised.
+   *
+   * Absent means the plain `PLAYER_MAX_HP` baseline, which is what every caller did before a run
+   * could raise its own ceiling. **Only the raising direction is legal** — `isValidBattle` refuses a
+   * state below `PLAYER_MAX_HP`, because 60 is the number every constant was tuned against.
+   */
+  maxHp?: number;
   /** The sub deck to splash into the pile. See `chapterDeck`. */
   sub?: DeckId;
   /** The relics the run is carrying. See `BattleState.relics`. */
@@ -1178,9 +1306,23 @@ export function startBattle(encounterId: string, deck: DeckId, seed = 7, opts: S
   if (opts.sub !== undefined && !isDeckUnlocked(opts.sub)) throw new Error(`第一章还不能携带「${opts.sub}」牌组。`);
   const chapterCards = chapterDeck(deck, opts.sub);
   if (!chapterCards.length) throw new Error(`「${deck}」牌组在第一章没有可用的牌。`);
-  // A run passes in the HP left over from the last fight. `maxHp` stays pinned at `PLAYER_MAX_HP`,
-  // which is what lets a carried state still satisfy `isValidBattle`.
+  // A run passes in the HP left over from the last fight, and the ceiling it has earned.
   const carried = Number.isFinite(opts.hp) ? Math.trunc(opts.hp!) : PLAYER_MAX_HP;
+  /**
+   * The run's 生命上限 — **not** unconditionally `PLAYER_MAX_HP`, which is what it used to be.
+   *
+   * The ceiling was pinned to the baseline plus the relics' own modifier, so a run's `maxHp` was
+   * thrown away at the door: eight of the event table's options are 「生命上限 +N」 and a good share
+   * of the reward table is too, and **every one of them bought the player nothing inside a fight**.
+   * The run layer and the battle layer disagreed about the same number, and the run layer is the one
+   * the player had been reading.
+   *
+   * Floored at `PLAYER_MAX_HP` rather than assigned: a battle may raise its ceiling above the
+   * baseline and `isValidBattle` forbids lowering it, so a run can only ever be tougher than the
+   * tuned baseline, never softer.
+   */
+  const runMaxHp = Math.max(PLAYER_MAX_HP,
+    Number.isFinite(opts.maxHp) ? Math.trunc(opts.maxHp!) : PLAYER_MAX_HP);
 
   const s: BattleState = {
     version: 1,
@@ -1201,7 +1343,7 @@ export function startBattle(encounterId: string, deck: DeckId, seed = 7, opts: S
     player: {
       // Provisional. 守望者之誓 raises the ceiling, and that has to be asked of the relics *after*
       // the state exists — so it is settled a few lines down, before the opening turn.
-      hp: Math.max(0, Math.min(PLAYER_MAX_HP, carried)), maxHp: PLAYER_MAX_HP, block: 0,
+      hp: Math.max(0, Math.min(runMaxHp, carried)), maxHp: runMaxHp, block: 0,
       energy: ENERGY_PER_TURN, energyPerTurn: ENERGY_PER_TURN, statuses: {},
     },
     enemies: [],
@@ -1229,9 +1371,9 @@ export function startBattle(encounterId: string, deck: DeckId, seed = 7, opts: S
   spawnEncounter(s, encounter);
   s.targetUid = s.enemies[0]?.uid;
 
-  // The ceiling is raised before anything reads 生命, and the carried-over HP is re-clamped to it —
+  // The ceiling is settled before anything reads 生命, and the carried-over HP is re-clamped to it —
   // a run that walked in at 60 with a +15 relic walks in at 60/75, not at 75/75.
-  const ceiling = PLAYER_MAX_HP + relicModifier(s, 'maxHp');
+  const ceiling = runMaxHp + relicModifier(s, 'maxHp');
   s.player.maxHp = ceiling;
   s.player.hp = Math.max(0, Math.min(ceiling, carried));
 

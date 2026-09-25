@@ -16,6 +16,7 @@
 
 import { CARD_BY_ID } from '../cards/index.ts';
 import { CHAPTER_1 } from './chapter.ts';
+import { earnedCards } from './cardUnlocks.ts';
 
 export type RewardRarity = 'common' | 'uncommon' | 'rare';
 
@@ -125,7 +126,13 @@ export function rollReward(roll: () => number): RewardSpec {
  * has never seen that deck would be a card with no support around it.
  */
 export function rewardCardPool(main: string, sub: string): string[] {
-  return [...new Set([...(CHAPTER_1.unlocked[main] ?? []), ...(CHAPTER_1.unlocked[sub] ?? [])])];
+  const decks = [main, sub];
+  const base = decks.flatMap(deck => CHAPTER_1.unlocked[deck] ?? []);
+  // Plus whatever 击破守望者 has unlocked — filtered to these two decks, because the pool is
+  // 「both of the run's decks and nothing else」 and an unlocked card from a deck this run is not
+  // carrying is still a card with no support around it.
+  const earned = earnedCards().filter(id => decks.includes(CARD_BY_ID.get(id)?.deck ?? ''));
+  return [...new Set([...base, ...earned])];
 }
 
 /** Roll `count` distinct card ids off a stream. */

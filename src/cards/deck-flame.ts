@@ -98,4 +98,53 @@ export const DECK_FLAME: CardDefinition[] = [
   { id: 'flame-28', name: '恒燃', deck: 'flame', tier: 'starfall', cost: 3, type: 'rite', pattern: 'dot-payoff',
     text: '本场战斗中，敌人身上的灼烧不再随回合消退。', keywords: ['scorch'],
     lore: '它答应过要烧到最后，所以不灭。' },
+
+  // ── 补的四块缺口 ──────────────────────────────────────────────────────
+  // 燎原余烬跑起来之后露出来的四个洞，每一张都在填其中一个：
+  //
+  //   回血 —— **这个牌组原本一张都没有**，而它用生命付账（献薪 −4、透骨 −8）。一个拿血当货币的
+  //           牌组不能回血，等于每一局都在慢慢自杀，而且玩家没有任何理由去用那些牌。
+  //           三张回血全部挂在灼烧上（炭火是「点着一个，回一点」），补丁长在主题上而不是贴在旁边。
+  //   AOE 伤害 —— 原本只有焚天与燎狱，且都是 3 费。
+  //   引爆爆发 —— 原本只有裂焰与燎狱。
+  //   消耗余烬 —— 原本只有扬灰、焚天、焚炉三张，而余烬是这副牌组的招牌资源。
+  { id: 'flame-29', name: '拾灰', deck: 'flame', tier: 'cinder', cost: 1, type: 'skill', pattern: 'heal',
+    text: '回复 6 点生命。空明：改为回复 11 点。', keywords: ['empty'],
+    lore: '冷下来的灰碾碎了敷在伤口上，祖辈就是这么活下来的。' },
+  { id: 'flame-30', name: '取暖', deck: 'flame', tier: 'glimmer', cost: 0, type: 'skill', pattern: 'heal',
+    text: '消耗至多 3 层余烬，每层回复 4 点生命。', keywords: ['ember'],
+    lore: '把攒下的热一口气收进身体里，这是火唯一不烫人的用法。' },
+  { id: 'flame-31', name: '炭火', deck: 'flame', tier: 'glimmer', cost: 2, type: 'skill', pattern: 'heal',
+    text: '对所有敌人施加 2 层灼烧。每有一个敌人被点燃，你回复 4 点生命。', keywords: ['scorch'],
+    lore: '它烧得越旺，你站得越直。' },
+  { id: 'flame-32', name: '燎原', deck: 'flame', tier: 'glimmer', cost: 2, type: 'attack', pattern: 'aoe',
+    text: '对所有敌人造成 5 点伤害，然后施加 1 层灼烧。', keywords: ['scorch'],
+    lore: '一片草烧起来的时候，没有一根单独在烧。' },
+  { id: 'flame-33', name: '灰烬风暴', deck: 'flame', tier: 'glimmer', cost: 1, type: 'attack', pattern: 'multi-hit',
+    text: '对所有敌人造成 2 点伤害 3 次。连缀：改为 4 次。', keywords: ['chain'],
+    lore: '风把烧过的东西卷回来，打在你脸上。' },
+  { id: 'flame-34', name: '余温炸裂', deck: 'flame', tier: 'blaze', cost: 2, type: 'attack', pattern: 'aoe',
+    text: '引爆：消耗所有敌人身上的灼烧，每层对所有敌人造成 2 点伤害。', keywords: ['detonate', 'scorch'],
+    lore: '整片战场同时亮了一下，然后安静了。' },
+  { id: 'flame-35', name: '焦土', deck: 'flame', tier: 'glimmer', cost: 1, type: 'attack', pattern: 'dot-convert',
+    // No 祭火 tag: the 2 life here is a rider attached to what the card does, not the currency the
+    // card is bought with, and 祭火 means the latter. Tagging it would tell the player they can pay
+    // with blood when they cannot.
+    text: '引爆：消耗目标身上全部灼烧，每层造成 5 点伤害，然后你失去 2 点生命。', keywords: ['detonate', 'scorch'],
+    lore: '烧到最后，你也在火里。' },
+  { id: 'flame-36', name: '白热', deck: 'flame', tier: 'blaze', cost: 2, type: 'attack', pattern: 'finisher',
+    text: '引爆：消耗目标身上全部灼烧，每层造成 4 点伤害。若目标因此死亡，你获得 3 层余烬。', keywords: ['detonate', 'scorch', 'ember'],
+    lore: '它烧到看不出颜色的时候，才是它最烫的时候。' },
+  { id: 'flame-37', name: '添薪', deck: 'flame', tier: 'cinder', cost: 1, type: 'skill', pattern: 'resource-spend',
+    text: '消耗至多 3 层余烬，每层获得 5 点格挡。', keywords: ['ember'],
+    lore: '柴扔进火里之前，是柴；之后，是墙。' },
+  { id: 'flame-38', name: '炽白', deck: 'flame', tier: 'glimmer', cost: 1, type: 'attack', pattern: 'resource-spend',
+    text: '消耗你全部余烬，每层造成 3 点伤害。', keywords: ['ember'],
+    lore: '攒着不烧的火，和没烧过一样。' },
+  { id: 'flame-39', name: '引火', deck: 'flame', tier: 'glimmer', cost: 0, type: 'skill', pattern: 'draw',
+    text: '消耗 2 层余烬，抽 2 张牌。', keywords: ['ember'],
+    lore: '火种挑对了，剩下的它会自己做。' },
+  { id: 'flame-40', name: '薪尽', deck: 'flame', tier: 'glimmer', cost: 1, type: 'skill', pattern: 'energy',
+    text: '消耗 2 层余烬，获得 2 点能量，抽 1 张牌。', keywords: ['ember'],
+    lore: '最后一根柴烧完的时候，火突然亮了一下。' },
 ];
