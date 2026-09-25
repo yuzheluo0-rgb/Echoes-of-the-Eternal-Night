@@ -62,7 +62,7 @@ import { BOSS_ROW } from './map.ts';
 import TowerMapView from './TowerMap.tsx';
 import {
   HEAL_MAX, HEAL_MIN, RUN_ENCOUNTERS, battleSeed, chapterProgress, clearRun, finishBattle, isChapterCleared,
-  loadRun, newRun, saveRun, swapDecks,
+  loadRun, newRun, nextChoices, saveRun, swapDecks,
   type BattleOutcome, type ChapterRun,
 } from './run.ts';
 import {
@@ -990,12 +990,22 @@ export default function BattleDemo() {
   // The tower is the hub. A fight is the only thing that takes you off it, and the relic draw is
   // the only thing that interrupts it.
   if (!inFight || !encounter) {
-    // ⚠️ **通关之后塔上没有出口。** `outcome` 是组件状态、不落盘，所以刷新一次战果面板和解锁屏都不会
-    // 回来；而 boss 节点已经走过、出边为空，`reachableFrom` 是空的——**地图上一个能走的格子都没有**。
+    // ⚠️ **塔上没有出口。** `outcome` 是组件状态、不落盘，所以刷新一次战果面板和解锁屏都不会回来；
+    // 而 boss 节点是塔的顶点、出边为空，`reachableFrom` 是空的——**地图上一个能走的格子都没有**。
     // 玩家看到的是一座死塔，外加一句「点亮的是下一步能去的地方」，而什么都没亮。
-    if (isChapterCleared(run)) {
+    //
+    // ⚠️ **判据是「走不动了」，不是 `isChapterCleared`。** 上一版用的是后者，结果对**大部分玩家
+    // 都不触发**：塔从池子里发牌，打到 boss 不等于把五场章节战都打过——实测一个只赢了 ch1-1 和 boss
+    // 的存档，`isChapterCleared` 是 false，于是死塔照旧。走不动才是问题本身。
+    if (nextChoices(run).length === 0) {
       return <div className="tw-host">
-        <ChapterClearedScreen cards={unlocksFor('ch1-5')} audioOn={audioOn} onLeave={restart} />
+        {/* ⚠️ `leaveRun`，不是 `restart`。两个名字都在这个文件里，而它们做的是完全不同的事：
+            后者是**重开本场**（`beginFight(run)`，需要一个 `currentFight`），在一份通关存档上
+            `currentFight` 是空的，于是「回到开场」点了完全没反应——按钮在、点了、什么都没发生。
+            测试里真的点了一下才抓到。 */}
+        <ChapterClearedScreen cards={unlocksFor('ch1-5')}
+          cleared={isChapterCleared(run)} progress={chapterProgress(run)} total={RUN_ENCOUNTERS.length}
+          audioOn={audioOn} onLeave={leaveRun} />
       </div>;
     }
     return <div className="tw-host">

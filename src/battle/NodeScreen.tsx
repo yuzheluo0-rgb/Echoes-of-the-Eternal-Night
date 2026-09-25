@@ -197,15 +197,22 @@ export function UnlockGroups({ cards }: { cards: string[] }) {
  * of plausible-looking lie this project keeps finding. What is recoverable is what was unlocked, and
  * that is the part worth coming back for.
  */
-export function ChapterClearedScreen({ cards, onLeave, audioOn }: {
-  cards: string[]; onLeave: () => void; audioOn: boolean;
+export function ChapterClearedScreen({ cards, cleared, progress, total, onLeave, audioOn }: {
+  cards: string[]; cleared: boolean; progress: number; total: number;
+  onLeave: () => void; audioOn: boolean;
 }) {
-  return <NodeShell kind="treasure" scene="boss" kicker="第一章 · 已通关" title="这一章打完了"
+  return <NodeShell kind="treasure" scene="boss"
+    kicker={cleared ? '第一章 · 已通关' : '塔顶 · 守望者倒下了'}
+    title={cleared ? '这一章打完了' : '这一座塔到头了'}
     actions={<button className="nd-primary" onPointerEnter={() => sound('hover', audioOn)}
       onClick={() => { sound('bell', audioOn); onLeave(); }}>回到开场</button>}
     footer={cards.length ? `明焰阶的 ${cards.length} 张牌已经在往后每一局的战利品池里。` : undefined}>
+    {/* ⚠️ **两种话，因为两种都是真的。** 塔从池子里发牌，所以打倒守望者**不等于**把那一章的五场
+        章节战都打过——写死「这一章打完了」会在那种存档上变成谎话。进度照实报，玩家才知道差在哪。 */}
     <p className="nd-copy">
-      长夜塔还在那儿，但这一座已经空了。火还亮着，下一章会从别处点起来。
+      {cleared
+        ? '长夜塔还在那儿，但这一座已经空了。火还亮着，下一章会从别处点起来。'
+        : `守望者守了很久，久到忘了可以换班。它在塔顶站着，塔上再没有别的路了——这一章的 ${total} 场里，你打过 ${progress} 场。`}
     </p>
     {!!cards.length && <UnlockGroups cards={cards} />}
   </NodeShell>;
