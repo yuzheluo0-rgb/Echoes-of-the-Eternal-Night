@@ -33,9 +33,14 @@ import { CARD_BY_ID, DECKS, type DeckId } from '../cards/index.ts';
 import { CHAPTER_1, chapterDeck, openingForms } from './chapter.ts';
 import { scoreForMood, type BattleMood } from './battleScores.ts';
 import {
-  KINDLING_DISCOUNT, canPlay, cardAccent, cardCost, cardName, cardRules, cardTag, endTurn, enemyName,
-  intentFor, intentText, livingEnemies, playCard, startBattle, type BattleCard, type BattleState,
+  KINDLING_DISCOUNT, canPlay, canUseProp, cardAccent, cardCost, cardName, cardRules, cardTag, endTurn,
+  enemyName, intentFor, intentText, livingEnemies, playCard, startBattle, useProp,
+  type BattleCard, type BattleState,
 } from './engine.ts';
+import { propEffectFor } from './props.ts';
+import { PROP_BY_ID, emptyProps, spendSlot, type PropDefinition } from '../props/props.ts';
+import { PropIcon } from '../props/PropIcon';
+import { PropRail } from '../props/PropRail';
 import { ENEMY_BY_ID, MUTATION_BY_ID, type Encounter } from './enemies.ts';
 import { RelicFace } from '../relics/RelicFace';
 import { REFINE_LABEL, RELIC_BY_ID, TIER_BY_ID, type RelicDefinition } from '../relics/relics.ts';
@@ -48,14 +53,16 @@ import {
 import { creditAndSave, earnedCards, newUnlocks, unlocksFor } from './cardUnlocks.ts';
 import {
   answerRefine, campfire, campfireQuench, canEnterNode, chooseCard, claimRelic, claimReward, deckFor, discardRelic,
-  dismissCard, dismissRefine, dismissReveal, enterNode, repairCard,
+  canUseRunProp, dismissCard, dismissProp, dismissRefine, dismissReveal, enterNode, placeProp,
+  repairCard, useRunProp, EITHER_OR_PROPS, buyShopSlot, rerollShop, rollShop, leaveShop,
+  buyRemoveService, shopRemoveCost, wardMark,
   nodeAt, offerDraw, resolveEvent, rollOffer, rollPendingReward, swapRelics,
 } from './run.ts';
 import { REWARD_BY_ID } from './rewards.ts';
 import { eventForNode, type EventOption } from './events.ts';
 import {
-  CampfireScreen, CardPicker, CardRevealScreen, ChapterClearedScreen, EventScreen, RefineScreen,
-  RewardScreen, UnlockScreen,
+  CampfireScreen, CardPicker, CardRevealScreen, ChapterClearedScreen, EventScreen, PropDropScreen,
+  RefineScreen, RewardScreen, ShopScreen, UnlockScreen,
   type CampfirePick,
 } from './NodeScreen.tsx';
 import { ALL_ENCOUNTERS, ENCOUNTER_BY_ID } from './enemies.ts';
@@ -493,6 +500,23 @@ export default function BattleDemo() {
   /** 这一屏看过了没有。它只在这一次击杀之后有意义，所以是组件状态而不是 run 的一部分。 */
   const [unlockSeen, setUnlockSeen] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
+  /**
+   * 正在为哪一件道具挑手牌，以及已经挑了哪几张。
+   *
+   * 只有 `pick` 类道具用得到（现在是磨石匣一个）。**选够张数才真的用出去**——张数不够时
+   * 不弹错，只是留在挑牌态里，因为「选了 2 张、发现选错了」是正常的中间状态。
+   */
+  const [propPick, setPropPick] = useState<{ slot: number; uids: string[] } | null>(null);
+  /**
+   * 掉落面板答过没有。
+   *
+   * ⚠️ 它必须是**组件状态**，不能靠 `outcome.propDrop` 有没有被清掉来判断——`outcome` 只活在
+   * 内存里，而且掉落 id 是由 `finishBattle` 定好放进结果里的，清它就得改 `outcome`。
+   * 一个本地布尔更诚实：面板是「问一次」的东西。
+   */
+  const [propTaken, setPropTaken] = useState(false);
+  /** 袖炉在营火上被点开之后，等玩家挑哪一半（回血 / 打磨）。`null` 就是没在挑。 */
+  const [campfireHalf, setCampfireHalf] = useState<number | null>(null);
   const [audioOn, setAudioOn] = useState(true);
   const [fx, setFx] = useState<{ seq: number; events: FxEvent[] }>({ seq: 0, events: [] });
   const [hurt, setHurt] = useState(0);
@@ -518,10 +542,21 @@ export default function BattleDemo() {
    * `cleared` is *done* — that is what sends the player back to the tower after a win instead of
    * leaving them standing on the node they just finished.
    */
+  /**
+   * 玩家此刻在不在这一场仗里。
+   *
+   * ⚠️ **最后那一条不能只有 `!cleared.includes(...)`。** `cleared` 是胜利流水，`finishBattle`
+   * 一赢就把它记上——于是**打赢的那一瞬间 `inFight` 就翻了 false**，下面 `if (!inFight)` 的塔
+   * 那一支当场接管，而**战果面板长在战斗 JSX 里面**（那个早返回排在它前面），永远到不了。
+   * 表现出来的就是「仗打赢了，直接回到塔上，什么都没告诉我」——掉落面板也一样看不到。
+   *
+   * 判据因此是「**只要这一场还在渲染**（`state` 非空，胜负面板都算）就还在仗里」，
+   * `cleared` 那一条只在 `state` 被 `backToPrep` 清掉之后才接手，防止回到塔上又被弹回战斗。
+   */
   const inFight = !!floor
     && (floor.kind === 'combat' || floor.kind === 'elite' || floor.kind === 'boss')
     && !!run?.currentFight
-    && !run.cleared.includes(run.currentFight);
+    && (state !== null || !run.cleared.includes(run.currentFight));
   const living = state ? livingEnemies(state) : [];
   const target = state ? (living.find(enemy => enemy.uid === state.targetUid) ?? living[0]) : undefined;
   const ended = state ? state.phase === 'won' || state.phase === 'lost' : false;
@@ -591,10 +626,71 @@ export default function BattleDemo() {
   }, [state, audioOn, commit]);
 
   function onCard(card: BattleCard) {
+    // 正在为一件「从手牌挑牌」的道具选牌时，点牌是选中/取消，不是打出。
+    if (propPick) { toggleForProp(card.uid); return; }
     if (!state || !canPlay(state, card.uid)) { sound('select', audioOn); return; }
     if (picked === card.uid) { play(card, target?.uid); return; }
     sound('select', audioOn);
     setPicked(card.uid);
+  }
+
+  /**
+   * 用一件道具。
+   *
+   * ⚠️ **改 run 的那几件不由引擎执行**（它们的 id 不在 `PROP_EFFECTS` 里），走 `useRunProp`。
+   * 但战斗状态里的次数**必须跟着扣**：`finishBattle` 是拿 `state.props` 采纳回 run 的，
+   * 少扣这一次那一件就白用了——而它不会报错。
+   */
+  const usePropAt = useCallback((slot: number, handUids?: string[]) => {
+    if (!state || !run) return;
+    const entry = state.props?.[slot];
+    const def = entry ? PROP_BY_ID.get(entry.id) : undefined;
+    if (!def) return;
+    if (!propEffectFor(def.id)) {
+      const nextRun = useRunProp(run, slot);
+      // 没做成（钱不够、身上没遗物…）返回的是原对象——那时候不该扣次数。
+      if (nextRun === run) { sound('select', audioOn); return; }
+      sound('relic-set', audioOn);
+      setRun(nextRun);
+      setState({ ...state, props: spendSlot(state.props ?? emptyProps(), slot) });
+      return;
+    }
+    try {
+      const next = useProp(state, slot, {
+        targetUid: def.target === 'enemy' ? target?.uid : undefined,
+        handUids,
+      });
+      sound('relic', audioOn);
+      setPropPick(null);
+      commit(next, state);
+    } catch { sound('select', audioOn); }
+  }, [state, run, target, audioOn, commit]);
+
+  /** 点一个道具槽。需要挑手牌的（磨石匣）先进入挑牌态，其余直接生效。 */
+  function onProp(slot: number) {
+    if (!state) return;
+    const entry = state.props?.[slot];
+    const def = entry ? PROP_BY_ID.get(entry.id) : undefined;
+    if (!def) return;
+    if (propEffectFor(def.id) && !canUseProp(state, slot)) { sound('select', audioOn); return; }
+    if (def.pick) {
+      sound('select', audioOn);
+      setPropPick(current => (current?.slot === slot ? null : { slot, uids: [] }));
+      return;
+    }
+    usePropAt(slot);
+  }
+
+  function toggleForProp(uid: string) {
+    if (!propPick || !state) return;
+    const entry = state.props?.[propPick.slot];
+    const count = (entry && PROP_BY_ID.get(entry.id)?.pick?.count) || 0;
+    const uids = propPick.uids.includes(uid)
+      ? propPick.uids.filter(id => id !== uid)
+      : [...propPick.uids, uid].slice(-count);
+    sound('select', audioOn);
+    if (uids.length === count) usePropAt(propPick.slot, uids);
+    else setPropPick({ slot: propPick.slot, uids });
   }
 
   function onEnemy(enemy: EnemyState) {
@@ -635,8 +731,13 @@ export default function BattleDemo() {
     // `maxHp` goes in with the HP: the run's ceiling is the fight's ceiling. Without it every
     // 「生命上限 +N」 the player had earned was silently reset to 60 the moment a battle began.
     const fresh = startBattle(encounterId, next.main, battleSeed(next, encounterId),
+      // `props` 传的是 run 那一份，而 `startBattle` **会逐槽复制**它——战斗就地扣次数，
+      // 别名进来会先改 run、再被 `finishBattle` 结算一次。这条在 `StartOptions.props` 上写着。
       { hp: next.hp, maxHp: next.maxHp, sub: next.sub, relics: next.relics, refined: next.refined,
-        cards: deckFor('r', next) });
+        props: next.props, cards: deckFor('r', next),
+        // 商店买来的那条命。引擎里**一行判定都不用新写**——`damagePlayer` 读的是
+        // `marks['prop:deathWard']`，而残烛（道具）写的正是同一个键。三条来源、一条判定。
+        marks: next.warded ? wardMark() : undefined });
     resetFx();
     setState(fresh);
     setOutcome(null);
@@ -679,6 +780,8 @@ export default function BattleDemo() {
     // 宝箱 is a reward roll like any other, so the chest can hold coin, a card, a relic or something
     // stranger — and the table decides, not the node type.
     if (node.kind === 'treasure') next = rollPendingReward(next);
+    // ⚠️ 商店**不在这里掷**：`enterNode` 自己会掷（`run.ts` 里踏进商店就掷、踏离就摘），
+    // 在这里再掷一次会掷两遍——而货架是存进 run 的，掷两遍就是「走进去的货和看到的货不一样」。
     saveRun(next);
     setRun(next);
     sound(node.kind === 'rest' ? 'bell' : 'select', audioOn);
@@ -783,10 +886,80 @@ export default function BattleDemo() {
   /** Leave a fight and go back to the preparation screen. The run is untouched, so nothing is lost —
    *  and nothing is gained, because the shuffle is seeded per encounter. `outcome` is deliberately
    *  kept: it is what tells the prep screen how much the campfire just gave back. */
+  /** 走出商店。**只有这一个入口设 `resolved`**——买与刷新都不设，否则货架当场消失。 */
+  function leaveShopNode() {
+    if (!run) return;
+    sound('select', audioOn);
+    const next = leaveShop(run);
+    setRun(next);
+    saveRun(next);
+  }
+
   function backToPrep() {
     sound('select', audioOn);
     resetFx();
     setState(null);
+  }
+
+  /**
+   * 把掉落的那件放进某一格。**玩家指定槽位，该格原有的被替换**——和 `claimRelic` 同一个语义。
+   *
+   * 从不问「槽满了吗」：三格都满的时候，替换读起来是一个决定；而「先把旧的丢掉再来一次」是
+   * 两个决定，中间那一步还会让人以为自己弄丢了东西。
+   */
+  function takeDroppedProp(slot: number) {
+    if (!run || !outcome?.propDrop) return;
+    const next = placeProp(run, slot, outcome.propDrop);
+    sound('relic-set', audioOn);
+    setRun(next);
+    saveRun(next);
+    setPropTaken(true);
+  }
+
+  /**
+   * 在**营火**上用一件道具。
+   *
+   * ⚠️ **它不结束这一层。** 营火的四选一才结束（那是 `answerCampfire` 的事）；道具是
+   * 「回答营火之前做的事」。若在这里顺手设 `resolved`，玩家点「袖炉 · 打磨」→ 选牌器盖上 →
+   * 选完回来会发现自己**一次营火行动被白吃了**——那正是用户报的那条。
+   * `useRunProp` 本身也不设 `resolved`，两边一致。
+   */
+  function usePropAtCampfire(slot: number, half: 'task' | 'effect' = 'effect') {
+    if (!run) return;
+    const next = useRunProp(run, slot, half);
+    // 没做成（付不起、身上没遗物、牌库是空的…）返回的是原对象，那时候不播音效也不换屏。
+    if (next === run) { sound('select', audioOn); return; }
+    sound('relic-set', audioOn);
+    setRun(next);
+    saveRun(next);
+    setCampfireHalf(null);
+  }
+
+  /** 宝箱 / 奇遇里捡到的那件。放进某一格，或不要。 */
+  function placeDroppedProp(slot: number) {
+    if (!run) return;
+    const next = placeProp(run, slot);
+    sound('relic-set', audioOn);
+    setRun(next);
+    saveRun(next);
+  }
+
+  function dismissDroppedProp() {
+    if (!run) return;
+    sound('select', audioOn);
+    const next = dismissProp(run);
+    setRun(next);
+    saveRun(next);
+  }
+
+  /** 「不要」。三格都称手时这是真答案，不是放弃。 */
+  function skipDroppedProp() {
+    if (!run) return;
+    sound('select', audioOn);
+    const next = dismissProp(run);
+    setRun(next);
+    saveRun(next);
+    setPropTaken(true);
   }
 
   /** Turn the owed draw into an actual offer. */
@@ -883,6 +1056,8 @@ export default function BattleDemo() {
     if (state.phase !== 'won' && state.phase !== 'lost') return;
     const settled = finishBattle(run, state);
     setOutcome(settled);
+    // 掉落面板答过没有，是**这一场**的事——不重置的话下一场的掉落会直接被吞掉。
+    setPropTaken(false);
     if (settled.won) {
       setRun(settled.run);
       saveRun(settled.run);
@@ -989,10 +1164,70 @@ export default function BattleDemo() {
         from={run.rewardDue ? '战斗胜利' : '这一层'} />;
     }
   }
+  // ⚠️ **宝箱与奇遇捡到的道具在这里落点，必须是一个顶层早返回。**
+  //
+  // 它不能照战后掉落那样塞进战果面板——那时候 `state === null`，整条链根本不经过战斗 JSX。
+  // 塔上拾取正好相反：`floor && run.resolved !== run.at` 那一支会先接管，所以这条要排在它**前面**。
+  // 也不能排在 `cardTask` 前面：`claimReward` 里 `prop` 那种卖法有可能顺手挂上子任务。
+  if (run.propTask && PROP_BY_ID.has(run.propTask.id)) {
+    return <PropDropScreen run={run} from={run.propTask.from} audioOn={audioOn}
+      onPlace={placeDroppedProp} onDismiss={dismissDroppedProp} />;
+  }
   if (floor && run.resolved !== run.at) {
+    // 商店。
+    // ⚠️ **它由 `run.shop` 驱动，不由 `resolved` 驱动**——`resolved` 一设，这一支当场不再成立，
+    // 货架会在买下第一件之后消失。所以 `leaveShop`（玩家点「走了」）才设 `resolved`，
+    // 买与刷新都不碰它。
+    if (floor.kind === 'shop' && run.shop) {
+      return <ShopScreen run={run} audioOn={audioOn}
+        onBuy={(index, payWith, relicSlot) => {
+          const next = buyShopSlot(run, index, payWith, relicSlot);
+          // 没做成（买不起 / 已售）返回的是**同一个对象**——那时候不播音效、不重渲染。
+          if (next === run) { sound('select', audioOn); return; }
+          sound(payWith === 'hp' ? 'death' : 'relic-set', audioOn);
+          setRun(next); saveRun(next);
+        }}
+        onReroll={() => {
+          const next = rerollShop(run);
+          if (next === run) { sound('select', audioOn); return; }
+          sound('shuffle', audioOn);
+          setRun(next); saveRun(next);
+        }}
+        onRemove={() => {
+          const next = buyRemoveService(run);
+          if (next === run) { sound('select', audioOn); return; }
+          sound('polish', audioOn);
+          setRun(next); saveRun(next);
+        }}
+        onLeave={leaveShopNode} />;
+    }
     if (floor.kind === 'rest') {
       return <CampfireScreen run={run} onPick={answerCampfire} audioOn={audioOn}
-        quenchChance={CAMPFIRE_QUENCH_CHANCE} />;
+        quenchChance={CAMPFIRE_QUENCH_CHANCE}
+        props={{
+          slots: run.props ?? emptyProps(),
+          canUse: slot => canUseRunProp(run, slot, campfireHalf === slot ? 'task' : 'effect'),
+          reasonFor: slot => {
+            const entry = run.props?.[slot];
+            const def = entry ? PROP_BY_ID.get(entry.id) : undefined;
+            if (!def || canUseRunProp(run, slot, campfireHalf === slot ? 'task' : 'effect')) return undefined;
+            return def.use === 'battle' ? '这件只能在战斗里用。' : '现在还差一点条件。';
+          },
+          onUse: slot => {
+            const entry = run.props?.[slot];
+            const def = entry ? PROP_BY_ID.get(entry.id) : undefined;
+            // 袖炉是二选一：点开它先问「哪一半」，而不是替玩家挑一个默认值。
+            if (def && EITHER_OR_PROPS.has(def.id)) { sound('select', audioOn); setCampfireHalf(current => (current === slot ? null : slot)); return; }
+            usePropAtCampfire(slot);
+          },
+          halves: campfireHalf !== null && run.props?.[campfireHalf]
+            ? {
+              slot: campfireHalf,
+              name: PROP_BY_ID.get(run.props[campfireHalf]!.id)?.name ?? '',
+              onPick: half => usePropAtCampfire(campfireHalf, half),
+            }
+            : undefined,
+        }} />;
     }
     if (floor.kind === 'event') {
       // `key` — the screen holds the half-answered option in local state, so climbing to the next
@@ -1174,6 +1409,13 @@ export default function BattleDemo() {
         the actual cards rather than a name in a box. */}
     <div className="bd-floor">
       <BattleRelics run={run} />
+      <PropRail slots={state.props ?? emptyProps()} pick={propPick} onUse={onProp}
+        canUse={slot => canUseProp(state, slot)}
+        reasonFor={slot => {
+          const entry = state.props?.[slot];
+          const def = entry ? PROP_BY_ID.get(entry.id) : undefined;
+          return def ? battlePropReason(state, slot, def) : undefined;
+        }} />
       <div className="bd-hand-row">
       {state.hand.map(card => {
         const face = CARD_BY_ID.get(card.cardId);
@@ -1249,6 +1491,39 @@ export default function BattleDemo() {
           这一章到此为止。火熄了就得重新点——新的牌序，新的血量，从头再来。
         </p>}
 
+        {/* 战后的掉落。
+            ⚠️ **它必须渲染在战果面板里面**，不能另起一屏——`BattleDemo` 的整屏分派顺序里
+            `cardTask` / `pendingReward` 都排在战斗页本体的 `return` 之前，另起一屏会把
+            「这仗打赢了」整个顶掉。所以掉落 id 由 `finishBattle` 放进 `outcome.propDrop`，
+            在这里问一句「放哪一格」，而 `propTask` 那条路只留给塔上的宝箱与奇遇。
+            三格都称手时「不要」是真答案——这正是 3 个槽的取舍。 */}
+        {outcome.won && outcome.propDrop && !propTaken && (() => {
+          const dropped = PROP_BY_ID.get(outcome.propDrop!);
+          if (!dropped) return null;
+          const slots = run.props ?? emptyProps();
+          return <div className="bd-spoils-prop">
+            <p className="bd-spoils-prop-head">灰里还有一件东西</p>
+            <div className="bd-spoils-prop-body">
+              <PropIcon prop={dropped} compact />
+              <div className="bd-spoils-prop-pick">
+                <p className="bd-spoils-prop-text">{dropped.text}</p>
+                <div className="bd-spoils-prop-slots">
+                  {slots.map((entry, slot) => {
+                    const held = entry ? PROP_BY_ID.get(entry.id) : undefined;
+                    return <button key={slot} className="bd-btn bd-prop-slot-btn"
+                      onPointerEnter={() => sound('hover', audioOn)} onClick={() => takeDroppedProp(slot)}>
+                      <b>第 {slot + 1} 格</b>
+                      <i>{held ? `换下「${held.name}」` : '空格'}</i>
+                    </button>;
+                  })}
+                </div>
+                <button className="bd-btn bd-prop-skip" onPointerEnter={() => sound('hover', audioOn)}
+                  onClick={skipDroppedProp}>不要</button>
+              </div>
+            </div>
+          </div>;
+        })()}
+
         <div className="bd-spoils-actions">
           {outcome.won && !outcome.chapterCleared
             ? <button className="bd-btn bd-over-btn" onClick={backToPrep}>
@@ -1303,6 +1578,23 @@ function BattleRelics({ run }: { run: ChapterRun }) {
       </div>;
     })}
   </div>;
+}
+
+/**
+ * 战斗里那排道具**为什么**点不动。
+ *
+ * ⚠️ **轨本身读的是 `state.props`，不是 `run.props`**——和左边的遗物轨正好相反。
+ * 遗物在战斗里是只读的，所以读 `run` 没问题；道具的**剩余次数在战斗里是会变的**，真相在
+ * `state.props`，而 `run.props` 要到 `finishBattle` 才被采纳回来。读错的表现是
+ * 「已经用光的道具还亮着，点了却什么都不发生」。
+ *
+ * 轨的渲染本身在 `src/props/PropRail.tsx` 里——营火边用的是同一个组件（那边读 `run.props`）。
+ */
+function battlePropReason(state: BattleState, slot: number, prop: PropDefinition): string | undefined {
+  if (canUseProp(state, slot)) return undefined;
+  // 灰掉要给得出理由——一件点不动的道具读起来像 bug，除非它说自己为什么动不了。
+  if (state.phase !== 'player') return '现在不是你的回合。';
+  return prop.use === 'camp' ? '这件要在营火边用。' : '这一回合用不了。';
 }
 
 /**

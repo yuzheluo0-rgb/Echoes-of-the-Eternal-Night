@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BOSS_ROW, MAP_COLS, MAP_ROWS, generateMap, reachableFrom, unreachableNodes,
+  BOSS_COL, BOSS_ROW, MAP_COLS, MAP_ROWS, generateMap, reachableFrom, unreachableNodes,
   type NodeKind, type TowerMap,
 } from './map.ts';
 import { POOLS } from './enemies.ts';
@@ -19,7 +19,7 @@ import { ALL_ENCOUNTERS } from './enemies.ts';
 
 const SEEDS = Array.from({ length: 200 }, (_, i) => i + 1);
 const ENCOUNTER_IDS = new Set(ALL_ENCOUNTERS.map(entry => entry.id));
-const RESTRICTED: NodeKind[] = ['elite', 'rest', 'treasure'];
+const RESTRICTED: NodeKind[] = ['elite', 'rest', 'treasure', 'shop'];
 
 test('同种子同地图，不同种子不同地图', () => {
   const shape = (seed: number) => JSON.stringify(generateMap(seed).nodes.map(n => `${n.id}:${n.kind}`));
@@ -62,6 +62,31 @@ test('行规则：首行必是战斗，首领前那一排三营火一事件，bo
     assert.equal(boss.length, 1, `种子 ${seed}：boss 只能有一个`);
     assert.equal(boss[0].id, map.bossId);
     assert.equal(boss[0].row, BOSS_ROW);
+  }
+});
+
+/**
+ * boss 前那一排**下面那一行**：不许有营火，也不许有商店。
+ *
+ * 这两条都是 `NO_REPEAT` 够不到的补丁，理由是同一个——`NO_REPEAT` 查的是**前驱**（下面那一行），
+ * 而 boss 前那一排是 `assignLastRow` 在**主循环之前**就定好的（三条营火 + 一个事件）。所以
+ * `MAP_ROWS - 1` 掷点时看不见上方已经全是火，写成「营火连着营火」或「商店紧挨着最后一次补给」
+ * 都不会有任何东西变红。
+ *
+ * ⚠️ **这条测试是补上去的，因为原来那条注释在说谎。** `shopAllowedOn` 的注释写着
+ * 「`map.test.ts` 那条「首领前那一排只有营火和事件」会当场红」——不会：那条测的是第 `MAP_ROWS` 行，
+ * 而商店长在 `MAP_ROWS - 1` 上行 `MAP_ROWS` 一个字节都不变。实测把 `shopAllowedOn` 里的
+ * `row !== MAP_ROWS - 1` 删掉，**200 个种子里 63 张地图会在第 `MAP_ROWS - 1` 行长出商店，
+ * 而 319 项测试全绿**。营火那半条另有 `NO_REPEAT` 那条测试兜着（删掉同样会红），但两半都属于
+ * 「加高塔之后要重新确认」的东西，所以这里一起显式钉住。
+ */
+test('boss 前那一排的下面一行：不许长营火，也不许长商店', () => {
+  for (const seed of SEEDS) {
+    const map = generateMap(seed);
+    for (const node of map.nodes.filter(n => n.row === MAP_ROWS - 1)) {
+      assert.notEqual(node.kind, 'rest', `种子 ${seed}：${node.id} 是营火，会和 boss 前那一排连成两觉`);
+      assert.notEqual(node.kind, 'shop', `种子 ${seed}：${node.id} 是商店，挤掉了「最后一次补给」那一排`);
+    }
   }
 });
 
@@ -174,7 +199,7 @@ test('地图不预先定下任何一场战斗——那是踏进去才掷的', ()
 });
 
 test('每个节点都有一张背景图，否则会有一层是空白的', () => {
-  const byKind: Record<string, string> = { rest: 'rest', treasure: 'treasure', event: 'event' };
+  const byKind: Record<string, string> = { rest: 'rest', treasure: 'treasure', event: 'event', shop: 'shop' };
   for (const seed of SEEDS) {
     for (const node of generateMap(seed).nodes) {
       // 地图上看到的背景按**类型**给：具体是哪一场还没掷出来，就不该显示某一场的照片。
@@ -206,6 +231,34 @@ test('起点与可达：没落地时可选的只有第一行，落地后只走�
   assert.deepEqual(reachableFrom(map, first.id), first.next);
   assert.ok(first.next.every(id => map.byId.get(id)!.row === 2), '只能往上走一层');
   assert.ok(first.next.every(id => Math.abs(map.byId.get(id)!.col - first.col) <= 1), '每层最多横移一列');
+});
+
+/**
+ * 节点 id 的形状是**存档格式的一部分**。
+ *
+ * 一局 run 不存地图，存的是 `path` / `at` 里这些 id，而 `isValidRun` 拿它们对着按种子重建出来的
+ * 塔做**成员资格**校验。所以 id 一旦换一种写法，所有人的存档都会在下次刷新时被静默丢掉
+ * （`loadRun` 是丢弃不是修复）——而**今天没有任何东西钉着这个格式**。
+ *
+ * ⚠️ 这条**不是**在保证加高塔之后旧存档还能用：`MAP_ROWS` 一涨，第 2 行往上全部重掷，旧存档
+ * 照样作废（见 `map.ts` 里 `MAP_ROWS` 那条注释，200 个种子里 193/200 被丢、7/200 被收下但站错了塔）。
+ * 它钉的是**形状**：行从 1 起数、列是 `-` 后面那个数、boss 在 `BOSS_ROW` 行。改掉那个前缀或分隔符
+ * 不会有任何别的测试变红。
+ */
+test('节点 id 的形状是存档格式：n<行>-<列>，boss 在 n<BOSS_ROW>-<BOSS_COL>', () => {
+  for (const seed of SEEDS.slice(0, 40)) {
+    const map = generateMap(seed);
+    for (const node of map.nodes) {
+      assert.match(node.id, /^n\d+-\d+$/, `种子 ${seed}：${node.id} 不像一个节点 id`);
+      const [row, col] = node.id.slice(1).split('-').map(Number);
+      assert.equal(row, node.row, `${node.id} 里的行号和 node.row 对不上`);
+      assert.equal(col, node.col, `${node.id} 里的列号和 node.col 对不上`);
+    }
+    assert.equal(map.bossId, `n${BOSS_ROW}-${BOSS_COL}`);
+    assert.equal(map.byId.get(map.bossId)!.kind, 'boss');
+    // 同一个 id 不能指两个节点，否则成员资格校验会随迭代顺序摇摆。
+    assert.equal(new Set(map.nodes.map(n => n.id)).size, map.nodes.length, `种子 ${seed}：有重复 id`);
+  }
 });
 
 test('地图不会把节点放到网格外', () => {

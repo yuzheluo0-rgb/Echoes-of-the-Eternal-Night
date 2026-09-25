@@ -37,7 +37,7 @@ function lcg(seed: number) {
  * 「烧了它」 on the caravan's manifest is exactly that. A `lean:'loss'` event is one where the *best*
  * answer is still not a profit, and "walk away" is usually the answer that makes it true.
  */
-const GAINING: EventEffect['kind'][] = ['gold', 'hp', 'maxHp', 'relic', 'remove', 'polish', 'duplicate', 'cards', 'nothing'];
+const GAINING: EventEffect['kind'][] = ['gold', 'hp', 'maxHp', 'relic', 'prop', 'remove', 'polish', 'duplicate', 'cards', 'nothing'];
 
 /**
  * The kinds that never leave the player better off, and cannot be a gain.
@@ -91,6 +91,7 @@ const SAMPLE: Record<EventEffect['kind'], EventEffect> = {
   hp: { kind: 'hp', amount: 1 },
   maxHp: { kind: 'maxHp', amount: 1 },
   relic: { kind: 'relic' },
+  prop: { kind: 'prop' },
   remove: { kind: 'remove' },
   polish: { kind: 'polish' },
   duplicate: { kind: 'duplicate' },
@@ -349,6 +350,8 @@ test('resolveEvent：每种效果都接得上，不会留一个开着没做的�
     [{ kind: 'polish' }, next => next.cardTask === 'polish'],
     [{ kind: 'duplicate' }, next => next.cardTask === 'duplicate'],
     [{ kind: 'relic' }, next => next.drawDue !== undefined && next.nextSlot !== undefined],
+    // 道具停在「还没放下」上：捡到了，但放进哪一格是玩家的决定，所以它必须留下这一格等回答。
+    [{ kind: 'prop' }, next => !!next.propTask && next.propTask.from.length > 0],
   ];
   for (const [effect, check] of cases) {
     const option = { label: 'x', hint: 'x', outcome: 'x', effect };

@@ -200,7 +200,7 @@ test('副槽也真的有效果，而不是只在主槽里写着', () => {
  */
 const HELPS_HOLDER: Record<StatusId, boolean> = {
   ember: true, edge: true, rampart: true, reflection: true, retaliate: true, bank: true, strength: true,
-  scorch: false, mark: false, drained: false, shrouded: false,
+  scorch: false, mark: false, drained: false, shrouded: false, frozen: false,
 };
 
 function strength(relicId: string, slot: RelicSlot, tier: RefineTier | undefined): number {

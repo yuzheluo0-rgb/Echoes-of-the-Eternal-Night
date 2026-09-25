@@ -18,11 +18,16 @@ import { CARD_BY_ID, DECK_BY_ID } from '../cards/index.ts';
 import { RARITY_COLOR, RARITY_LABEL, type CardOffer, type RewardSpec } from './rewards.ts';
 import { isUpgradable } from './upgrades.ts';
 import { canAfford, outcomeLine, type EventOption, type EventSpec } from './events.ts';
+import { canPayWith, shopRerollCost, type PayWith, type ShopSlot } from './shop.ts';
+import { RELIC_PRICE } from './relicDraw.ts';
 import { sceneArt, SCENE_BY_KEY } from './scenes.ts';
-import { deckCounts, holdsRelic, resolveEvent, type ChapterRun } from './run.ts';
+import { deckCounts, holdsRelic, resolveEvent, shopRemoveCost, type ChapterRun } from './run.ts';
 import { unlockGroups } from './cardUnlocks.ts';
 import { REFINE_LABEL, RELIC_BY_ID } from '../relics/relics.ts';
 import { RelicFace } from '../relics/RelicFace';
+import { PropIcon } from '../props/PropIcon';
+import { emptyProps, PROP_BY_ID, type PropSlotState } from '../props/props.ts';
+import { PropRail } from '../props/PropRail';
 import { refineLines } from './relics.ts';
 import type { NodeKind } from './map.ts';
 import './node.css';
@@ -100,6 +105,7 @@ export function describeReward(reward: RewardSpec): string {
     case 'heal': return `回复 ${e.amount} 点生命`;
     case 'maxHp': return `生命上限 +${e.amount}，并立即回复同样多`;
     case 'relic': return '抽取一件遗物';
+    case 'prop': return '得到一件道具';
     case 'remove': return '焚掉牌组里的一张牌';
     case 'polish': return '打磨牌组里的一张牌';
     case 'duplicate': return '复制牌组里的一张牌';
@@ -110,6 +116,8 @@ export function describeReward(reward: RewardSpec): string {
 /** A reward has no scene of its own; the flavour picks one. */
 function rewardScene(reward: RewardSpec): string {
   if (reward.effect.kind === 'relic') return 'treasure';
+  // 道具和遗物同一个场景：它们都是**捡到的东西**，只是一件带着走、一件用掉。
+  if (reward.effect.kind === 'prop') return 'treasure';
   if (reward.effect.kind === 'gold') return 'caravan';
   if (reward.effect.kind === 'cards' || reward.effect.kind === 'remove'
     || reward.effect.kind === 'polish' || reward.effect.kind === 'duplicate') return 'event';
@@ -128,14 +136,43 @@ export type CampfirePick = 'rest' | 'burn' | 'polish' | 'quench';
  * 原因：营火是**每条路线都一定会经过**的地方，奇遇不是——实测一半的地图上连一个淬炼奇遇都没有。
  * 稳妥的那一注放在必经之路上，赌大的那一注留在奇遇里。
  */
-export function CampfireScreen({ run, onPick, audioOn, quenchChance }: {
+export function CampfireScreen({ run, onPick, audioOn, quenchChance, props }: {
   run: ChapterRun; onPick: (choice: CampfirePick) => void; audioOn: boolean; quenchChance: number;
+  /**
+   * 那一排道具槽。⚠️ **营火是 `camp` 类道具唯一能用的地方**（净灯 / 灰誓 / 袖炉）——
+   * 在它存在之前，那三件「捡得到、用不掉」。传 `undefined` 就不画这一排。
+   */
+  props?: {
+    slots: PropSlotState[];
+    canUse: (slot: number) => boolean;
+    reasonFor: (slot: number) => string | undefined;
+    onUse: (slot: number) => void;
+    /** 袖炉那种二选一：给了就画两个按钮，玩家自己挑哪一半。 */
+    halves?: { slot: number; name: string; onPick: (half: 'task' | 'effect') => void };
+  };
 }) {
   const heal = Math.round(run.maxHp * .3);
   const held = (['main', 'sub'] as const).filter(slot => run.relics[slot]);
   return <NodeShell kind="rest" scene="rest" kicker="营火 · 停下来" title="营地的火"
     footer="无论选哪个，这一层就过去了。">
     <p className="nd-copy">火还在烧。你有时间做一件事。</p>
+    {/* 道具排在选项**上面**：`run.ts` 把道具定义为「回答营火之前做的事」，
+        所以它读起来是前置动作，而不是第五个选项。 */}
+    {props && <div className="nd-prop-rail">
+      <p className="nd-prop-rail-head">身上的东西</p>
+      <PropRail slots={props.slots} canUse={props.canUse} onUse={props.onUse} reasonFor={props.reasonFor} />
+      {/* 袖炉是**二选一**的：回血与打磨是两条不同的路，界面上必须给两个按钮，
+          而不是替玩家挑一个默认值。（`PropHalf` / `EITHER_OR_PROPS` 在 `run.ts` 里。） */}
+      {props.halves && <div className="nd-prop-halves">
+        <p className="nd-prop-halves-head">{props.halves.name} · 要做哪一件？</p>
+        <div className="nd-choices">
+          <NodeChoice label="回 15 点生命" tone="#8fae7c" hint="当场补上"
+            onHover={() => sound('hover', audioOn)} onClick={() => props.halves!.onPick('effect')} />
+          <NodeChoice label="打磨一张牌" tone="#d9bc80" hint="开牌库，挑一张磨得更好"
+            onHover={() => sound('hover', audioOn)} onClick={() => props.halves!.onPick('task')} />
+        </div>
+      </div>}
+    </div>}
     <div className="nd-choices">
       <NodeChoice label="休息" tone="#e08a52" hint={`回复 ${heal} 点生命`}
         onHover={() => sound('hover', audioOn)} onClick={() => onPick('rest')} />
@@ -149,6 +186,220 @@ export function CampfireScreen({ run, onPick, audioOn, quenchChance }: {
           ? `把一件遗物的数值往上推一档 · 成算 ${quenchChance}%，失败则碎`
           : '身上没有遗物可以往里放'}
         onHover={() => sound('hover', audioOn)} onClick={() => onPick('quench')} />
+    </div>
+  </NodeShell>;
+}
+
+// ------------------------------------------------------------------- 商店
+
+/**
+ * 商店 —— 一屏五格货，三种付法。
+ *
+ * **定价的锚点是用户给的真实金币曲线**：半程约 300~400，登顶前约 700~800。一条塔 2~3 家店，
+ * 所以一家店要能买走**一到两件**——买不起是常态、全扫光是意外，两者之间的那个位置才对。
+ *
+ * 三种付法的分工：**金币**是常规，**生命**在钱不够而血够的时候打开一扇门，**遗物**是「我带着
+ * 一件用不上的东西」。第三种是这一版最像这个世界的一条——营地里的东西本来就是拿东西换的。
+ *
+ * ⚠️ 界面**不自己算价格**：`price` / `hpPrice` / `relicPrice` 全由 `shop.ts` 定好，
+ * 这里只负责印出来与把玩家的选择递回去。价格算两遍必然分叉。
+ */
+export function ShopScreen({ run, onBuy, onReroll, onRemove, onLeave, audioOn }: {
+  run: ChapterRun; audioOn: boolean;
+  onBuy: (index: number, payWith: PayWith, relicSlot?: 'main' | 'sub') => void;
+  onReroll: () => void;
+  /** 焚牌服务。**一家店只有一次**——`shop.removed` 是那个「已经用掉了」的记号。 */
+  onRemove: () => void;
+  onLeave: () => void;
+}) {
+  const shop = run.shop;
+  // 正在为哪一格挑「拿哪件遗物去换」。`null` 就是没在挑。
+  const [trading, setTrading] = useState<number | null>(null);
+  if (!shop) return null;
+
+  const rerollCost = shopRerollCost(run);
+  const removeCost = shopRemoveCost(run);
+  const held = (['main', 'sub'] as const).filter(slot => run.relics[slot]);
+  const affordable = shop.slots.filter((slot, index) => !slot.sold && canPayWith(run, index, 'gold')).length;
+
+  return <NodeShell kind="shop" scene="shop" kicker="路边 · 有人在这里摆摊" title="行脚商"
+    actions={<>
+      <button className="nd-primary" onPointerEnter={() => sound('hover', audioOn)} onClick={onLeave}>
+        走了
+      </button>
+      {/* 焚牌：**一家店限一次**，价格跨商店递增（照杀戮尖塔的 75/100/125）。
+          它不占货架——它是一项服务，所以长在按钮行里。 */}
+      <button className="nd-secondary" disabled={shop.removed || run.gold < removeCost}
+        onPointerEnter={() => sound('hover', audioOn)} onClick={onRemove}>
+        {shop.removed ? '焚过了' : `焚掉一张牌 · ${removeCost} 金`}
+      </button>
+      {/* 刷新价实时印在按钮上，买不起就置灰——一个点了没反应的按钮读起来像坏了。 */}
+      <button className="nd-secondary" disabled={run.gold < rerollCost}
+        onPointerEnter={() => sound('hover', audioOn)} onClick={onReroll}>
+        换一批货 · {rerollCost} 金
+      </button>
+    </>}
+    footer={`生命 ${run.hp}/${run.maxHp} · 金币 ${run.gold}${shop.warded ? ' · 身上有一道保险' : ''}`}>
+    <p className="nd-copy">
+      {affordable ? '摊子上的东西不多。看上了就拿，钱、血、或者你身上那件用不着的。'
+        : '他看了看你的钱袋，又看了看你。摊子上的东西你都拿不走。'}
+    </p>
+    <div className="nd-shop">
+      {shop.slots.map((slot, index) => <ShopTile key={index} slot={slot} index={index} run={run}
+        audioOn={audioOn} onBuy={onBuy} trading={trading === index}
+        onTrade={() => { sound('select', audioOn); setTrading(current => (current === index ? null : index)); }} />)}
+    </div>
+    {/* 拿遗物换：把身上那两件摆出来让玩家挑，而不是替他挑一件最便宜的。 */}
+    {trading !== null && <div className="nd-shop-trade">
+      <p className="nd-shop-trade-head">拿哪一件换？</p>
+      <div className="nd-choices">
+        {held.map(slot => {
+          const relicDef = RELIC_BY_ID.get(run.relics[slot]!);
+          // 「等价值」是按**品阶**标定的内置价格（`RELIC_PRICE` 本来就是为商店留的）。
+          const worth = relicDef ? RELIC_PRICE[relicDef.tier] : 0;
+          const enough = worth >= (shop.slots[trading]?.relicPrice ?? Infinity);
+          return <NodeChoice key={slot} label={relicDef?.name ?? slot}
+            tone={slot === 'main' ? '#d4bd87' : '#b6c3b2'}
+            hint={enough ? `值 ${worth} 金 · 换得动` : `值 ${worth} 金 · 不够换这一件`}
+            disabled={!enough}
+            onHover={() => sound('hover', audioOn)}
+            onClick={() => { onBuy(trading, 'relic', slot); setTrading(null); }} />;
+        })}
+      </div>
+    </div>}
+  </NodeShell>;
+}
+
+/** 一格货。面用**它自己那种**：道具是图标、卡牌是卡面、遗物是遗物面、属性与免死各一张小面。 */
+function ShopTile({ slot, index, run, audioOn, onBuy, onTrade, trading }: {
+  slot: ShopSlot; index: number; run: ChapterRun; audioOn: boolean;
+  onBuy: (index: number, payWith: PayWith, relicSlot?: 'main' | 'sub') => void;
+  onTrade: () => void; trading: boolean;
+}) {
+  const prop = slot.kind === 'prop' && slot.id ? PROP_BY_ID.get(slot.id) : undefined;
+  const card = slot.kind === 'card' && slot.id ? CARD_BY_ID.get(slot.id) : undefined;
+  const relic = slot.kind === 'relic' && slot.id ? RELIC_BY_ID.get(slot.id) : undefined;
+  const onSale = slot.price < slot.fullPrice;
+  const gold = canPayWith(run, index, 'gold');
+  const hp = canPayWith(run, index, 'hp');
+  const trade = canPayWith(run, index, 'relic');
+
+  return <div className={`nd-shop-tile ${slot.sold ? 'is-sold' : ''}`}>
+    {onSale && !slot.sold && <span className="nd-shop-sale">半价</span>}
+    {/* ⚠️ **一律用紧凑面。** 全尺寸的卡面 236 / 遗物面 240 宽，而五列每列只有约 200——
+        第一版五格排不下，第五格直接被挤出屏幕。紧凑面（卡 150 / 遗物 168 / 道具 108）刚好，
+        而「字大」这件事由下面的货名与价格负责，不是靠把卡面撑大。 */}
+    <div className="nd-shop-face">
+      {prop && <PropIcon prop={prop} compact />}
+      {card && <CardFace card={card} compact />}
+      {relic && <RelicFace relic={relic} compact />}
+      {slot.kind === 'stat' && <StatFace id={slot.id ?? ''} />}
+      {slot.kind === 'life' && <LifeFace />}
+      {slot.sold && <span className="nd-shop-sold">已售</span>}
+    </div>
+    <p className="nd-shop-name">{shopName(slot)}</p>
+    {!slot.sold && <>
+      <p className="nd-shop-detail">{shopDetail(slot)}</p>
+      <div className="nd-shop-pay">
+        <button className={`nd-pay ${gold ? '' : 'off'}`} disabled={!gold}
+          onPointerEnter={() => sound('hover', audioOn)} onClick={() => onBuy(index, 'gold')}>
+          <b>{slot.price}</b><i>金币{onSale && <s>{slot.fullPrice}</s>}</i>
+        </button>
+        {/* 生命价：**付完必须还剩至少 1 点**——判据是 `>` 不是 `>=`，和奇遇的 `canAfford` 同一条。 */}
+        <button className={`nd-pay ${hp ? '' : 'off'}`} disabled={!hp}
+          onPointerEnter={() => sound('hover', audioOn)} onClick={() => onBuy(index, 'hp')}>
+          <b>{slot.hpPrice}</b><i>生命</i>
+        </button>
+        <button className={`nd-pay ${trade ? '' : 'off'}`} disabled={!trade}
+          onPointerEnter={() => sound('hover', audioOn)} onClick={onTrade}>
+          <b>{slot.relicPrice}</b><i>{trading ? '挑一件…' : '遗物'}</i>
+        </button>
+      </div>
+    </>}
+  </div>;
+}
+
+/**
+ * 属性格：**不画图**。
+ *
+ * 道具、卡牌、遗物都是「一件东西」，所以它们有照片；「生命上限 +8」不是一件东西，
+ * 给它配一张照片只会是张不相干的图。所以这一格是排版本身：一个大字 + 名字与说明由下面那两行负责。
+ */
+function StatFace({ id }: { id: string }) {
+  return <div className="nd-shop-stat"><span>{id === 'heal' ? '补' : '厚'}</span></div>;
+}
+
+/** 免死：唯一能救命的一格，所以它自己有一张脸。 */
+function LifeFace() {
+  return <div className="nd-shop-life">
+    <span className="nd-shop-life-mark">命</span>
+    <i>下一次致命伤害<br />为你留下 1 点生命</i>
+  </div>;
+}
+
+/**
+ * 货架上那一格的**名字**与**一句说明**。
+ *
+ * 四种货各有各的数据源——道具、卡牌、遗物都读各自的表，属性与免死是商店自己的概念
+ * （它们不对应任何一件已有东西）。所以这段是显示层的事，不在 `shop.ts` 里。
+ */
+function shopName(slot: ShopSlot): string {
+  if (slot.kind === 'prop' && slot.id) return PROP_BY_ID.get(slot.id)?.name ?? '道具';
+  if (slot.kind === 'card' && slot.id) return CARD_BY_ID.get(slot.id)?.name ?? '一张牌';
+  if (slot.kind === 'relic' && slot.id) return RELIC_BY_ID.get(slot.id)?.name ?? '遗物';
+  if (slot.kind === 'life') return '一条命';
+  return slot.id === 'heal' ? '缝合' : '加厚';
+}
+
+function shopDetail(slot: ShopSlot): string {
+  if (slot.kind === 'prop' && slot.id) return PROP_BY_ID.get(slot.id)?.text ?? '';
+  if (slot.kind === 'card' && slot.id) return CARD_BY_ID.get(slot.id)?.text ?? '';
+  if (slot.kind === 'relic' && slot.id) return RELIC_BY_ID.get(slot.id)?.text ?? '';
+  if (slot.kind === 'life') return '本局内，下一次本该要你命的伤害留你 1 点生命。';
+  return slot.id === 'heal' ? '把你现在缺的那些补上一部分。' : '把根往下扎一尺，人能多站一会儿。';
+}
+
+// ------------------------------------------------------------- 捡到的道具
+
+/**
+ * 宝箱与奇遇里捡到的那件道具该放哪儿。
+ *
+ * ⚠️ **它必须是一个顶层早返回，不能长在别的屏里面。** 战后掉落是反过来的——那一件必须渲染在
+ * 战果面板**内部**，因为 `state` 那时候还在、整条分派链会先撞上战斗 JSX。塔上拾取时 `state`
+ * 是空的，`floor && resolved !== at` 那一支会先接管，所以这条排在它前面。
+ *
+ * 三格按钮走的是营火/奇遇同一套 `NodeChoice`（它文件头的注释就写着「营火、奇遇与商店共用」），
+ * 所以这一屏一行新样式都不用写。
+ */
+export function PropDropScreen({ run, from, onPlace, onDismiss, audioOn }: {
+  run: ChapterRun; from: string; audioOn: boolean;
+  onPlace: (slot: number) => void; onDismiss: () => void;
+}) {
+  const task = run.propTask;
+  const prop = task ? PROP_BY_ID.get(task.id) : undefined;
+  if (!task || !prop) return null;
+  const slots = run.props ?? emptyProps();
+  return <NodeShell kind="treasure" scene="treasure" kicker={`${from} · 一件道具`} title={prop.name}
+    footer={`生命 ${run.hp}/${run.maxHp} · 金币 ${run.gold}`}>
+    <div className="nd-prop-found">
+      <PropIcon prop={prop} />
+      <div className="nd-prop-found-copy">
+        <p className="nd-copy">{prop.text}</p>
+        {/* 来历那一行：道具的身份一半在效果上，一半在它是从哪儿来的。 */}
+        <p className="nd-effect">{prop.lore}</p>
+      </div>
+    </div>
+    <div className="nd-choices">
+      {slots.map((entry, slot) => {
+        const held = entry ? PROP_BY_ID.get(entry.id) : undefined;
+        return <NodeChoice key={slot} label={`放进第 ${slot + 1} 格`}
+          tone={held ? '#d9a45f' : '#8fae7c'}
+          hint={held ? `换下「${held.name}」` : '空格'}
+          onHover={() => sound('hover', audioOn)} onClick={() => onPlace(slot)} />;
+      })}
+      {/* 「不要」是真答案，不是放弃：三格都称手的时候，多带一件等于少带一件。 */}
+      <NodeChoice label="不要" hint="三格都称手时，这是个真答案"
+        onHover={() => sound('hover', audioOn)} onClick={onDismiss} />
     </div>
   </NodeShell>;
 }

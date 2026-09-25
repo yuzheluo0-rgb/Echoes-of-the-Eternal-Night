@@ -21,7 +21,7 @@ export interface Scene {
 
 export type SceneKey =
   | 'wolf' | 'dog' | 'firefly' | 'beast' | 'lantern' | 'stalker' | 'caravan' | 'boss'
-  | 'rest' | 'treasure' | 'event' | 'grass';
+  | 'rest' | 'treasure' | 'event' | 'shop' | 'grass';
 
 export const SCENES: Scene[] = [
   // --- the fights -------------------------------------------------------------------
@@ -38,6 +38,9 @@ export const SCENES: Scene[] = [
   { key: 'rest', name: '营火', query: 'campfire campsite at night dark' },
   { key: 'treasure', name: '宝箱', query: 'old wooden chest treasure dark' },
   { key: 'event', name: '岔路', query: 'dark path through foggy field night' },
+  // 五个词以内：Unsplash 把整串当短语，长了静默返回空。夜里的市集、灯下的摊子——商店是塔上唯一一个
+  // 有人的地方，这张图要说的是「这里有人做生意」，而不是「这里有一栋建筑」。
+  { key: 'shop', name: '商店', query: 'night market lantern stall dark' },
   { key: 'grass', name: '草甸', query: 'night grassland fog dark moody' },
 ];
 

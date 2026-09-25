@@ -11,15 +11,18 @@
  *   3. a victory advances and a defeat does not, so the caller can safely discard a dead run;
  *   4. the 主/副 composition holds `MAIN_SHARE`, keeps the main deck whole, and splashes one copy each;
  *   5. a whole run driven through *real* battles keeps every invariant at every step, and replays
- *      identically from the same seed.
+ *      identically from the same seed;
+ *   6. the props: every 改 run one changes something when used, spent charges are copied back out of
+ *      the fight that spent them, and the drop roll is **appended after** the three the run already
+ *      makes — so no existing seed's heal or gold moves.
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CARD_BY_ID, DECK_IDS, MAIN_SHARE, type DeckId } from '../cards/index.ts';
+import { CARD_BY_ID, DECK_IDS, MAIN_SHARE, TIER_BY_ID, type DeckId } from '../cards/index.ts';
 import { CHAPTER_1, chapterDeck, isDeckUnlocked, openingForms, starterDeck } from './chapter.ts';
 import {
-  PLAYER_MAX_HP, canPlay, endTurn, isValidBattle, livingEnemies, playCard, startBattle, type BattleState,
+  PLAYER_MAX_HP, canPlay, endTurn, isValidBattle, livingEnemies, playCard, startBattle, useProp, type BattleState,
 } from './engine.ts';
 import { ALL_ENCOUNTERS, POOLS } from './enemies.ts';
 import { effectFor } from './effects.ts';
@@ -28,11 +31,23 @@ import { REWARD_BY_ID } from './rewards.ts';
 import { fullDeckPool, rewardCardPool, rollCardOffer } from './rewards.ts';
 import { generateMap } from './map.ts';
 import {
-  HEAL_MAX, HEAL_MIN, RUN_ENCOUNTERS, addCard, answerRefine, battleSeed, campfireQuench, canEnter, canEnterNode,
-  chooseCard, claimReward, currentEncounter, deckFor, dismissRefine, dismissReveal, resolveEvent, encounterFor, enterNode, finishBattle, healRoll, holdsRelic,
-  isValidRun, newRun, nextChoices, removeCard, restHeal, spendGold, swapDecks, upgradeCard,
-  isChapterCleared, type ChapterRun,
+  EITHER_OR_PROPS, HEAL_MAX, HEAL_MIN, FIRST_PROP_ROW, PROP_LUCK_BASE, PROP_LUCK_MAX, PROP_LUCK_MIN,
+  RUN_ENCOUNTERS, addCard, answerRefine, battleSeed, campfireQuench, canEnter, canEnterNode,
+  chooseCard, claimReward, currentEncounter, deckFor, dismissProp, dismissRefine, dismissReveal,
+  discardProp, encounterFor, enterNode, finishBattle, healRoll, holdsRelic,
+  isValidRun, newRun, nextChoices, placeProp, propSlots, removeCard, resolveEvent, restHeal,
+  spendGold, swapDecks, upgradeCard, useRunProp, canUseRunProp,
+  isChapterCleared,
+  buyRemoveService, buyShopSlot, canPayWith, leaveShop, rerollShop, rollShop, shopRemoveCost,
+  shopRerollCost, shopPending, wardMark,
+  type ChapterRun,
 } from './run.ts';
+import {
+  SHOP_KINDS, SHOP_REROLL_BASE, SHOP_SLOTS, hpPriceOf, relicValueOf, shopSlotName,
+} from './shop.ts';
+import { RELIC_PRICE } from './relicDraw.ts';
+import { PROPS, PROP_BY_ID, emptyProps, placeIn, propsUsableIn } from '../props/props.ts';
+import { RUN_PROPS } from './props.ts';
 
 /** The decks chapter I hands out. Three since 燎原余烬 joined — the middle link of the cycle. */
 const DECKS: DeckId[] = ['blade', 'flame', 'bone'];
@@ -275,6 +290,24 @@ test('isValidRun 拒绝损坏的存档', () => {
     { ...run, seed: 1.5 },
     { ...run, rng: -1 },
     { ...run, rng: 0x100000000 },
+    // 道具。形状那几条直接由引擎的 `validProps` 兜住（两边共用一份，见 `isValidRun`）。
+    { ...run, props: [] },
+    { ...run, props: [null, null] },
+    { ...run, props: [null, null, null, null] },
+    { ...run, props: [null, null, { id: 'nope', uses: 1 }] },
+    { ...run, props: [null, null, { id: 'blood-tap', uses: 0 }] },
+    { ...run, props: [null, null, { id: 'blood-tap', uses: 99 }] },
+    { ...run, props: [null, null, 'blood-tap'] },
+    // 一件捡到还没放下的道具，id 必须真的存在：它下一步会被写进槽位，而一个不存在的 id
+    // 会让下一次加载把整局丢掉（`validProps` 拒它 → `loadRun` 丢 run）。
+    { ...run, propTask: { id: 'nope', from: '奇遇' } },
+    { ...run, propTask: { id: 'blood-tap' } },
+    // 掉落概率**必须是 [0,100] 的整数**：写成小数时 `roll * 100 < luck` 恒为假，
+    // 于是掉落静默地再也不发生——一份手改过的存档会让这个玩家永远抽不到道具，而且没有任何报错。
+    { ...run, propLuck: 1.5 },
+    { ...run, propLuck: -1 },
+    { ...run, propLuck: 101 },
+    { ...run, propGranted: 'yes' },
   ]) {
     assert.equal(isValidRun(broken), false, `本该拒绝：${JSON.stringify(broken)?.slice(0, 70)}`);
   }
@@ -947,4 +980,724 @@ test('走一条路线一定遇得到全部五场章节战 —— 通关条件不
     }
   }
   assert.deepEqual(short.slice(0, 5), [], `${short.length}/200 条路线凑不齐五场章节战`);
+});
+
+// -------------------------------------------------------------------- 道具
+
+/**
+ * A run that satisfies every 改 run 道具's precondition at once, so the sweep below can run all nine
+ * through one setup: 30 生命（回血看得出）、500 金币（金烬付得起）、一件主遗物（圣物匣有的烧）。
+ */
+function propReady(): ChapterRun {
+  return { ...newRun('blade', 'bone', 21), hp: 30, gold: 500, relics: { main: 'flint' } };
+}
+
+test('每一件改 run 的道具，用下去都必须真的改变什么', () => {
+  // 和 `src/battle/props.test.ts` 那条同构，只是换了一边：那一条管战斗里的二十八件，这一条管
+  // run 的九件。一件效果没接上的道具不会抛错，它只是**点了没反应**。
+  const shape = (value: ChapterRun) => JSON.stringify({ ...value, props: undefined });
+  for (const id of Object.keys(RUN_PROPS)) {
+    const run: ChapterRun = { ...propReady(), props: placeIn(emptyProps(), 1, id) };
+    const def = PROP_BY_ID.get(id)!;
+    // 袖炉是唯一一件二选一：描述符里两半都写着，而文案说的是「或」。见 `PropHalf`。
+    const after = id === 'pocket-forge' ? useRunProp(run, 1, 'effect') : useRunProp(run, 1);
+    assert.notDeepEqual(shape(after), shape(run),
+      `${id}（${def.name}）除了扣一次以外什么都没变——它没有接上 run 层`);
+
+    // 用过一次就少一次；用完最后一格是 `null`，**不是 `undefined`，也不是留着 `uses: 0` 的槽**。
+    const left = propSlots(after)[1];
+    if (def.charges === 1) assert.equal(left, null, `${id} 用完最后一格没有空出来`);
+    else assert.equal(left?.uses, def.charges - 1, `${id} 的次数没扣对`);
+    assert.equal(propSlots(run)[1]?.uses, def.charges, `${id} 就地改了传进来的 run`);
+    assert.ok(isValidRun(after), `${id} 用完之后存档过不了校验——刷新一下整局就没了`);
+  }
+});
+
+test('「二选一」那份名单和文案对得上', () => {
+  // 名单（`EITHER_OR_PROPS`）说的是「这一件的两半要用哪一半得由界面点」。判据不写在类型里，
+  // 只写在**印给玩家看的那句文案**里——所以拿文案反过来验它：多了等于那件少做一半，少了等于袖炉多做一半。
+  for (const id of Object.keys(RUN_PROPS)) {
+    const text = PROP_BY_ID.get(id)!.text;
+    assert.equal(EITHER_OR_PROPS.has(id), text.includes('二选一'), `${id} 的文案「${text}」和名单对不上`);
+  }
+});
+
+test('付不起就不动用，而且一次也不扣', () => {
+  // 拒绝的三种：钱不够、没有主遗物可烧、格子里本来就没东西（或者那件只有战斗效果）。
+  const poor: ChapterRun = { ...newRun('blade', 'bone', 4), gold: 10, props: placeIn(emptyProps(), 0, 'gold-ash') };
+  assert.equal(canUseRunProp(poor, 0), false, '界面应当把它置灰');
+  assert.equal(useRunProp(poor, 0), poor, '金币不够却把它花掉了——连次数都该留着');
+
+  const bare: ChapterRun = { ...newRun('blade', 'bone', 4), relics: {}, props: placeIn(emptyProps(), 0, 'reliquary') };
+  assert.equal(canUseRunProp(bare, 0), false);
+  assert.equal(useRunProp(bare, 0), bare, '没有主遗物却烧了');
+
+  const empty = newRun('blade', 'bone', 4);
+  assert.equal(useRunProp(empty, 0), empty, '空格子应当原样退回，不抛错');
+  assert.equal(canUseRunProp(empty, 9), false, '越界');
+  // 一件只有战斗效果的道具：run 这一层不认识它，什么都不做（界面按「有没有战斗效果」分流）。
+  const fightOnly: ChapterRun = { ...empty, props: placeIn(emptyProps(), 0, 'frost-nail') };
+  assert.equal(useRunProp(fightOnly, 0), fightOnly);
+});
+
+test('袖炉是二选一：一半当场回血、一半开选牌器，两半都只扣一次', () => {
+  // ⚠️ 描述符里两半都写着（`{ task: 'polish', heal: 15 }`），而它印出来的文案是
+  // 「**二选一**：回复 15 点生命，或打磨牌库里的一张牌」。两半一起做的话，这件道具会比它印给
+  // 玩家看的多给一半。
+  const forge: ChapterRun = { ...newRun('blade', 'bone', 9), hp: 20, props: placeIn(emptyProps(), 0, 'pocket-forge') };
+  const healed = useRunProp(forge, 0, 'effect');
+  assert.equal(healed.hp, 35, '回血那一半没有回');
+  assert.equal(healed.cardTask, undefined, '回血那一半不该顺手开选牌器');
+  const polishing = useRunProp(forge, 0, 'task');
+  assert.equal(polishing.cardTask, 'polish', '打磨那一半没开选牌器');
+  assert.equal(polishing.hp, 20, '打磨那一半不该顺手回血');
+  // 省缺按「回血」走：一个会自己开屏的默认值，比一个安静回血的默认值危险得多。
+  assert.equal(useRunProp(forge, 0).hp, 35);
+  for (const after of [healed, polishing]) assert.equal(propSlots(after)[0]?.uses, 1, '两半都只该扣一次');
+
+  // 灰誓是另一头：`{ task: 'remove', maxHp: 6 }` 两半**都要落**（「摧毁牌库里的一张牌，生命上限 +6」）。
+  const oath: ChapterRun = { ...propReady(), props: placeIn(emptyProps(), 0, 'ash-oath') };
+  const sworn = useRunProp(oath, 0);
+  assert.equal(sworn.cardTask, 'remove', '灰誓没开选牌器');
+  assert.equal(sworn.maxHp, 66, '灰誓的 +6 上限被 `half` 吃掉了——它没有二选一那回事');
+});
+
+test('道具把生命上限压低时，当前生命一起钳住，而且存档必须仍然合法', () => {
+  // 夜祷书：生命上限 −10，换一张本牌组的稀有牌。
+  const run: ChapterRun = { ...propReady(), hp: 60, props: placeIn(emptyProps(), 0, 'night-office') };
+  const after = useRunProp(run, 0);
+  assert.equal(after.maxHp, 50, '上限没有被压低');
+  assert.equal(after.hp, 50, '当前生命没有跟着钳到新上限');
+  // ⚠️ 这一条钉的是 `isValidRun`：它原来要求 `maxHp >= PLAYER_MAX_HP`（那是**战斗**的不变量），
+  // 而 run 的上限现在可以被道具压低。不放松的话，玩家用一次夜祷书、刷新一下**整局就没了**。
+  assert.ok(isValidRun(after), '压低上限之后的存档过不了校验');
+
+  // 压不到 1 以下：这是 run 层的底线（上限 0 的 run 永远回不了血）。
+  const deep: ChapterRun = {
+    ...newRun('blade', 'bone', 4), maxHp: 8, hp: 8, props: placeIn(emptyProps(), 0, 'night-office'),
+  };
+  assert.equal(useRunProp(deep, 0).maxHp, 1, '上限被压到了 1 以下');
+  assert.ok(isValidRun(useRunProp(deep, 0)), '压到底之后的存档过不了校验');
+});
+
+test('空心齿把当前生命的一半搬到上限上；陪葬钱扣血但绝不致死', () => {
+  const run: ChapterRun = { ...newRun('blade', 'bone', 5), hp: 21, props: placeIn(emptyProps(), 0, 'hollow-tooth') };
+  const bitten = useRunProp(run, 0);
+  assert.equal(bitten.hp, 11, '留下的那一半');
+  assert.equal(bitten.maxHp, 70, '搬上去的那一半');   // 60 + (21 − 11)
+
+  // 陪葬钱：失去 15 点生命，抽一件遗物。**扣到 0 就钳在 1**——一件道具用出一次死亡是 bug 不是难度。
+  const dying: ChapterRun = { ...newRun('blade', 'bone', 5), hp: 9, props: placeIn(emptyProps(), 0, 'grave-penny') };
+  const paid = useRunProp(dying, 0);
+  assert.equal(paid.hp, 1, '道具把玩家扣死了');
+  assert.equal(paid.drawDue, 'grave-penny', '没有挂上遗物那一手');
+  assert.equal(paid.nextSlot, 'main');
+  assert.ok(isValidRun(paid), '欠着一手遗物的存档过不了校验');
+});
+
+test('夜祷书给的是本牌组**最高那一档**的牌，而且摆出来给玩家看', () => {
+  // ⚠️ `rare` 取的是池子里 rank 最大的那一档，**不是写死 `starfall`**：第一章解锁的牌里根本没有
+  // 星陨，写死它等于这件道具什么都不给（而它的代价是 10 点生命上限）。
+  const rank = (id: string) => TIER_BY_ID.get(CARD_BY_ID.get(id)!.tier)!.rank;
+  for (let seed = 1; seed <= 12; seed++) {
+    const run: ChapterRun = { ...propReady(), seed, rng: seed, props: placeIn(emptyProps(), 0, 'night-office') };
+    const after = useRunProp(run, 0);
+    const gained = after.cardReveal?.gained[0];
+    assert.ok(gained, `种子 ${seed}：给了牌却什么都没摆出来——玩家永远不知道拿到的是哪张`);
+    assert.equal(after.deck.at(-1)!.cardId, gained.cardId, '展示的那张和进牌组的不是同一张');
+    const best = Math.max(...rewardCardPool(after.main, after.sub).map(rank));
+    assert.equal(rank(gained.cardId), best, `种子 ${seed}：拿到的不是最高档的牌`);
+  }
+});
+
+test('放下 / 不要 / 丢掉', () => {
+  const held: ChapterRun = {
+    ...newRun('blade', 'bone', 3),
+    props: placeIn(emptyProps(), 0, 'blood-tap'),
+    propTask: { id: 'spyglass', from: '战利品' },
+  };
+  const placed = placeProp(held, 1);
+  assert.equal(propSlots(placed)[1]?.id, 'spyglass');
+  assert.equal(propSlots(placed)[1]?.uses, 2, '放进去应当是满次数');
+  assert.equal(placed.propTask, undefined, '放下之后那件「还没放下」的还挂着');
+  assert.equal(placed.propGranted, true, '拿到过一件，兜底就不该再发第二件');
+  assert.equal(propSlots(placed)[0]?.id, 'blood-tap', '别的格子不该动');
+  assert.ok(isValidRun(placed), '放下之后的存档过不了校验');
+
+  // 替换：往已经占着的格子里放（`claimRelic` 同一个语义，**从不问「满了吗」**）。
+  assert.deepEqual(propSlots(placeProp(held, 0)).map(entry => entry?.id ?? null), ['spyglass', null, null]);
+
+  // 「不要」。三格都称手时这是真答案，所以它不该动身上任何东西。
+  const refused = dismissProp(held);
+  assert.equal(refused.propTask, undefined);
+  assert.deepEqual(propSlots(refused), propSlots(held), '「不要」动了身上的东西');
+
+  // 丢掉一格。
+  assert.equal(propSlots(discardProp(placed, 0))[0], null);
+  assert.equal(propSlots(discardProp(placed, 0))[1]?.id, 'spyglass', '丢掉一格不该动另一格');
+  assert.equal(discardProp(placed, 2), placed, '空格子丢掉应当原样退回');
+
+  // 战果面板那条路：**不经过 `propTask`**，id 直接传进来（见 `BattleOutcome.propDrop`）。
+  const fromPanel = placeProp(newRun('blade', 'bone', 3), 2, 'wall-seed');
+  assert.equal(propSlots(fromPanel)[2]?.id, 'wall-seed');
+
+  // 不存在的 id / 越界的格子：原样退回，不抛错。
+  assert.equal(placeProp(held, 1, 'nope'), held);
+  assert.equal(placeProp(held, 9), held);
+});
+
+test('战斗用掉的道具按战斗里那一份结算：次数抄回来、用完的那格变 null', () => {
+  const run: ChapterRun = {
+    ...newRun('blade', 'bone', 8),
+    props: placeIn(placeIn(emptyProps(), 0, 'spyglass'), 1, 'wall-seed'),
+  };
+  // 战斗里用掉窥管一次（2 → 1）和墙种一次（1 → 0，那一格该空出来）。
+  const battle = startBattle('ch1-1', run.main, battleSeed(run, 'ch1-1'), { hp: run.hp, sub: run.sub, props: run.props });
+  const played = useProp(useProp(battle, 0), 1);
+  assert.equal(played.props?.[1], null, '战斗里用过最后一次，那一格本来就该空掉');
+
+  const outcome = finishBattle(run, { ...played, phase: 'won' });
+  assert.deepEqual(propSlots(outcome.run), [{ id: 'spyglass', uses: 1 }, null, null]);
+  assert.deepEqual(outcome.spentProps, [
+    { id: 'spyglass', used: 1, left: 1 },
+    { id: 'wall-seed', used: 1, left: 0 },
+  ], '结果面板读的差额不对');
+  assert.ok(isValidRun(outcome.run), '结算之后的存档过不了校验');
+
+  // ⚠️ 一份**没有 `props` 字段**的战斗状态（它是后加的字段）：run 的那一包**不许消失**。
+  const legacy: BattleState = { ...played, phase: 'won', props: undefined };
+  assert.deepEqual(propSlots(finishBattle(run, legacy).run), propSlots(run), '一次误采纳让整包道具消失了');
+  assert.deepEqual(finishBattle(run, legacy).spentProps, [], '没有 props 就没有差额可报');
+
+  // 落败那一支不扣道具，原样退回。
+  const lost = finishBattle(run, { ...played, phase: 'lost' });
+  assert.equal(lost.run, run, '战败必须原样退回');
+  assert.deepEqual(lost.spentProps, [], '战败却报了用掉的道具');
+});
+
+test('战后掉落：营火专用的那几件不掉，保底从第 2 层开始', () => {
+  const fight = ALL_ENCOUNTERS.find(entry => entry.pool === 'weak')!;
+  let lucky = 0;
+  for (let seed = 1; seed <= 60; seed++) {
+    const node = generateMap(seed).nodes.find(n => n.row === 4)!;
+    /** 站在第 4 层上、还没有道具的一局：`propLuck` 压到最低，好让掷点本身几乎不掉东西。 */
+    const at = (extra: Partial<ChapterRun>): ChapterRun =>
+      ({ ...newRun('blade', 'bone', seed), at: node.id, path: [node.id], propLuck: PROP_LUCK_MIN, ...extra });
+
+    const bare = at({});
+    const first = finishBattle(bare, wonBattle(fight.id, bare));
+    assert.ok(first.propDrop, `种子 ${seed}：第 4 层还没有道具，却没有补一件`);
+    assert.ok(PROP_BY_ID.has(first.propDrop!), `${first.propDrop} 不是一件存在的道具`);
+    // ⚠️ 营火专用的那几件（要开牌库选牌器）**不能从战斗掉落里出**：战斗中一置上 `cardTask`，
+    // 整张战斗页会被选牌器顶掉。
+    assert.notEqual(PROP_BY_ID.get(first.propDrop!)!.use, 'camp', `掉出了营火专用的 ${first.propDrop}`);
+    assert.ok(propsUsableIn('battle').some(prop => prop.id === first.propDrop), '掉出了池子外的道具');
+    assert.equal(first.run.propGranted, true, '补了却没记下来——下一场会再补一次');
+    assert.ok(isValidRun(first.run), `种子 ${seed}：补出来的存档不合法`);
+
+    // 判据是 run 自己的标记，**不是「props 是不是空的」**：丢掉三件之后不会再刷一轮。
+    const flagged = at({ propGranted: true });
+    if (finishBattle(flagged, wonBattle(fight.id, flagged)).propDrop) lucky++;
+  }
+  // 标记立着的时候，掉落就只剩 5% 的基础概率了——不比出来的话，上面那句「补了」可能只是运气。
+  assert.ok(lucky < 20, `60 次里掉了 ${lucky} 次——保底没有被标记挡住`);
+});
+
+test('掉落概率留在这个区间里，而且真的两种结果都出得来', () => {
+  const fight = ALL_ENCOUNTERS.find(entry => entry.pool === 'strong')!;
+  const drops = new Set<boolean>();
+  for (let seed = 1; seed <= 120; seed++) {
+    const run: ChapterRun = { ...newRun('blade', 'bone', seed), propLuck: PROP_LUCK_BASE };
+    const after = finishBattle(run, wonBattle(fight.id, run)).run;
+    assert.ok(Number.isInteger(after.propLuck), `种子 ${seed}：概率成了 ${after.propLuck}`);
+    assert.ok(after.propLuck! >= PROP_LUCK_MIN && after.propLuck! <= PROP_LUCK_MAX,
+      `种子 ${seed}：概率跑到了 ${after.propLuck}`);
+    assert.ok(isValidRun(after), `种子 ${seed}：结算之后的存档不合法`);
+    drops.add(after.propLuck! < PROP_LUCK_BASE);
+  }
+  assert.deepEqual([...drops].sort(), [false, true], '120 个种子只出一种结果，这个概率模型是假的');
+  // 概率存的是**数**：掉一次 −15，没掉 +12。
+  const run: ChapterRun = { ...newRun('blade', 'bone', 3), propLuck: PROP_LUCK_BASE };
+  const after = finishBattle(run, wonBattle(fight.id, run)).run;
+  assert.ok([PROP_LUCK_BASE - 15, PROP_LUCK_BASE + 12].includes(after.propLuck!), `概率被记成了 ${after.propLuck}`);
+});
+
+test('道具的掷点排在既有三个之后：回血与金币一个数都不动', () => {
+  // ⚠️ 这条钉的是「追加在最后」。插在 `healRoll` / `goldFor` / `rollSubSlot` 中间的话，每一个既有
+  // 种子的回血、金币和「开副槽」都会被推移一格——而真正的代价是**所有玩家存档里那条流都对不上了**。
+  const run = newRun('blade', 'bone', 4242);
+  const state = wonBattle('ch1-1', run);
+  const outcome = finishBattle(run, state);
+  // 回血是这条流的第一口：它必须等于「单独掷一次」的结果。
+  assert.equal(outcome.heal, healRoll(run).heal, '回血之前多了别的掷点');
+  // 冻结点数。改 `HEAL_MIN` / `GOLD_BY_POOL` 或者往流里插一个掷点都会让这两行变红——那正是要知道的事。
+  assert.equal(outcome.heal, 15, '种子 4242 的回血变了：流的顺序被改动了');
+  assert.equal(outcome.gold, 8, '种子 4242 的金币变了：流的顺序被改动了');
+  // 同一条 run 结算两次，逐字段相同。
+  assert.deepEqual(finishBattle(run, state).run, outcome.run, '同一条 run 两次结算不一样');
+  // 身上带着道具、概率也不一样时，回血与金币**仍然一个数都不动**。
+  const carrying: ChapterRun = { ...run, props: placeIn(emptyProps(), 0, 'blood-tap'), propLuck: 71, propGranted: true };
+  const withProps = finishBattle(carrying, {
+    ...startBattle('ch1-1', carrying.main, battleSeed(carrying, 'ch1-1'),
+      { hp: carrying.hp, sub: carrying.sub, props: carrying.props }),
+    phase: 'won',
+  });
+  assert.equal(withProps.heal, outcome.heal, '回血被道具的掷点推移了');
+  assert.equal(withProps.gold, outcome.gold, '金币被道具的掷点推移了');
+});
+
+test('存档往返：带着道具的 run 过一遍 JSON 还能逐字段读回来', () => {
+  // ⚠️ 这是**唯一**能抓住「不小心把 Map / 函数塞进 props」的测试：`JSON.stringify` 会静默地把它们
+  // 丢掉，而丢完之后 `isValidRun` 仍然可能通过。
+  const run: ChapterRun = {
+    ...newRun('blade', 'bone', 12),
+    props: placeIn(placeIn(emptyProps(), 0, 'blood-tap'), 2, 'spyglass'),
+    propTask: { id: 'staunch-moss', from: '奇遇' },
+    propLuck: 47,
+    propGranted: true,
+  };
+  const { map, ...wire } = run;
+  void map;
+  const round = JSON.parse(JSON.stringify(wire)) as ChapterRun;
+  assert.deepEqual(round, wire, '存档过一遍 JSON 就变了——里面混进了不是纯数据的东西');
+  assert.equal(isValidRun(round), true, '带着道具的存档过不了校验');
+  // 两格带同一件是合法的（消耗品就该能带两个）；遗物那条「主副不能同件」**不能照抄**过来。
+  const twin = { ...run, props: placeIn(placeIn(emptyProps(), 0, 'blood-tap'), 2, 'blood-tap') };
+  assert.equal(isValidRun(twin), true, '两件一样的道具被拒了');
+});
+
+test('战斗里把一格换成另一件（未拆的信）：报的是用掉的那件，新来的那件不算「用掉」', () => {
+  const run: ChapterRun = { ...newRun('blade', 'bone', 8), props: placeIn(emptyProps(), 0, 'sealed-letter') };
+  const battle = startBattle('ch1-1', run.main, battleSeed(run, 'ch1-1'), { hp: run.hp, sub: run.sub, props: run.props });
+  const opened = useProp(battle, 0);          // 这一格被换成了另一件道具
+  assert.notEqual(opened.props?.[0]?.id, 'sealed-letter', '这封信开出了它自己，这条测试就没验到东西');
+  const outcome = finishBattle(run, { ...opened, phase: 'won' });
+  assert.deepEqual(propSlots(outcome.run), opened.props, '战场上的那一包没有被原样采纳');
+  assert.deepEqual(outcome.spentProps, [{ id: 'sealed-letter', used: 1, left: 0 }],
+    '报的是新来的那件，而不是用掉的那件');
+  assert.ok(isValidRun(outcome.run));
+});
+
+test('营火专用的那三件道具必须拿得到', () => {
+  // ⚠️ 它们**不能**从战斗掉落里出（要开牌库选牌器，会顶掉整张战斗页），所以塔上拾取是唯一的来源。
+  // 哪天有人把塔上那个池子「顺手统一」成 `propsUsableIn('battle')`，净灯 / 灰誓 / 袖炉就成了三行
+  // 玩家永远见不到的数据——而卡面、图标、检索词一应俱全，看起来完全正常。
+  const campOnly = PROPS.filter(prop => prop.use === 'camp');
+  assert.ok(campOnly.length > 0, '一件 camp 道具都没有，这条测试就没有意义');
+  for (const prop of campOnly) {
+    assert.ok(!propsUsableIn('battle').some(entry => entry.id === prop.id), `${prop.id} 出现在了战斗掉落池里`);
+  }
+  // 宝箱那一行（奖励表里给道具的那份）掷出来的东西里必须真的见得到 camp 道具。
+  //
+  // ⚠️ **先走几格流**：这个 LCG 的**第一口**对连续的种子是挤在一起的（种子 1..400 只铺开整个区间的
+  // 15%），而加权抽取按的是那个值——直接拿种子当掷点，400 次全都落在同一个带里，看起来就像
+  // 「营火道具一件都不出」。同样的坑在 `atTheFire` 上面记过一次。
+  const id = [...REWARD_BY_ID.values()].find(entry => entry.effect.kind === 'prop')!.id;
+  const seen = new Set<string>();
+  for (let seed = 1; seed <= 400; seed++) {
+    let run: ChapterRun = { ...newRun('blade', 'bone', seed), pendingReward: id };
+    for (let i = 0; i < 5; i++) run = healRoll(run).run;
+    const task = claimReward(run).propTask;
+    if (task) seen.add(PROP_BY_ID.get(task.id)!.use);
+  }
+  assert.ok(seen.has('camp'), '400 次宝箱拾取里一件营火道具都没出——它们已经拿不到了');
+  assert.ok(seen.has('battle'), '战斗道具一件都不出，这个池子被换掉了');
+});
+
+test('宝箱与奇遇都停在「还没放下」上等玩家回答', () => {
+  // 宝箱：奖励表里那一行。⚠️ 这张表**宝箱和普通战斗奖励共用**，所以普通胜仗也会开出道具来。
+  const reward = [...REWARD_BY_ID.values()].find(entry => entry.effect.kind === 'prop')!;
+  assert.ok(reward, '奖励表里没有给道具的那一行');
+  const run = { ...newRun('blade', 'bone', 6), pendingReward: reward.id };
+  const after = claimReward(run);
+  assert.ok(after.propTask, '宝箱给了道具却没有停在待放上');
+  assert.ok(PROP_BY_ID.has(after.propTask.id), '给了一件不存在的道具');
+  assert.equal(after.propTask.from, '战利品');
+  assert.equal(after.pendingReward, undefined, '收下了却还挂着那份奖励');
+  assert.ok(isValidRun(after), '待放道具的存档过不了校验');
+  assert.equal(placeProp(after, 0).propTask, undefined, '放下之后还没收起来');
+
+  // 奇遇：表里 effect 是 prop 的那一条，而且**必须有代价**——稀缺感由 `requires` 表达，不由骰子。
+  const option = EVENTS.flatMap(event => event.options).find(entry => entry.effect.kind === 'prop')!;
+  assert.ok(option, '奇遇表里没有给道具的选项');
+  assert.ok((option.requires?.hp ?? 0) > 0 || (option.requires?.gold ?? 0) > 0,
+    '给道具的选项没有代价——那它就是一次白拿');
+  const before: ChapterRun = { ...newRun('blade', 'bone', 6), hp: 40, gold: 100 };
+  const given = resolveEvent(before, option);
+  assert.ok(given.propTask, '奇遇给了道具却没有停在待放上');
+  assert.equal(given.propTask.from, '奇遇');
+  assert.ok(isValidRun(given), '待放道具的存档过不了校验');
+  // **不是概率**：同一条 run 结算两次拿到的是同一件，而且每次都真的给。
+  assert.equal(resolveEvent(before, option).propTask!.id, given.propTask.id, '两次结算给了两件不同的道具');
+});
+
+// ---------------------------------------------------------------- 商店
+
+/**
+ * 一张种子的第一商店。
+ *
+ * ⚠️ **不写死种子，也不写死节点 id。** 权重一动整座塔就重掷，写死种子的测试会在下一次改 `bandFor`
+ * 时变成一句谎话——它会「因为那个节点不再是商店」而红，而不是因为商店坏了。
+ */
+function shopOn(seed: number, gold = 500): ChapterRun | undefined {
+  const run = newRun('blade', 'bone', seed);
+  const node = run.map.nodes.find(entry => entry.kind === 'shop');
+  return node ? rollShop({ ...run, at: node.id, path: [node.id], gold }) : undefined;
+}
+
+function shopRun(gold = 500): ChapterRun {
+  for (let seed = 7; seed <= 207; seed++) {
+    const run = shopOn(seed, gold);
+    if (run) return run;
+  }
+  throw new Error('200 个种子里一家商店都没有——`bandFor` 里的 shop 被拿掉了？');
+}
+
+/** 一个已经打完的假状态，只给 `finishBattle` 读它真正读的那几个字段。 */
+const wonState = (hp: number, marks: Record<string, number>) => ({
+  phase: 'won', encounterId: 'ch1-1', player: { hp }, marks,
+} as unknown as BattleState);
+
+test('商店：五格、至少一格道具、恰一格打五折', () => {
+  const run = shopRun();
+  const slots = run.shop!.slots;
+  assert.equal(slots.length, SHOP_SLOTS);
+  // 保底那一格是**先摇位置再填**的，所以「有道具」不是概率，是承诺。
+  assert.ok(slots.some(slot => slot.kind === 'prop'), '货架上没有道具——那一格是保底的');
+  const onSale = slots.filter(slot => slot.price < slot.fullPrice);
+  assert.equal(onSale.length, 1, `五折应该恰好一格，实际 ${onSale.length} 格`);
+  assert.equal(onSale[0].price, Math.ceil(onSale[0].fullPrice / 2), '五折那一格的价钱不是一半');
+  for (const slot of slots) {
+    // 血价与遗物价都是**从折后价推**的，所以半价那一格在三种货币上都是半价。
+    assert.equal(slot.hpPrice, hpPriceOf(slot.price), '血价不是从折后价推的');
+    assert.equal(slot.relicPrice, slot.price, '遗物价不是这一格的标价');
+    assert.ok(Number.isInteger(slot.price) && slot.price > 0 && slot.price <= slot.fullPrice);
+    assert.ok(SHOP_KINDS.includes(slot.kind));
+    assert.ok(shopSlotName(slot).length > 0, `${slot.kind} 那一格没有名字`);
+  }
+  assert.ok(isValidRun(run), '商店的存档过不了校验');
+});
+
+test('商店：同一个种子同一批货，而且掷点一格都不碰 run 的流', () => {
+  const run = shopRun();
+  assert.deepEqual(rollShop({ ...run, shop: undefined }).shop!.slots, run.shop!.slots,
+    '同一个节点掷出了两批货');
+  // 幂等：重绘、重载、界面照宝箱那条路多调一次，摆出来的都还是那五格。
+  assert.equal(rollShop(run), run, '`rollShop` 第二次调用换了货');
+  // ⚠️ 商店的掷点走自己那条流（种子 + 节点 id）。插进 `run.rng` 会把每一个种子的回血与金币整体
+  // 推移一格——上面那条「同一条 run 重放两次完全相同」就是钉这件事的。
+  assert.equal(run.rng, newRun('blade', 'bone', run.seed).rng, '掷货架动了 run 的掷点流');
+
+  const shelves = new Set<string>();
+  for (let seed = 7; seed <= 60; seed++) {
+    const one = shopOn(seed);
+    if (one) shelves.add(JSON.stringify(one.shop!.slots));
+  }
+  assert.ok(shelves.size > 10, `几十家店只摆出 ${shelves.size} 种货架——掷点可能没走种子`);
+});
+
+test('商店：金币付 —— 买不起、越界、已售，都必须是同一个对象', () => {
+  const run = shopRun(1000);
+  const slot = run.shop!.slots[0];
+  const bought = buyShopSlot(run, 0, 'gold');
+  assert.equal(bought.gold, run.gold - slot.price, '买完金币不对');
+  assert.equal(bought.shop!.slots[0].sold, true, '买下了却没有标售出');
+  assert.equal(bought.shop!.slots[1], run.shop!.slots[1], '没买的那一格也变了');
+
+  // ⚠️ 界面靠 `next === run` 判断要不要播音效 / 扣动画，所以「没做成」必须是同一个引用。
+  const broke: ChapterRun = { ...run, gold: slot.price - 1 };
+  assert.equal(canPayWith(broke, 0, 'gold'), false);
+  assert.equal(buyShopSlot(broke, 0, 'gold'), broke, '钱不够却动了 run');
+  assert.equal(buyShopSlot(run, SHOP_SLOTS, 'gold'), run, '越界');
+  assert.equal(buyShopSlot(run, -1, 'gold'), run, '负下标');
+  assert.equal(buyShopSlot(bought, 0, 'gold'), bought, '已经卖掉的那一格还能再买一次');
+  assert.equal(buyShopSlot({ ...run, shop: undefined }, 0, 'gold').shop, undefined, '不在商店里也能买');
+});
+
+test('商店：生命付 —— 付完必须还剩至少 1 点', () => {
+  const run = shopRun(0);
+  const slot = run.shop!.slots[0];
+  // 判据是 `>` 不是 `>=`，和奇遇的 `canAfford` 同一条：付完剩 0 血要挡住。
+  const exact: ChapterRun = { ...run, hp: slot.hpPrice };
+  assert.equal(canPayWith(exact, 0, 'hp'), false, '付完正好 0 血却点亮了');
+  assert.equal(buyShopSlot(exact, 0, 'hp'), exact, '在店里把自己付死了');
+  const paid = buyShopSlot({ ...run, hp: slot.hpPrice + 1 }, 0, 'hp');
+  assert.equal(paid.hp, 1, '付完不是剩 1 点');
+  assert.equal(paid.gold, run.gold, '用血付还扣了钱');
+});
+
+test('商店：遗物付 —— 比的是「价值不低于」，换走的连带清掉淬炼', () => {
+  const base = shopRun(0);
+  const worth = relicValueOf('iron-nail');
+  assert.equal(worth, RELIC_PRICE.shard, '残片的价不是 RELIC_PRICE 里那个数——两套价表分家了');
+  const run: ChapterRun = { ...base, relics: { main: 'iron-nail' }, refined: { 'iron-nail': 'small' } };
+
+  const dear = run.shop!.slots.findIndex(slot => slot.relicPrice > worth);
+  assert.ok(dear >= 0, '货架上没有一格比残片贵——这条就验不到东西');
+  assert.equal(canPayWith(run, dear, 'relic'), false, '一件残片买走了更贵的东西');
+  assert.equal(buyShopSlot(run, dear, 'relic', 'main'), run, '价值不够却成交了');
+  assert.equal(buyShopSlot(run, dear, 'relic'), run, '没说要拿哪一格，却也成交了');
+  assert.equal(buyShopSlot(run, dear, 'relic', 'sub'), run, '副槽是空的，却按副槽成交了');
+
+  // 便宜的那一格收。保底的道具格一定在其中（最贵的道具打完折也低于一件残片）。
+  const cheap = run.shop!.slots.findIndex(slot => slot.relicPrice <= worth);
+  assert.ok(cheap >= 0, '五格里没有一格收得下残片');
+  const traded = buyShopSlot(run, cheap, 'relic', 'main');
+  assert.notEqual(traded, run);
+  assert.equal(traded.relics.main, undefined, '换走了却还挂在主槽上');
+  assert.equal(traded.refined?.['iron-nail'], undefined, '遗物换走了，淬炼还留着');
+  assert.equal(traded.gold, run.gold, '用遗物付还扣了钱');
+  assert.equal(traded.relics.sub, run.relics.sub, '主槽空了，副槽不该被顶上来');
+});
+
+test('商店：刷新一次翻一倍，钱不够就原样退回', () => {
+  const run = shopRun(0);
+  assert.equal(shopRerollCost(run), SHOP_REROLL_BASE);
+  assert.equal(rerollShop(run), run, '一分钱没有却刷了货');
+
+  const once = rerollShop({ ...run, gold: SHOP_REROLL_BASE });
+  assert.notEqual(once, run);
+  assert.equal(once.gold, 0);
+  assert.equal(once.shop!.rerolls, 1);
+  assert.equal(shopRerollCost(once), SHOP_REROLL_BASE * 2, '刷新费没有翻倍');
+  const nearly = { ...once, gold: SHOP_REROLL_BASE * 2 - 1 };
+  assert.equal(rerollShop(nearly), nearly, '差一个铜板也刷得动');
+
+  // 卖掉的那几格不重生（它本来就是空的），刷新只在还摆着货的格子里换。
+  const rich = shopRun(1000);
+  const taken = buyShopSlot(rich, 0, 'gold');
+  const after = rerollShop(taken);
+  assert.equal(after.shop!.slots[0].sold, true, '刷新把已经卖掉的那一格又摆上了货');
+  assert.notEqual(after.shop!.slots[1], taken.shop!.slots[1], '刷新没有换货');
+});
+
+test('商店：删牌服务一家一次，价钱跨商店递增（75 / 100）', () => {
+  const run = shopRun(1000);
+  assert.equal(shopRemoveCost(run), 75);
+  const bought = buyRemoveService(run);
+  assert.equal(bought.cardTask, 'remove', '买了删牌却没有开选牌器');
+  assert.equal(bought.gold, run.gold - 75, '价钱不对');
+  assert.equal(bought.shop!.removed, true);
+  assert.equal(buyRemoveService(bought), bought, '同一家店删了两次');
+  const nearly = { ...run, gold: 74 };
+  assert.equal(buyRemoveService(nearly), nearly, '差价一个铜板也删得动');
+
+  // 第二家店：价钱按「路上已经走过几家店」递增。
+  let two: ChapterRun | undefined;
+  for (let seed = 7; seed <= 207 && !two; seed++) {
+    const candidate = newRun('blade', 'bone', seed);
+    const shops = candidate.map.nodes.filter(node => node.kind === 'shop');
+    if (shops.length >= 2) {
+      two = rollShop({ ...candidate, at: shops[1].id, path: [shops[0].id, shops[1].id], gold: 1000 });
+    }
+  }
+  assert.ok(two, '200 个种子里没有一张图有两家店');
+  assert.equal(shopRemoveCost(two!), 75 + 25, '第二家店的删牌价没有递增');
+});
+
+test('商店：上一件还没放下就不再卖 —— 收钱不发货是最坏的失败', () => {
+  const run = shopRun(1000);
+  const prop = run.shop!.slots.findIndex(slot => slot.kind === 'prop');
+
+  const first = buyShopSlot(run, prop, 'gold');
+  assert.ok(first.propTask, '买了道具却没有停在「还没放下」上');
+  assert.equal(first.shop!.slots[prop].sold, true);
+
+  // 三样东西各要一个没答完的决定，而那个决定同时只能有一个。
+  const holding: ChapterRun = { ...run, propTask: { id: 'staunch-moss', from: '商店' } };
+  assert.equal(shopPending(holding), true);
+  assert.equal(buyShopSlot(holding, prop, 'gold'), holding, '上一件道具还没放下又卖了一件');
+  assert.equal(holding.gold, run.gold, '被拒绝的那一次也扣了钱');
+
+  const revealing: ChapterRun = {
+    ...run, cardReveal: { gained: [{ cardId: run.deck[0].cardId }], from: '商店' },
+  };
+  const card = run.shop!.slots.findIndex(slot => slot.kind === 'card');
+  if (card >= 0) assert.equal(buyShopSlot(revealing, card, 'gold'), revealing, '买来的牌还没看就给第二张');
+
+  const drawing: ChapterRun = { ...run, pendingDraw: { options: ['iron-nail'], slot: 'main', from: '商店' } };
+  const relic = run.shop!.slots.findIndex(slot => slot.kind === 'relic');
+  if (relic >= 0) assert.equal(buyShopSlot(drawing, relic, 'gold'), drawing, '上一件遗物还没放又卖了一件');
+});
+
+test('商店：买下来的东西落得到手上', () => {
+  /**
+   * ⚠️ **先扣掉 20 点血，否则这条断言在测种子而不是在测商店。**
+   *
+   * `stat` 那一格是 `STAT_GOODS` 里的**两件之一**，其中「回复 30 点生命」在满血的一局里买下来
+   * `hp` 一格都不动（`deliver` 里是 `Math.min(maxHp, hp + 30)`），于是 `gained > 0` 会红。
+   * `shopRun` 从种子 7 起找**第一家店**，而「第一家店掷到哪一件」是塔的形状的函数——加高塔
+   * （16 → 21 行）把它从加厚换成了回血，这条测试就红了，而商店一点没坏。
+   *
+   * 扣血之后两件货都真的给得出东西，`gained > 0` 一个字没放松。
+   */
+  const shelf = shopRun(1000);
+  const run: ChapterRun = { ...shelf, hp: shelf.maxHp - 20 };
+  const find = (kind: string) => run.shop!.slots.findIndex(slot => slot.kind === kind);
+
+  const prop = find('prop');
+  assert.equal(buyShopSlot(run, prop, 'gold').propTask?.from, '商店');
+
+  const card = find('card');
+  if (card >= 0) {
+    const done = buyShopSlot(run, card, 'gold');
+    // 买来的牌一定要摆出来看一眼，理由和「一捆牌」那条一样：不摆出来的东西玩家永远不知道是什么。
+    assert.equal(done.cardReveal?.from, '商店');
+    assert.ok(done.deck.some(entry => entry.cardId === run.shop!.slots[card].id));
+  }
+
+  const relic = find('relic');
+  if (relic >= 0) {
+    const done = buyShopSlot(run, relic, 'gold');
+    // 和一次遗物抽取共用 `pendingDraw`，所以「放进哪个槽」不需要另写一套。
+    assert.deepEqual(done.pendingDraw?.options, [run.shop!.slots[relic].id]);
+    assert.equal(done.pendingDraw?.from, '商店');
+  }
+
+  const stat = find('stat');
+  if (stat >= 0) {
+    const done = buyShopSlot(run, stat, 'gold');
+    const gained = done.maxHp - run.maxHp + (done.hp - run.hp);
+    assert.ok(gained > 0, '买了属性却没有变化');
+  }
+});
+
+test('商店：界面置灰与真正的规则是两处代码，对跑一遍', () => {
+  const run = shopRun(0);
+  const poor: ChapterRun = { ...run, gold: 0, hp: 1, relics: {} };
+  for (let index = 0; index < SHOP_SLOTS; index++) {
+    for (const payWith of ['gold', 'hp', 'relic'] as const) {
+      const lit = canPayWith(poor, index, payWith);
+      const done = buyShopSlot(poor, index, payWith, 'main');
+      assert.equal(done === poor, !lit,
+        `第 ${index} 格用 ${payWith}：置灰说「${lit ? '买得起' : '买不起'}」，规则说「${done === poor ? '没成交' : '成交了'}」`);
+    }
+  }
+  // 反过来：买得起的时候必须真的成交（`canPayWith` 为真而 `buyShopSlot` 原样退回，只能是漏了一条规则）。
+  //
+  // ⚠️ **这里刻意用不满血的一份。** 满血时「回复 30 点生命」那一格**本来就买不到**——
+  // 付得起 90 金、扣了钱、血一点没动，而界面上没有任何东西提示玩家。所以 `canPayWith` 有一条
+  // 「满血时回血格不算买得起」，而 `buyShopSlot` 走同一个判据。这一份血不满，它就买得到，
+  // 「钱够 ⇒ 必成交」这条才立得住；满血那一格由下面那条单独钉。
+  const rich: ChapterRun = { ...run, gold: 99999, hp: run.maxHp - 20 };
+  for (let index = 0; index < SHOP_SLOTS; index++) {
+    assert.notEqual(buyShopSlot(rich, index, 'gold'), rich, `第 ${index} 格付得起金币却没成交`);
+  }
+});
+
+test('商店：满血时「回血」那一格买不到', () => {
+  // 这是一条**买到了但什么也没发生**的 bug：货架卖掉、钱扣掉、血没动，界面也不提示。
+  // 挡在 `canPayWith` 里，因为置灰与拒绝必须走同一个判据（否则会画出一个点得动却被引擎拒的按钮）。
+  const run = { ...shopRun(0), gold: 99999, hp: shopRun(0).maxHp };
+  const heal = run.shop!.slots.findIndex(slot => slot.kind === 'stat' && slot.id === 'heal');
+  // 这一家不一定摆回血；摆了就验，没摆就跳过——不为了测它去改货架。
+  if (heal < 0) return;
+  assert.equal(canPayWith(run, heal, 'gold'), false, '满血时回血格不该是买得起的');
+  assert.equal(canPayWith(run, heal, 'hp'), false);
+  assert.equal(buyShopSlot(run, heal, 'gold'), run, '满血买回血不该成交');
+  // 掉一点血之后它就该买得动了——否则这条规则会连正常情况一起挡掉。
+  const hurt: ChapterRun = { ...run, hp: run.maxHp - 1 };
+  assert.equal(canPayWith(hurt, heal, 'gold'), true);
+  assert.notEqual(buyShopSlot(hurt, heal, 'gold'), hurt);
+});
+
+test('商店：脏的货架过不了校验（少一格 / 假 id / 负价 / 负刷新次数）', () => {
+  const run = shopRun(1000);
+  assert.ok(isValidRun(run));
+  const { map, ...wire } = run;
+  void map;
+  const round = JSON.parse(JSON.stringify(wire)) as ChapterRun;
+  assert.deepEqual(round.shop, wire.shop, '货架过一遍 JSON 变了样——里面混进了不是纯数据的东西');
+  assert.equal(isValidRun(round), true, '过一遍 JSON 就不过校验了');
+
+  const rest = run.shop!.slots.slice(1);
+  const broken: [string, ChapterRun][] = [
+    ['少了格子', { ...run, shop: { ...run.shop!, slots: rest } }],
+    ['多了一格', { ...run, shop: { ...run.shop!, slots: [...run.shop!.slots, run.shop!.slots[0]] } }],
+    ['id 不存在', { ...run, shop: { ...run.shop!, slots: [{ ...run.shop!.slots[0], id: 'no-such-thing' }, ...rest] } }],
+    ['负价', { ...run, shop: { ...run.shop!, slots: [{ ...run.shop!.slots[0], price: -1 }, ...rest] } }],
+    ['价钱不是整数', { ...run, shop: { ...run.shop!, slots: [{ ...run.shop!.slots[0], hpPrice: 1.5 }, ...rest] } }],
+    ['刷新次数是负的', { ...run, shop: { ...run.shop!, rerolls: -1 } }],
+    ['不是商店', { ...run, shop: { slots: 'nope' } } as unknown as ChapterRun],
+  ];
+  for (const [why, value] of broken) {
+    assert.equal(isValidRun(value), false, `本该拒绝：${why}`);
+  }
+  assert.equal(isValidRun({ ...run, warded: 'yes' }), false, 'warded 不是布尔也该拒绝');
+  assert.equal(isValidRun({ ...run, warded: true }), true, '一条命也算脏存档？');
+});
+
+test('免死：和残烛是同一条命，战斗把它用掉了才结账', () => {
+  // 免死只是五类里的一类（权重 10），所以不是每家店都有——顺着种子找一家摆着它的。
+  let shelf: ChapterRun | undefined;
+  for (let seed = 7; seed <= 207 && !shelf; seed++) {
+    const run = shopOn(seed, 1000);
+    if (run && run.shop!.slots.some(slot => slot.kind === 'life')) shelf = run;
+  }
+  assert.ok(shelf, '200 个种子里没有一家卖免死——那一类的权重被拿掉了？');
+  const run = shelf!;
+  const life = run.shop!.slots.findIndex(slot => slot.kind === 'life');
+  const bought = buyShopSlot(run, life, 'gold');
+  assert.equal(bought.warded, true, '买了免死却没有那条命');
+  assert.equal(bought.shop!.warded, true, '货架上没记下这一笔');
+  assert.ok(isValidRun(bought), '带着一条命的存档过不了校验');
+
+  /**
+   * ⚠️ **记号必须是引擎里残烛写的那个键。**
+   *
+   * 项目里已经有两处「下一次致死伤害留 1 点」，商店这条命要走的是**残烛那一条**（道具是玩家花钱
+   * 买的，遗物是带在身上更久的，两者不同）。这条测试不问 `engine.ts` 要什么，它让**残烛真的写一次**
+   * 记号，再和 `wardMark()` 对键——两边任何一个改名都会红。
+   */
+  const battle = startBattle('ch1-1', bought.main, 7, { props: placeIn(emptyProps(), 0, 'stub-candle') });
+  const candle = useProp(battle, 0);
+  const wardKeys = Object.keys(wardMark());
+  assert.equal(wardKeys.length, 1, '`wardMark()` 只该带一个记号');
+  // ⚠️ 比的是「残烛真的写下的那些键」，不是整份 marks——战斗自己还写着 `attacked:turn` 之类。反过来
+  // 两边任何一个改名，这里都会红。
+  const candleKeys = Object.keys(candle.marks ?? {});
+  for (const key of wardKeys) {
+    assert.ok(candleKeys.includes(key),
+      `残烛写的记号里没有 ${key}（场上只有 ${candleKeys.join(', ')}）—— 商店这条命会和道具那条分成两条`);
+  }
+
+  // 引擎把记号置 0 = 那一下被它挡掉了 → 结账；没置 0 就不动（也就不会把玩家买的东西悄悄吃掉）。
+  const spent = finishBattle(bought, wonState(bought.hp, { 'prop:deathWard': 0 })).run;
+  assert.equal(spent.warded, undefined, '那条命用掉了却还挂在身上');
+  const kept = finishBattle(bought, wonState(bought.hp, {})).run;
+  assert.equal(kept.warded, true, '没用掉的命被清掉了');
+});
+
+test('商店：离开就是结束这一层；买来的道具还没放下时不放人', () => {
+  const run = shopRun(1000);
+  const left = leaveShop(run);
+  assert.equal(left.resolved, run.at, '离开没有设 resolved —— 楼层屏会再弹一次');
+  assert.ok(isValidRun(left));
+
+  // 放道具屏是 `propTask` 唯一的出口（分派链里没有别的屏读它），走了这一件就永远留在那儿了。
+  const holding: ChapterRun = { ...run, propTask: { id: 'staunch-moss', from: '商店' } };
+  assert.equal(shopPending(holding), true);
+  assert.equal(leaveShop(holding), holding, '买来的道具还没放下就走了');
+});
+
+test('商店：踏进商店才掷货架，踏离就把它丢掉', () => {
+  const base = newRun('blade', 'bone', 11);
+  const shop = base.map.nodes.find(node => node.kind === 'shop');
+  assert.ok(shop, '这个种子的塔上没有商店——换一个种子，或者 shop 的权重被拿掉了');
+  assert.equal(base.shop, undefined);
+
+  // 站在它的下一层——`enterNode` 只认「从脚下这一步走得过去」，所以不能随便找个起点。
+  const below = base.map.nodes.find(node => node.next.includes(shop!.id));
+  assert.ok(below, '商店没有前驱，那它根本走不到');
+  const inside = enterNode({ ...base, at: below!.id, path: [below!.id] }, shop!.id);
+  assert.ok(inside.shop, '踏进商店却没有货架');
+  assert.equal(inside.shop!.slots.length, SHOP_SLOTS);
+  assert.ok(inside.path.includes(shop!.id));
+
+  // 再往上走一步：货架留在那家店里。
+  const next = inside.map.byId.get(shop!.id)!.next[0];
+  assert.equal(enterNode(inside, next).shop, undefined, '离开了商店，货架还跟着走');
+  // 而且 `shop` 这个键是**摘掉**的，不是设成 undefined——JSON 会丢掉 undefined，于是存档往返测试
+  // 会在 `deepEqual(round, wire)` 上莫名其妙地红。
+  assert.equal('shop' in enterNode(inside, next), false, '`shop: undefined` 这种键会在 JSON 往返里变样');
 });

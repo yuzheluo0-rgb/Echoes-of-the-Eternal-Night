@@ -862,6 +862,41 @@
 .bd-spoils-actions { margin-top: 22px; display: flex; justify-content: center; }
 .bd-spoils-actions .bd-over-btn { margin: 0; }
 
+/* ---------------------------------------------------------------- 战后掉落
+   卡片在左、说明与三格按钮在右。⚠️ **它长在战果面板里面**——另起一屏会把「这仗打赢了」顶掉，
+   原因写在 `BattleDemo` 那段 JSX 的注释里。 */
+.bd-spoils-prop {
+  margin-top: 18px; padding-top: 15px;
+  border-top: 1px solid rgba(212, 189, 135, .18);
+  text-align: left;
+}
+.bd-spoils-prop-head {
+  margin: 0 0 12px; font-family: 'Noto Serif SC', 'Songti SC', serif;
+  font-size: 12.5px; letter-spacing: 4px; color: #d4bd87;
+}
+.bd-spoils-prop-body { display: flex; gap: 18px; align-items: flex-start; }
+.bd-spoils-prop-pick { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.bd-spoils-prop-text { margin: 0; font-size: 12.5px; line-height: 1.85; color: #cbd4cf; }
+/* ⚠️ **竖排，不横排。** 战果面板的卡片本身不宽，三个按钮挤成一行时「第 1 格」会折成两行、
+   「换下「墙种」」折成三行，读起来像楼梯。一行一个槽位反而更快扫：左边是格子编号、
+   右边是「会换下什么」。 */
+.bd-spoils-prop-slots { display: flex; flex-direction: column; gap: 6px; }
+/* 每格各印一句「会换下什么」——替换读起来是一个决定，而「先丢掉再来一次」是两个。 */
+.bd-prop-slot-btn {
+  display: flex; gap: 10px; align-items: baseline; justify-content: flex-start;
+  padding: 8px 12px; border: 1px solid rgba(180, 170, 130, .3); border-radius: 3px;
+  background: rgba(12, 19, 23, .6); transition: background .2s, border-color .2s;
+}
+.bd-prop-slot-btn:hover { background: rgba(30, 41, 46, .85); border-color: rgba(212, 189, 135, .55); }
+.bd-prop-slot-btn b { font-size: 12px; letter-spacing: 2px; color: #f4e8ca; font-weight: 400; white-space: nowrap; }
+.bd-prop-slot-btn i { font-style: normal; font-size: 11px; color: #7f8f89; }
+.bd-prop-skip {
+  align-self: flex-start; padding: 7px 18px; font-size: 12px; letter-spacing: 3px;
+  color: #8d9a94; border: 1px solid rgba(180, 170, 130, .22); border-radius: 3px;
+  transition: color .2s, border-color .2s;
+}
+.bd-prop-skip:hover { color: #e8dfc6; border-color: rgba(212, 189, 135, .45); }
+
 /* 击破守望者的解锁样式搬到了 node.css —— 它现在是一整屏（`UnlockScreen`），
    不再是战果面板里的一行名字。 */
 
@@ -1010,6 +1045,36 @@
 }
 .bd-hand-relic-blank i { font-size: 9px; font-style: normal; letter-spacing: 3px; color: #3f4b48; }
 
+/* ---------------------------------------------------------------- 道具轨（右下角）
+   Mirrors the relic rail on the other side of the same bar: absolute, hung off `.bd-floor` (NOT off
+   `.bd-hand-row` — that row is `overflow-x: auto`, which makes `overflow-y` clip too, so anything
+   hung above it is cut off while still being in the DOM and still measuring a size).
+
+   ⚠️ **It must be clickable, so it cannot copy the relic rail's `pointer-events: none`.** That rule
+   is there because the relic rail covers the *leftmost* hand card — the CSS comment above records
+   the `elementFromPoint` hit that proved it. A rail you can click needs the opposite treatment:
+   `none` on the rail so the gap between icons passes through, `auto` on each icon.
+
+   ⚠️ **And it has to be narrow.** The hand is centred: five cards are about 1060 wide, which on a
+   1600-wide screen runs from x≈270 to x≈1330. The rail hangs at `right: 16px`, so it must stay
+   **under 254px** or it covers the rightmost card — the same bug, mirrored. Three 68px icons plus
+   two 9px gaps is 222. The empty-slot holes use the same width so the rail does not resize. */
+.bd-hand-props {
+  position: absolute; right: 16px; bottom: 10px; z-index: 4;
+  display: flex; gap: 9px; align-items: flex-end;
+  pointer-events: none;
+}
+.bd-hand-props > * { pointer-events: auto; }
+.bd-hand-prop { width: 68px; }
+/* 空槽是一个和图标一样大的虚线洞，这样「还剩几格」是看得见的，而轨的宽度也不会跳。 */
+/* 空槽是一个纯虚线洞，里面**不写字**——68px 放不下可读的说明，而小号深色字在缩放后会糊成
+   一个叉。想表达「还剩几格」的话，虚线框自己就说清了。 */
+.bd-hand-prop-blank {
+  display: block; width: 68px; height: 68px;
+  border: 1px dashed rgba(180, 170, 130, .24); border-radius: 4px;
+  background: rgba(12, 19, 23, .5);
+}
+
 /* The tower is its own full screen; the relic draw opens over it rather than replacing it, because
    the floor you are standing on is still the context for what you just found. */
 .tw-host { position: relative; }
@@ -1112,6 +1177,12 @@
   .bd-hand-relic { width: 132px; height: 209px; }
   .bd-hand-relic-scale { transform: scale(.55); }
   .bd-hand-relic-tag { width: 16px; height: 16px; font-size: 10px; left: 5px; top: 5px; }
+
+  /* 道具轨跟着下来。⚠️ 它也必须是 `order: -1`——手牌行在窄屏是 `position: sticky; bottom: 0`，
+     排在它**下面**的东西会被钉在屏幕外的底下，看不见也点不到。所以两排都在手牌上方。 */
+  .bd-hand-props { position: static; order: -1; padding: 8px 8px 0; gap: 7px; }
+  .bd-hand-prop, .bd-hand-prop-blank { width: 56px; }
+  .bd-hand-prop-blank { height: 56px; }
 
   .bd-over-card { padding: 24px 20px; }
   .bd-over-card h2 { font-size: 25px; letter-spacing: 6px; }

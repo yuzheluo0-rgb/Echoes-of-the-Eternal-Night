@@ -12,13 +12,18 @@ const CardGallery = lazy(() => import('./cards/CardGallery'));
 const BattleDemo = lazy(() => import('./battle/BattleDemo'));
 /** 遗物总览页。和卡牌总览同理：只读 `src/relics/`，碰不到地图、run 或存档。 */
 const RelicGallery = lazy(() => import('./relics/RelicGallery'));
+/** 道具总览页。同理：只读 `src/props/`，不加载战斗引擎就能打开。 */
+const PropGallery = lazy(() => import('./props/PropGallery'));
 function Game() {
   const [route, setRoute] = useState(location.hash);
   useEffect(() => { const change = () => setRoute(location.hash); window.addEventListener('hashchange', change); return () => window.removeEventListener('hashchange', change); }, []);
   const page = route === '#/opening' ? <Opening />
     : route === '#/cards' ? <CardGallery />
       : route === '#/relics' ? <RelicGallery />
-        : route === '#/battle' ? <BattleDemo />
+        // 两条都收：上面三条路由都是复数（#/cards、#/relics），手会自己打出 #/props，
+        // 而落回默认分支会去开主世界——看起来就像这一页坏了。
+        : (route === '#/prop' || route === '#/props') ? <PropGallery />
+          : route === '#/battle' ? <BattleDemo />
           : <WorldMap />;
   return <Suspense fallback={<div style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', color: '#c8b98e', background: '#102027', fontFamily: 'serif', letterSpacing: 4 }}>正在唤醒永夜</div>}>{page}</Suspense>;
 }

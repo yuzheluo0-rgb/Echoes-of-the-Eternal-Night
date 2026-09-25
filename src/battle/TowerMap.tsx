@@ -34,6 +34,7 @@ const KIND: Record<NodeKind, { label: string; glyph: string; tone: string; blurb
   event: { label: '事件', glyph: '?', tone: '#93c6d8', blurb: '说不清会遇到什么。' },
   rest: { label: '营火', glyph: '🔥', tone: '#e08a52', blurb: '歇一口气，或者做点别的。' },
   treasure: { label: '宝箱', glyph: '🎁', tone: '#d9a45f', blurb: '有人把东西留在了这里。' },
+  shop: { label: '商店', glyph: '🏮', tone: '#c9a86a', blurb: '有人在这里摆摊，什么都收。' },
   boss: { label: '首领', glyph: '👑', tone: '#e2564f', blurb: '这一章的最后一件事。' },
 };
 
@@ -185,9 +186,13 @@ export default function TowerMapView({ run, encounters, onEnter, onLeave }: Towe
 
         {/* No portraits and no name here, on purpose. The floor has not rolled its fight yet — that
             happens when the player steps on it — so printing 「影狼」 now would be inventing one. */}
-        {focusNode.kind !== 'rest' && focusNode.kind !== 'treasure' && <p className="tw-panel-unknown">
-          这一层具体是什么，走上去才知道。
-        </p>}
+        {/* ⚠️ 商店在这一串之外，理由是**它是明牌**：一家店就长在地图上，玩家该看得见它、并且为它
+            攒钱。这和战斗那一格正相反——「这一层具体是什么」问的是「打谁」，而商店没有「卖什么」
+            这个悬念，货架是踏进去才掷的，但那不影响「这里有一家店」本身是一个可以规划的事实。 */}
+        {focusNode.kind !== 'rest' && focusNode.kind !== 'treasure' && focusNode.kind !== 'shop'
+          && <p className="tw-panel-unknown">
+            这一层具体是什么，走上去才知道。
+          </p>}
 
         <dl className="tw-panel-foot">
           <div><dt>场景</dt><dd>{scene.name}</dd></div>
@@ -220,7 +225,8 @@ function nextOf(map: TowerMap, run: ChapterRun): string[] {
  * it is decided at the threshold. Showing one would be a promise the floor has not made.
  */
 function sceneFor(node: MapNode): SceneKey {
-  if (node.kind === 'rest' || node.kind === 'treasure' || node.kind === 'event') return node.kind;
+  if (node.kind === 'rest' || node.kind === 'treasure' || node.kind === 'event'
+    || node.kind === 'shop') return node.kind;
   if (node.kind === 'boss') return 'boss';
   if (node.kind === 'elite') return 'caravan';
   return 'grass';

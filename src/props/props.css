@@ -1,0 +1,231 @@
+/* 道具图标. Its own world, like `cards.css` / `relics.css` / `battle.css`: every class is prefixed
+   `pp-` so nothing here can reach into another stylesheet's names.
+
+   The shape is a **square**, not a card, and that is the whole design: the whole set has to be
+   scannable at a glance, so the square carries the photograph and the name and *nothing else*. The
+   effect text lives in `.pp-pop`, which only exists on hover or keyboard focus.
+
+   Two things are printed on the square besides the picture:
+
+     - the **name**, on a plate of its kind's colour (`--kind`). Nine colours, one per kind, so a
+       row of squares reads as "which sorts of answers am I carrying" — the question that matters
+       mid-fight.
+     - the **remaining charges**, as a row of notches in the top corner (`charges > 1` only).
+
+   ⚠️ **No rarity anywhere.** The cards have a ladder and the relics have one; a third ladder that
+   also means "rarer" is one ladder too many (the argument is written out at the top of
+   `props.ts`). `weight` is a drop-rate number in a data file and never a word on an icon.
+
+   ⚠️ `.pp`'s own `transform` is the pointer tilt. Put any scale on another layer — `.pp-inner` for
+   the hover lift, a wrapper for the gallery's modal enlargement. */
+
+.pp {
+  --kind: #9c9c8a;
+  --rx: 0deg;
+  --ry: 0deg;
+  /* 尺寸走变量，因为验收页的弹窗要**按放大后的尺寸占位**（transform 不改布局）——
+     那边用 `calc(var(--pp) * 1.3)` 反推外层宽度，两边就不可能对不上。 */
+  --pp: 176px;
+  position: relative;
+  width: var(--pp);
+  height: var(--pp);
+  border-radius: 3px;
+  transform: perspective(760px) rotateX(var(--rx)) rotateY(var(--ry));
+  transform-style: preserve-3d;
+  transition: transform .35s cubic-bezier(.2, .9, .3, 1), box-shadow .35s;
+  will-change: transform;
+}
+.pp-compact { --pp: 108px; }
+/* 悬停那一格要压过邻居：每张 `.pp` 都因为 `transform` 自成一个层叠上下文，
+   **不加这一条时左边那张的展开面板会被右边那张的方格盖住。** */
+.pp:hover, .pp:focus-within { z-index: 6; }
+
+.pp-inner {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 3px;
+  /* 缺图时的底：一条分类色的淡晕 + 深底。图还在陆续抓，所以「还没有图」必须是
+     一块**看得出是留白**的板，而不是一个洞。有图时它完全被盖住。 */
+  background:
+    radial-gradient(ellipse at 50% 36%, color-mix(in srgb, var(--kind) 15%, transparent), transparent 64%),
+    #0d1418;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, .6);
+  transition: transform .3s cubic-bezier(.2, .9, .3, 1), box-shadow .3s;
+}
+/* 抬起做在**内层**——`.pp` 那条 transform 是倾斜。 */
+.pp:hover .pp-inner { transform: scale(1.035); box-shadow: 0 20px 42px rgba(0, 0, 0, .68); }
+
+.pp-art {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  filter: saturate(.92) contrast(1.04);
+}
+/* 压向底部，因为方块上唯一一行字在那里。 */
+.pp-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(0deg, rgba(6, 10, 13, .95) 0%, rgba(6, 10, 13, .74) 26%, rgba(6, 10, 13, .16) 58%, rgba(6, 10, 13, .04) 100%),
+    radial-gradient(ellipse at 50% 12%, transparent 42%, rgba(6, 10, 13, .44) 100%);
+}
+
+/* --- 分类色的框。**单线**，外加一层同色的内晕——遗物那套是「外粗内细」的双线，
+   道具刻意不照抄：那是「被携带的东西」的记号，而道具是**会被花掉的东西**。 --- */
+.pp-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 3px;
+  border: 1.5px solid color-mix(in srgb, var(--kind) 58%, transparent);
+  box-shadow: inset 0 0 26px color-mix(in srgb, var(--kind) 14%, transparent);
+}
+
+/* --- 名字：坐在分类色的底板上。深字压在中间调上，九种颜色都读得清。 --- */
+.pp-name {
+  position: absolute;
+  left: 9px; right: 9px; bottom: 9px;
+  display: flex;
+}
+.pp-name span {
+  width: 100%;
+  text-align: center;
+  padding: 4px 7px;
+  border-radius: 2px;
+  font-family: 'Noto Serif SC', 'Songti SC', 'STZhongsong', serif;
+  font-size: 16px;
+  letter-spacing: 2.5px;
+  line-height: 1.25;
+  color: #0b1114;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--kind) 90%, white), var(--kind));
+  box-shadow: 0 3px 14px rgba(0, 0, 0, .58);
+  /* 一行，且永远一行：换行会把整排方格的高度顶开。名字最长四个字，放得下。 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pp-compact .pp-name { left: 5px; right: 5px; bottom: 5px; }
+.pp-compact .pp-name span { font-size: 12px; letter-spacing: 1.4px; padding: 3px 4px; }
+
+/* --- 剩余次数：右上角一排凹口，用掉一个灭一个 --- */
+.pp-pips { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; }
+.pp-pips i {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: rgba(9, 14, 17, .82);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kind) 52%, transparent);
+}
+.pp-pips i.on {
+  background: linear-gradient(180deg, #fff, color-mix(in srgb, var(--kind) 80%, white));
+  box-shadow: 0 0 9px color-mix(in srgb, var(--kind) 62%, transparent);
+}
+.pp-compact .pp-pips { top: 5px; right: 5px; gap: 3px; }
+.pp-compact .pp-pips i { width: 5px; height: 5px; }
+
+/* --- 光 --- */
+.pp-sheen {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: linear-gradient(115deg, transparent 36%, rgba(255, 255, 255, .16) 48%, transparent 60%);
+  transition: opacity .4s;
+}
+.pp-pointer-glow {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(circle at var(--glow-x, 50%) var(--glow-y, 50%),
+    color-mix(in srgb, var(--kind) 28%, transparent), transparent 58%);
+  transition: opacity .35s;
+}
+.pp:hover .pp-sheen, .pp:hover .pp-pointer-glow, .pp:focus-within .pp-sheen { opacity: 1; }
+
+/* --- 点击层。只盖住方块本身，所以**悬停展开的面板不会吞掉点击**：
+       指针移到面板上时 `:hover` 仍然是这一格的（祖先关系），而面板本身 `pointer-events: none`。 --- */
+.pp-hit {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.pp-hit:focus-visible { outline: 2px solid color-mix(in srgb, var(--kind) 78%, white); outline-offset: 3px; }
+.pp-dead .pp-hit { cursor: not-allowed; }
+
+/* --- 灰掉 / 用完 --- */
+.pp-dead .pp-art { filter: grayscale(.7) brightness(.62) saturate(.55); }
+.pp-dead .pp-name span { background: linear-gradient(180deg, #575c5f, #3b4043); color: #9aa3a1; }
+.pp-dead .pp-frame { border-color: rgba(140, 148, 146, .34); box-shadow: none; }
+
+/* ---------------------------------------------------------------- 展开面板
+   一个方格里放不下的只有一样东西：效果文案。它**只在悬停或 focus 时**出现——因为一排
+   方格真正要回答的问题是「哪一件」，而不是「这一件写了什么」。
+
+   ⚠️ 面板必须是 `.pp-inner` 的**兄弟**，不能放在里面：`overflow: hidden` 会把它整个裁掉。 */
+.pp-pop {
+  position: absolute;
+  top: calc(100% + 9px);
+  left: 50%;
+  width: 246px;
+  max-width: 74vw;
+  z-index: 2;
+  padding: 11px 13px 12px;
+  border-radius: 3px;
+  text-align: left;
+  background: linear-gradient(158deg, #17252b, #0b1317);
+  border: 1px solid color-mix(in srgb, var(--kind) 44%, transparent);
+  box-shadow: 0 20px 46px rgba(0, 0, 0, .74);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(-50%, -6px);
+  transition: opacity .22s, transform .22s, visibility .22s;
+}
+/* 战斗里那一排在页面底部，下面没有地方——面板朝上开。 */
+.pp-compact .pp-pop { top: auto; bottom: calc(100% + 9px); transform: translate(-50%, 6px); }
+.pp:hover .pp-pop, .pp:focus-within .pp-pop {
+  opacity: 1; visibility: visible; transform: translate(-50%, 0);
+}
+.pp-pop-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 9.5px; letter-spacing: 2px;
+  color: color-mix(in srgb, var(--kind) 80%, white);
+}
+.pp-pop-head i { flex: none; width: 8px; height: 8px; border-radius: 1px; background: var(--kind); }
+.pp-pop-head em {
+  font-style: normal; font-size: 9px; letter-spacing: 1.6px;
+  color: #7f9189; padding-left: 7px; border-left: 1px solid rgba(150, 165, 158, .26);
+}
+.pp-pop-uses { color: #b8a678 !important; }
+.pp-pop-text { font-size: 12px; line-height: 1.85; color: #dfe6e0; margin: 7px 0 0; }
+/* 灰掉的原因：和效果文案分开，它是**这一格现在为什么点不动**，不是这件道具是什么。 */
+.pp-pop-reason {
+  margin: 9px 0 0; padding-top: 8px;
+  border-top: 1px solid rgba(196, 122, 108, .3);
+  font-size: 11px; line-height: 1.7; color: #e2a48f;
+}
+
+/* ⚠️ `:not(.pp-compact)` 是必需的：`.pp { --pp }` 与 `.pp-compact { --pp }` 同权重，
+   这条媒体查询排在后面，不加限定就会把战斗里那一排也放大到 148。 */
+@media (max-width: 900px) {
+  .pp:not(.pp-compact) { --pp: 148px; }
+  .pp-name span { font-size: 14px; letter-spacing: 2px; }
+  /* 面板比方格宽，所以它必然探出格子左右两边。方格缩小之后探出的那部分会把整页撑宽
+     （实测 860 宽时最右一列探出 13px）——面板跟着收窄，探出量就回到格子之间的余量里。 */
+  .pp-pop { width: 200px; }
+}
+@media (max-width: 620px) {
+  .pp-compact { --pp: 92px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pp, .pp *, .pp *::before, .pp *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .pp { transform: none; }
+  .pp:hover .pp-inner { transform: none; }
+}

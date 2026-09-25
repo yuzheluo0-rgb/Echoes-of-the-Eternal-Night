@@ -42,6 +42,15 @@ export type EventEffect =
   | { kind: 'maxHp'; amount: number }
   /** A relic draw. */
   | { kind: 'relic' }
+  /**
+   * 一件道具 —— 捡到的**东西**，先归你、再让你决定放进哪一格。
+   *
+   * ⚠️ **不是概率**。`refine` 是全表唯一带成算的效果，而它的成算**印在结果行上**
+   * （`describeEffect` 那一行）；给一件道具加上概率，`outcomeLine` 就会开始说谎：它写着
+   * 「得到一件道具」，而玩家可能什么都拿不到。稀缺感由**代价**表达（挂在 `requires` 上），
+   * 不由骰子表达——这条也是「三张牌，但那张纸你不知道有什么用」那条中间档的同一个道理。
+   */
+  | { kind: 'prop' }
   /** Choose a card to burn. */
   | { kind: 'remove' }
   /** Choose a card to 打磨. */
@@ -132,6 +141,7 @@ const gold = (amount: number): EventEffect => ({ kind: 'gold', amount });
 const hp = (amount: number): EventEffect => ({ kind: 'hp', amount });
 const maxHp = (amount: number): EventEffect => ({ kind: 'maxHp', amount });
 const relic = (): EventEffect => ({ kind: 'relic' });
+const found = (): EventEffect => ({ kind: 'prop' });
 const burn = (): EventEffect => ({ kind: 'remove' });
 const polish = (): EventEffect => ({ kind: 'polish' });
 const copy = (): EventEffect => ({ kind: 'duplicate' });
@@ -292,7 +302,10 @@ export const EVENTS: EventSpec[] = [
     blurb: '有人早就把这片草割倒过，割出一条很宽的带子。割它的人没有留下名字。',
     lean: 'cost',
     options: [
-      { label: '顺着带子走', hint: '它通向哪里，割的人最清楚。', outcome: '带子尽头是一间塌了一半的棚屋，棚屋里堆着没来得及用的东西。', effect: gold(65) },
+      // 这一条给的是**一**件道具，不是金币：割防火带的人留下的是工具，而道具是这一层唯一的
+      // 「东西」。代价写在这里而不是文案里——`requires` 会在选项上印成「需要 4 生命」，
+      // 稀缺感由它表达，见 `prop` 那条效果上的说明。
+      { label: '顺着带子走', hint: '走到底，看看割它的人留下了什么。', outcome: '你走了很久，脚上的泡又破了一层。带子尽头是一间塌了一半的棚屋，棚屋里堆着没来得及用的东西。', requires: { hp: 4 }, effect: found() },
       { label: '把割倒的草收起来', hint: '都是干透的。', outcome: '你捆了一大捆。背着它走路很累，但晚上生火的时候值了。', requires: { hp: 4 }, effect: hp(20) },
       { label: '坐在带子中间', hint: '火到这儿就会停。', outcome: '你在带子中间坐了很久。这是你很久以来第一次觉得两边都是安全的。', effect: maxHp(4) },
     ],
@@ -509,6 +522,7 @@ export function describeEffect(effect: EventEffect): string {
     case 'hp': return `生命 ${signed(effect.amount)}`;
     case 'maxHp': return `生命上限 ${signed(effect.amount)}`;
     case 'relic': return '抽取一件遗物';
+    case 'prop': return '得到一件道具';
     case 'remove': return '焚掉牌组里的一张牌';
     case 'polish': return '打磨牌组里的一张牌';
     case 'duplicate': return '复制牌组里的一张牌';

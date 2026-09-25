@@ -29,11 +29,21 @@ export type StatusId =
   /** Enemy. Each of its attacks deals this much extra. */
   | 'strength'
   /** Player. Next turn draws this many fewer cards. */
-  | 'shrouded';
+  | 'shrouded'
+  /**
+   * Enemy. It does not act on its next turn, and the stack falls off when that turn is skipped.
+   *
+   * There was no way to take a turn away from an enemy before 霜钉 — every existing status modifies
+   * *how much* something does, never *whether* it happens. It lives on the enemy (not on the player
+   * as a flag) so the pill row shows it above the thing it is actually stopping, which is where the
+   * player is already looking when they decide whether they can afford to ignore it.
+   */
+  | 'frozen';
 
 export const STATUS_LABEL: Record<StatusId, string> = {
   ember: '余烬', edge: '锋锐', rampart: '壁垒', reflection: '映照',
   scorch: '灼烧', mark: '烙印', retaliate: '反震', bank: '蓄火', drained: '枯竭', strength: '力量', shrouded: '缠布',
+  frozen: '冻结',
 };
 /** One line each, shown on hover in the demo. */
 export const STATUS_RULE: Record<StatusId, string> = {
@@ -48,11 +58,13 @@ export const STATUS_RULE: Record<StatusId, string> = {
   drained: '下回合开始时少这么多能量。',
   strength: '它的每次攻击额外造成这么多伤害。',
   shrouded: '下回合少抽这么多张牌。',
+  frozen: '它下次不行动，然后这一层消散。',
 };
 /** Which way each status is good. Drives the colour of the pill in the UI. */
 export const STATUS_GOOD: Record<StatusId, boolean> = {
   ember: true, edge: true, rampart: true, reflection: true,
   scorch: false, mark: false, retaliate: true, bank: true, drained: false, strength: false, shrouded: false,
+  frozen: false,
 };
 
 /** What an enemy is about to do. Shown above its head, always — the player should never be guessing. */

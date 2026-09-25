@@ -15,6 +15,13 @@
   z-index: 40;
   inset: 0;
   display: grid; place-items: center;
+  /* ⚠️ **这一行是必须的，不是装饰。** 没有它，网格的隐式列会按内容的 max-content 定尺，
+     而 `.nd-panel` 的 `width: min(1180px, 100%)` 里那个 `100%` 就解析到那条轨道上——
+     百分比落在自动尺寸的轨道上是**循环依赖**，浏览器只能给一个和内容有关的怪数。
+     商店之前没暴露，是因为别的屏的内容都窄于 1180，量不出来；商店五格货一进去，
+     面板被压成 276px，五行变一列。写成 `minmax(0, 1fr)` 之后列宽是确定的，
+     `100%` 也就有了确定的答案。 */
+  grid-template-columns: minmax(0, 1fr);
   padding: 34px 24px;
   /* No scrim of its own: `.nd-shade` already darkens the plate, and stacking the two left the
      photograph invisible — the backdrop may as well not have been fetched. */
@@ -42,7 +49,12 @@
   max-height: calc(100dvh - 68px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  width: min(1180px, 100%);
+  /* ⚠️ **用 `vw` 而不是 `100%`。** `100%` 解析的是父网格的轨道宽，而那条轨道是按内容的
+     max-content 定的——**百分比落在自动尺寸的轨道上是个循环依赖**，浏览器只能给一个和内容
+     有关的怪数。商店五格货一进来就把它逼出来了：面板被压成 276px、五格塌成一列。
+     用 `100vw - 48px`（`.nd` 的左右 padding 各 24px）绕开父级，宽度就是确定的。
+     别的节点屏内容都窄于 1180，所以这条一直是隐性的。 */
+  width: min(1180px, calc(100vw - 48px));
   padding: 46px 52px 40px;
   border: 1px solid rgba(190, 175, 130, .34);
   border-radius: 5px;
@@ -302,3 +314,126 @@
 }
 .nd-unlock-deck i { font-style: normal; font-size: 11px; letter-spacing: 2px; color: #7f9189; }
 .nd-unlock-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+
+/* --------------------------------------------------------------- 道具（营火与拾获）
+   营火上那一排，和宝箱/奇遇捡到一件时的落点屏。两处都用 `PropRail`（与战斗页右下角同一个
+   组件）与 `NodeChoice`（与营火四选一同一套按钮），所以这里只补「摆放」这一件事。 */
+
+/* 营火：道具排在四选一**上面**——`run.ts` 把道具定义为「回答营火之前做的事」。
+   ⚠️ 它在 `.nd-copy` 与 `.nd-choices` 之间，不另起一段语义。 */
+.nd-prop-rail { margin: 22px 0 4px; }
+.nd-prop-rail-head {
+  margin: 0 0 10px; font-size: 13px; letter-spacing: 4px; color: #7f9189;
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+}
+/* ⚠️ `.bd-hand-props` 在战斗页是**绝对定位**的（它挂在 `.bd-floor` 上、靠 right/bottom 贴角）。
+   这里要的是普通流里的一行，所以把定位改回 static。用后代选择器而不是改 battle.css，
+   因为那两个文件不许互相伸手。 */
+.nd-prop-rail .bd-hand-props { position: static; right: auto; bottom: auto; padding: 0; }
+.nd-prop-halves { margin-top: 18px; }
+.nd-prop-halves-head {
+  margin: 0 0 10px; font-size: 15px; letter-spacing: 3px; color: #d9bc80;
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+}
+/* 二选一的两个按钮比营火四选一窄——它们是一个后续问题，不是四个并列的选项。 */
+.nd-prop-halves .nd-choices { margin-top: 0; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+
+/* 拾获屏：图标在左、说明在右。 */
+.nd-prop-found { display: flex; gap: 28px; align-items: flex-start; margin-bottom: 8px; }
+.nd-prop-found-copy { flex: 1; min-width: 0; }
+.nd-prop-found-copy .nd-copy { margin-top: 4px; }
+
+@media (max-width: 900px) {
+  /* 窄屏图标在下、文字在上——横排会把说明挤成一列字。 */
+  .nd-prop-found { flex-direction: column; gap: 16px; align-items: center; text-align: center; }
+  .nd-prop-halves .nd-choices { grid-template-columns: 1fr; }
+}
+
+/* ------------------------------------------------------------------- 商店
+   用户点名「整个商店 UI 可以大一点，字也清晰一点」，所以这一块**不跟战斗页的 12.5px 走**，
+   按 NodeScreen 文件头那套来：货名 20px、说明 14px、价格数字 19px。
+   五格横排，一屏读完；窄屏塌成两列。 */
+.nd-shop { display: grid; grid-template-columns: repeat(5, 1fr); gap: 18px; margin-top: 26px; }
+.nd-shop-tile {
+  position: relative; display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 12px 14px; border-radius: 5px;
+  border: 1px solid rgba(180, 170, 130, .22);
+  background: rgba(10, 16, 20, .72);
+  transition: border-color .25s, background .25s, transform .25s;
+}
+/* ⚠️ 抬起做在**格子**上，不是做在卡面上——卡面自身的 `transform` 被 `useTilt` 占了，
+   同一元素再叠一个会把它顶掉（`node.css` 里 `.nd-card` 那条注释记过同一件事）。 */
+.nd-shop-tile:not(.is-sold):hover { transform: translateY(-6px); border-color: rgba(212, 189, 135, .5); background: rgba(18, 26, 31, .85); }
+.nd-shop-tile.is-sold { opacity: .42; }
+
+/* 五种货的面**高度统一**，否则一排货名会参差不齐像楼梯。 */
+.nd-shop-face { position: relative; display: grid; place-items: center; min-height: 272px; }
+.nd-shop-face .pp, .nd-shop-face .cq, .nd-shop-face .rl { transform-origin: 50% 50%; }
+
+.nd-shop-name {
+  margin: 2px 0 0; font-family: 'Noto Serif SC', 'Songti SC', serif;
+  font-size: 20px; letter-spacing: 2px; color: #f4e8ca; text-align: center;
+}
+.nd-shop-detail { margin: 0; font-size: 14px; line-height: 1.7; color: #9fb0a9; flex: 1; }
+
+/* 半价绶带 —— 「永远有一件打五折」是让每家店有一个钩子的东西。 */
+.nd-shop-sale {
+  position: absolute; top: -9px; left: 50%; transform: translateX(-50%); z-index: 3;
+  padding: 3px 14px; border-radius: 2px;
+  font-size: 13px; letter-spacing: 3px; color: #0b1114;
+  background: linear-gradient(180deg, #f0d79a, #d4a24e);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, .6);
+}
+.nd-shop-sold {
+  position: absolute; inset: 0; display: grid; place-items: center; z-index: 4;
+  font-family: 'Noto Serif SC', 'Songti SC', serif; font-size: 30px; letter-spacing: 10px;
+  color: #7f8f89; text-indent: 10px;
+  background: rgba(8, 13, 16, .55);
+}
+
+/* 三种付法并排。**买不起的也照印价格**——一件买不起的货是这一趟的目标，
+   藏起来等于把一个目标变成一片空白。 */
+.nd-shop-pay { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.nd-pay {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 7px 4px; border-radius: 3px;
+  border: 1px solid rgba(180, 170, 130, .28); background: rgba(16, 24, 29, .8);
+  transition: border-color .2s, background .2s;
+}
+.nd-pay:hover:not(.off) { border-color: rgba(212, 189, 135, .65); background: rgba(34, 46, 52, .9); }
+.nd-pay.off { opacity: .38; cursor: not-allowed; }
+.nd-pay b { font-family: Georgia, 'Songti SC', serif; font-size: 19px; font-weight: 400; color: #ece1c4; }
+.nd-pay i { font-style: normal; font-size: 11px; letter-spacing: 1px; color: #7f9189; }
+.nd-pay i s { margin-left: 4px; color: #5f6b66; }
+
+/* 拿遗物换：把身上那两件摆出来挑，而不是替玩家挑一件最便宜的。 */
+.nd-shop-trade { margin-top: 22px; padding-top: 16px; border-top: 1px solid rgba(212, 189, 135, .18); }
+.nd-shop-trade-head {
+  margin: 0 0 10px; font-size: 16px; letter-spacing: 3px; color: #d9bc80;
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+}
+
+/* 属性格与免死格：它们不是「一件东西」，所以不配照片——排版本身就是那张脸。
+   给「生命上限 +8」配一张照片只会是一张不相干的图。 */
+.nd-shop-stat, .nd-shop-life {
+  display: grid; place-items: center; gap: 10px; width: 100%; min-height: 190px;
+  border-radius: 4px; text-align: center;
+}
+.nd-shop-stat { background: radial-gradient(ellipse at 50% 40%, rgba(143, 174, 124, .16), transparent 70%); }
+.nd-shop-stat span {
+  font-family: 'Noto Serif SC', 'Songti SC', serif; font-size: 68px; color: #8fae7c; opacity: .9;
+}
+.nd-shop-life { background: radial-gradient(ellipse at 50% 40%, rgba(226, 86, 79, .18), transparent 70%); }
+.nd-shop-life-mark {
+  display: grid; place-items: center; width: 96px; height: 96px; border-radius: 50%;
+  border: 2px solid rgba(226, 86, 79, .6);
+  font-family: 'Noto Serif SC', 'Songti SC', serif; font-size: 40px; color: #e2564f;
+}
+.nd-shop-life i { font-style: normal; font-size: 12.5px; line-height: 1.7; color: #9fb0a9; }
+
+@media (max-width: 1250px) { .nd-shop { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 900px) {
+  .nd-shop { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .nd-shop-face { min-height: 150px; }
+  .nd-shop-name { font-size: 17px; }
+}

@@ -1,7 +1,7 @@
 /** Layered local sound design with cathedral convolution, no external audio requests. */
 import { WorldSoundscape } from './world/WorldSoundscape';
 import type { Biome } from './world/worldData';
-import { BATTLE_SCORES, carryTick, parseBattleScore, type BattleScore } from './battle/battleScores';
+import { BATTLE_SCORES, barsOf, bassRow, carryTick, drumRow, parseBattleScore, type BattleScore } from './battle/battleScores';
 export type SoundKind = 'hover' | 'select' | 'draw' | 'shuffle' | 'play' | 'strike' | 'flame' | 'shield' | 'death' | 'bell' | 'combo' | 'win' | 'relic' | 'relic-set' | 'polish';
 
 /** One card sliding off the top of a deck: paper has almost no body, so the whole sound is a short
@@ -181,7 +181,9 @@ export function setAmbience(enabled: boolean) {
  * 那一首响。两边真正共用的只有「把一个 MIDI 音排进时间轴」那三行，而为了共享那三行去改一段现在
  * 工作正常的声音，是拿确定的东西换不确定的。
  *
- * 交换的代价是**谱面格式必须一致**（同一个 `Score` 类型），这一点由 `battleScores.test.ts` 守着。
+ * 两边因此**各有各的谱面格式**，只是调度方式同构：世界的谱子是一条长表，这里的谱子是
+ * **段落 + 曲式**（`sections` 装材料、`form` 说怎么排）。战斗曲要三分钟以上而不能是同一段听八遍，
+ * 长表做不到这件事——二十五秒的表乘八倍还是那八小节。格式的边界由 `battleScores.test.ts` 守着。
  */
 /**
  * 每首曲子**放到哪儿了**，按曲目 id 记着（单位是「格」）。
@@ -198,8 +200,17 @@ const battleTicks = new Map<string, number>();
 class BattleMusic {
   private sources = new Set<AudioScheduledSourceNode>();
   private bus: GainNode;
+  /** 混响送出。**随段落走**——`D` 段的「空」一半来自鼓撤掉，另一半来自这里开大。 */
+  private wet: GainNode;
   /** 每条音都会额外送一份到这里，再经延迟回到混响。电子乐的空气感几乎全长在这条线上。 */
   private echo: GainNode;
+  /**
+   * 当前这一小节的段落音量，`note()` / `drum()` 都乘它。
+   *
+   * 做成字段而不是逐个调用点传参，是因为它**在一格之内对每条音都相同**，而调用点有八处——
+   * 八处各乘一次，漏掉的那一处不会报错，只会让某个声部在 `D` 段里显得比别的响。
+   */
+  private level = 1;
   private timer = 0;
   private tick = 0;
   private nextTime = 0;
@@ -213,8 +224,8 @@ class BattleMusic {
     this.bus.gain.value = 0;
     this.bus.gain.setTargetAtTime(.60, ctx.currentTime, 1.1);
     this.bus.connect(output);
-    const wet = ctx.createGain(); wet.gain.value = this.score.timbre.space ?? .18;
-    this.bus.connect(wet); wet.connect(reverb);
+    this.wet = ctx.createGain(); this.wet.gain.value = this.score.timbre.space ?? .18;
+    this.bus.connect(this.wet); this.wet.connect(reverb);
     // 延迟时间**由谱面推出来**：三格 = 十六分音符下的附点八分、八分音符下的附点四分，
     // 两种都是那个「呼吸长度」。所以换曲子不用另配一个延迟时间。
     const delay = ctx.createDelay(2);
@@ -241,7 +252,7 @@ class BattleMusic {
     oscillator.frequency.value = 440 * 2 ** ((midi - 69) / 12);
     stereo.pan.value = pan;
     envelope.gain.setValueAtTime(0, when);
-    envelope.gain.linearRampToValueAtTime(amplitude, when + attack);
+    envelope.gain.linearRampToValueAtTime(amplitude * this.level, when + attack);
     envelope.gain.exponentialRampToValueAtTime(.00001, when + duration);
     oscillator.connect(envelope); envelope.connect(stereo); stereo.connect(this.bus);
     stereo.connect(this.echo);
@@ -249,15 +260,24 @@ class BattleMusic {
     this.track(oscillator, [envelope, stereo]);
   }
   /**
-   * 鼓。三件都是**噪声加一条极短的包络**，不是采样——谱面里只有一个字符，所以它必须是合成的。
+   * 鼓。五件都是**噪声或一条下滑正弦加一条极短的包络**，不是采样——谱面里只有一个字符，
+   * 所以它必须是合成的。
    *
-   *   底鼓  正弦从 120Hz 掉到 45Hz。掉音高那一下才是「击」，只压包络会听起来像敲桌子。
-   *   军鼓  一段带通噪声叠一个 190Hz 的短音。纯噪声没有「响」，纯音没有「沙」。
-   *   镲    高通噪声，极短。开镲（`o`）只是把衰减放长到六倍。
+   *   底鼓 `k`  正弦从 120Hz 掉到 45Hz。掉音高那一下才是「击」，只压包络会听起来像敲桌子。
+   *   嗵鼓 `t`  同一套，只是高一个八度、短一截。
+   *   军鼓 `s`  一段带通噪声叠一个 190Hz 的短音。纯噪声没有「响」，纯音没有「沙」。
+   *   拍手 `x`  军鼓的高通版本，更亮更干。
+   *   镲   `h` 闭 / `o` 开 / `c` 片  高通噪声，差别**几乎全在尾巴长度上**。
+   *
+   * ⚠️ **`c` 和 `t` 曾经不存在**：谱面里先用上了这两个字符（「第一小节砸镲」），而这里没有对应的
+   * 分支，于是它们掉进最后那段兜底的高通噪声里——`c` 和闭镲 `h` 发出的声音一模一样，一记砸镲
+   * 变成了第十六分音符上的一声轻响。**测试当时是绿的**，因为字符集合里有 `c` 和 `t`。
+   * 加字符时两边要一起加：`battleScores.test.ts` 的字符集合，和这里的分支。
    */
   private drum(kind: string, when: number) {
     if (this.stopped) return;
-    const level = .30;
+    // 段落音量乘在鼓上：`D` 段撤鼓靠的是**没有那一行**，而 `gain` 是「同样的鼓，远一点」。
+    const level = .30 * this.level;
     if (kind === 'k') {
       const oscillator = this.ctx.createOscillator(), envelope = this.ctx.createGain();
       oscillator.type = 'sine';
@@ -289,11 +309,26 @@ class BattleMusic {
       this.track(body, [bodyGain]);
       return;
     }
+    if (kind === 't') {
+      // 嗵鼓。和底鼓同一套——音高下滑的那一下才是「击」——只是高一档、短一截，好让它落在
+      // 底鼓和军鼓中间的那块空地上。
+      const oscillator = this.ctx.createOscillator(), envelope = this.ctx.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(210, when);
+      oscillator.frequency.exponentialRampToValueAtTime(105, when + .10);
+      envelope.gain.setValueAtTime(level * 1.5, when);
+      envelope.gain.exponentialRampToValueAtTime(.00001, when + .26);
+      oscillator.connect(envelope); envelope.connect(this.bus);
+      oscillator.start(when); oscillator.stop(when + .28);
+      this.track(oscillator, [envelope]);
+      return;
+    }
     const source = this.ctx.createBufferSource(), filter = this.ctx.createBiquadFilter(), envelope = this.ctx.createGain();
     source.buffer = this.noise; source.loop = true;
-    filter.type = 'highpass'; filter.frequency.value = 7200;
-    const decay = kind === 'o' ? .34 : .055;
-    envelope.gain.setValueAtTime(level * .5, when);
+    // 镲片比闭镲暗一档：真正的镲片能量不在 7kHz 那条细线上，而在它下面那一整片。
+    filter.type = 'highpass'; filter.frequency.value = kind === 'c' ? 5200 : 7200;
+    const decay = kind === 'c' ? .90 : kind === 'o' ? .34 : .055;
+    envelope.gain.setValueAtTime(level * (kind === 'c' ? .85 : .5), when);
     envelope.gain.exponentialRampToValueAtTime(.00001, when + decay);
     source.connect(filter); filter.connect(envelope); envelope.connect(this.bus);
     source.start(when, (when * 5.7) % this.noise.duration); source.stop(when + decay + .02);
@@ -308,28 +343,40 @@ class BattleMusic {
     if (this.stopped) return;
     // 挂起或节流之后不要补播积压的音。
     if (this.nextTime < this.ctx.currentTime - .15) this.nextTime = this.ctx.currentTime + .08;
-    const { chords, melody, arpeggio, steps, step, timbre, bass, drums, harmony } = this.score;
+    const { steps, step, timbre: base } = this.score;
+    // 曲式在这里摊平。**小节号是整首曲子里的第几小节**，`bells` 记的也是这个号——所以一首曲子
+    // 长到一百多小节之后，「第几段第几小节」和「第几小节」才分得开。
+    const bars = barsOf(this.score);
     const bar = steps * step;
     while (this.nextTime < this.ctx.currentTime + .28) {
-      const index = Math.floor(this.tick / steps) % chords.length, slot = this.tick % steps;
-      const chord = chords[index], time = this.nextTime;
+      const index = Math.floor(this.tick / steps) % bars.length, slot = this.tick % steps;
+      const { section, sectionBar } = bars[index];
+      // 段落覆盖基准音色，**「更多乐器」几乎全长在这一行上**：A 段方波主奏、C 段换锯齿、
+      // D 段撤鼓换正弦，三段的听感差别主要不是和弦写的，是这里换的。
+      const timbre = { ...base, ...section.timbre };
+      const chord = section.chords[sectionBar], time = this.nextTime;
+      const bassLine = bassRow(section, sectionBar), drums = drumRow(section, sectionBar);
+      this.level = section.gain ?? 1;
       if (slot === 0) {
         chord.forEach((midi, i) => this.note(midi, time, bar + .45, .026, timbre.pad, timbre.swell, (i - 1) * .23));
         // 有低音线的时候**不放持续根音**——两条抢同一个低频，结果是一团糊而不是更厚。
-        if (!bass) this.note(chord[0] - 12, time, bar * timbre.pedal, .040, timbre.pad, timbre.swell * .28, 0);
+        if (!bassLine) this.note(chord[0] - 12, time, bar * timbre.pedal, .040, timbre.pad, timbre.swell * .28, 0);
         if (this.score.bells?.includes(index)) this.bell(chord[0] + 24, time, timbre.bell);
+        // 空间也随段落走，而且**在小节头上换**：`D` 段一进来就该远，而不是慢慢飘远。
+        this.wet.gain.setTargetAtTime(timbre.space ?? .18, time, .30);
+        this.echo.gain.setTargetAtTime(timbre.echo ?? 0, time, .30);
       }
-      const pluck = arpeggio[slot];
+      const pluck = section.arpeggio[slot];
       if (pluck >= 0) this.note(chord[pluck] + 12, time, step * 2.8, .022 * timbre.pluck, timbre.harp, .021, slot % 2 ? .30 : -.30);
-      const lead = melody[index][slot];
+      const lead = section.melody[sectionBar][slot];
       if (lead) { this.note(lead, time, 2.1, .056, timbre.lead, .010, .10); this.note(lead + 12, time, 1.08, .008, 'sine', .006, -.14); }
       // 会走的低音：值是**相对该小节根音**的半音数，`-1` 是空拍。
-      const low = bass?.[index]?.[slot];
+      const low = bassLine?.[slot];
       if (low !== undefined && low >= 0) this.note(chord[0] + low - 12, time, step * 1.9, .075, 'triangle', .008, 0);
-      // 对位声部比主奏轻、比主奏靠后，它就是「后面还有东西」。
-      const second = harmony?.[index]?.[slot];
+      // 对位声部比主奏轻、比主奏靠后，它就是「后面还有东西」。允许短行，`[]` 是这一段不进来。
+      const second = section.harmony?.[sectionBar]?.[slot];
       if (second) this.note(second, time, 1.7, .032, timbre.lead, .012, -.22);
-      const hit = drums?.[index]?.[slot];
+      const hit = drums?.[slot];
       if (hit && hit !== '-') this.drum(hit, time);
       this.tick++; this.nextTime += step;
     }

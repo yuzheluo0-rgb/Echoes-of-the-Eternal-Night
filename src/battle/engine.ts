@@ -37,6 +37,16 @@
 import { CARD_BY_ID, DECK_IDS, type DeckId } from '../cards/index.ts';
 import { chapterDeck, isDeckUnlocked } from './chapter.ts';
 import { RELIC_BY_ID } from '../relics/relics.ts';
+import { PROP_BY_ID, PROP_SLOTS, emptyProps, propsUsableIn, type PropSlotState } from '../props/props.ts';
+import { propEffectFor, type PropContext } from './props.ts';
+
+/**
+ * 未拆的信能开出什么：**战斗里能用的那些**。
+ *
+ * 排掉 `camp` 那一档是有意的——开出一件只能回营火用的道具，等于把一格变成一个死格子，
+ * 而它看起来完全正常。
+ */
+const BATTLE_PROPS = propsUsableIn('battle');
 import { EMPTY_POWERS, effectFor, type BattlePowers, type EffectContext } from './effects.ts';
 import {
   effectsFor, readModifier, refinedPair, refineSteps,
@@ -144,6 +154,18 @@ export interface BattleState {
    * refinement with it, which is one more place to get out of step for no gain.
    */
   refined?: Record<string, RefineTier>;
+  /**
+   * 携带的三件道具，**定长 `PROP_SLOTS`，下标即槽位，`null` 是空槽**。
+   *
+   * Ids for the same reason `relics` holds ids: the state is `structuredClone`d at every entry point
+   * and a handler would not survive the clone. Behaviour is looked up in `./props.ts`.
+   *
+   * ⚠️ **`uses` lives here and nowhere else.** Not in `marks` (that is battle-scoped, so a two-charge
+   * tool would come back full next fight, and the run could never see what was spent), and not in
+   * `PropDefinition` (that is one number shared by every copy — two 袖炉 could not be at different
+   * charge counts).
+   */
+  props?: PropSlotState[];
   /** Battle-scoped scratch space for relics: 「每场只生效三次」 and friends. Cleared with the battle. */
   marks?: Record<string, number>;
   /** Attack hits landed this battle, for 铁钉's 「每第 3 次命中」. */
@@ -434,35 +456,29 @@ const RELIC_SLOTS: RelicSlot[] = ['main', 'sub'];
  * entry point, and a closure would not survive the clone. This is the same reason `relics` holds ids
  * rather than handlers.
  */
-function relicContext(s: BattleState, slot: RelicSlot, extra: Partial<RelicContext> = {}): RelicContext {
-  const relicId = s.relics?.[slot];
-  const refine = relicId ? s.refined?.[relicId] : undefined;
-  const steps = refineSteps(refine);
-  // Pick the slot's number, then bump it. Every relic that writes a `[main, sub]` pair gets 淬炼 for
-  // free through here — see `refinedPair`, which is the same arithmetic and is what the tests assert.
-  const climbed = (main: number, sub: number) => {
-    const [m, u] = refinedPair(main, sub, refine);
-    return slot === 'main' ? m : u;
-  };
+/**
+ * The part of the wishlist that **relics and props hold in common**, with the log prefix taken as an
+ * argument.
+ *
+ * ⚠️ The prefix is not decoration. Five of these write to the battle log, and every line a relic
+ * writes begins 「遗物 · 」 — a prop that reused `relicContext` verbatim would print 「遗物 · 你获得 3
+ * 点格挡」 every time the player used a 墙种. This project has already buried one bug of exactly that
+ * shape (a card's 弃牌 was reported as a relic's doing), so the label is a parameter and
+ * `relicContext` passes `'遗物'`, which keeps every existing line byte-identical.
+ */
+type Wishlist = Pick<RelicContext,
+  'turn' | 'hpFraction' | 'player' | 'handSize' | 'enemies' | 'hits' | 'roll' | 'log'
+  | 'status' | 'statusOn' | 'block' | 'energy' | 'draw' | 'heal' | 'loseHp' | 'stripBlock'
+  | 'reclaim' | 'tutor' | 'purgeJunk' | 'discardRandom' | 'cheapenHand' | 'copyHand' | 'topOfDraw'>;
+
+function wishlist(s: BattleState, label: string): Wishlist {
   return {
-    slot,
-    refine,
-    v: climbed,
-    main: slot === 'main',
-    n: base => base + steps,
-    steps,
     turn: s.turn,
     hpFraction: s.player.maxHp ? s.player.hp / s.player.maxHp : 0,
     player: s.player,
     handSize: s.hand.length,
     enemies: livingEnemies(s),
     hits: s.hits ?? 0,
-    count: key => s.marks?.[`${relicId}:${key}`] ?? 0,
-    bump: (key, by = 1) => {
-      s.marks = s.marks ?? {};
-      const marked = `${relicId}:${key}`;
-      s.marks[marked] = (s.marks[marked] ?? 0) + by;
-    },
     // Off the encounter stream. Spending `rng` here would reorder the deck — the same mistake that
     // split `spawnRng` off in the first place.
     roll: () => spawnRandom(s),
@@ -479,24 +495,24 @@ function relicContext(s: BattleState, slot: RelicSlot, extra: Partial<RelicConte
     block: amount => {
       if (!amount) return;
       s.player.block = Math.max(0, s.player.block + amount);
-      log(s, `遗物 · 你获得 ${amount} 点格挡（${s.player.block}）。`, 'good');
+      log(s, `${label} · 你获得 ${amount} 点格挡（${s.player.block}）。`, 'good');
     },
     energy: amount => {
       if (!amount) return;
       s.player.energy = Math.max(0, s.player.energy + amount);
-      log(s, `遗物 · 能量 ${amount > 0 ? '+' : ''}${amount}（${s.player.energy}）。`, 'good');
+      log(s, `${label} · 能量 ${amount > 0 ? '+' : ''}${amount}（${s.player.energy}）。`, 'good');
     },
     draw: count => { if (count > 0) drawCards(s, count); },
     heal: amount => {
       if (amount <= 0) return;
       const healed = Math.min(amount, s.player.maxHp - s.player.hp);
       s.player.hp += healed;
-      if (healed) log(s, `遗物 · 你回复 ${healed} 点生命（${s.player.hp}）。`, 'good');
+      if (healed) log(s, `${label} · 你回复 ${healed} 点生命（${s.player.hp}）。`, 'good');
     },
     loseHp: amount => {
       if (amount <= 0) return;
       s.player.hp = Math.max(0, s.player.hp - amount);
-      log(s, `遗物 · 你失去 ${amount} 点生命（${s.player.hp}）。`, 'bad');
+      log(s, `${label} · 你失去 ${amount} 点生命（${s.player.hp}）。`, 'bad');
       if (s.player.hp <= 0) lose(s);
     },
     stripBlock: amount => {
@@ -504,17 +520,152 @@ function relicContext(s: BattleState, slot: RelicSlot, extra: Partial<RelicConte
         const taken = Math.min(enemy.block, Math.max(0, amount));
         if (!taken) continue;
         enemy.block -= taken;
-        log(s, `遗物 · ${nameOf(enemy)} 失去 ${taken} 点格挡（${enemy.block}）。`, 'good');
+        log(s, `${label} · ${nameOf(enemy)} 失去 ${taken} 点格挡（${enemy.block}）。`, 'good');
       }
     },
+    // ⚠️ 这几条都要把 `label` 带下去。它们内部会写日志，写成默认值就是「道具 · 」印成
+    // 「遗物 · 」——`discardRandom` 的 label 参数当年正是为同一类事故（砺石弃牌报成遗物）加的。
     reclaim: count => reclaimCards(s, count),
-    tutor: kind => tutor(s, kind),
+    tutor: kind => tutor(s, kind, label),
     purgeJunk: () => purgeJunk(s),
-    discardRandom: count => discardRandom(s, count),
-    cheapenHand: (count, by, floor = 0) => cheapenHand(s, count, by, floor),
-    copyHand: (count, extra = 0) => copyHand(s, count, extra),
+    discardRandom: count => discardRandom(s, count, label),
+    cheapenHand: (count, by, floor = 0) => cheapenHand(s, count, by, floor, label),
+    copyHand: (count, extra = 0) => copyHand(s, count, extra, label),
     topOfDraw: count => s.draw.slice(0, Math.max(0, count)).map(card => cardName(card.cardId)),
+  };
+}
+
+function relicContext(s: BattleState, slot: RelicSlot, extra: Partial<RelicContext> = {}): RelicContext {
+  const relicId = s.relics?.[slot];
+  const refine = relicId ? s.refined?.[relicId] : undefined;
+  const steps = refineSteps(refine);
+  // Pick the slot's number, then bump it. Every relic that writes a `[main, sub]` pair gets 淬炼 for
+  // free through here — see `refinedPair`, which is the same arithmetic and is what the tests assert.
+  const climbed = (main: number, sub: number) => {
+    const [m, u] = refinedPair(main, sub, refine);
+    return slot === 'main' ? m : u;
+  };
+  return {
+    ...wishlist(s, '遗物'),
+    slot,
+    refine,
+    v: climbed,
+    main: slot === 'main',
+    n: base => base + steps,
+    steps,
+    count: key => s.marks?.[`${relicId}:${key}`] ?? 0,
+    bump: (key, by = 1) => {
+      s.marks = s.marks ?? {};
+      const marked = `${relicId}:${key}`;
+      s.marks[marked] = (s.marks[marked] ?? 0) + by;
+    },
     ...extra,
+  };
+}
+
+/**
+ * The same wishlist, for a prop, plus the things only a prop does.
+ *
+ * Props attack and relics do not — that is the whole reason this is a second function rather than a
+ * parameterised `relicContext`. 碎盾 turns a wall into a blow and 霜钉 takes a turn away from an
+ * enemy; a relic never touches an enemy's intent or its block, because a relic is never *spent*.
+ *
+ * `slot` is an index, not `'main' | 'sub'`: props have no slots with different meanings, so the
+ * index is only here so 未拆的信 can replace the thing it was.
+ */
+function propContext(s: BattleState, slot: number, target: EnemyState | undefined, picked: string[]): PropContext {
+  const propId = s.props?.[slot]?.id;
+  return {
+    ...wishlist(s, '道具'),
+    target,
+    picked,
+    nameOf: enemy => (enemy ? nameOf(enemy) : '它'),
+    letterPool: BATTLE_PROPS.map(prop => prop.id),
+    count: key => s.marks?.[`prop:${propId}:${key}`] ?? 0,
+    bump: (key, by = 1) => {
+      s.marks = s.marks ?? {};
+      // ⚠️ `prop:` 前缀不能省。`marks` 是遗物与道具共用的一个键空间，而 `count`/`bump` 在遗物那边
+      // 的键就是 `${relicId}:${key}`——一个道具 id 撞上一个遗物 id 时，两边会互相污染计数，
+      // 而表现出来的是遗物的指纹测试红得莫名其妙。
+      const marked = `prop:${propId}:${key}`;
+      s.marks[marked] = (s.marks[marked] ?? 0) + by;
+    },
+    statusOn: (enemy, status, amount) => {
+      if (!enemy || enemy.dead || !amount) return;
+      gainStatus(s, enemy.statuses, status, amount, nameOf(enemy));
+    },
+    stacks: (enemy, status) => (enemy ? statusOf(enemy.statuses, status) : 0),
+    spend: (enemy, status) => {
+      if (!enemy || enemy.dead) return 0;
+      const had = statusOf(enemy.statuses, status);
+      if (had > 0) setStatus(enemy.statuses, status, 0);
+      return had;
+    },
+    takeBlock: () => {
+      const wall = s.player.block;
+      s.player.block = 0;
+      return wall;
+    },
+    clearBlock: enemy => {
+      if (!enemy || enemy.dead) return 0;
+      const had = enemy.block;
+      enemy.block = 0;
+      return had;
+    },
+    freeze: enemy => {
+      if (!enemy || enemy.dead) return;
+      gainStatus(s, enemy.statuses, 'frozen', 1, nameOf(enemy));
+    },
+    // 把意图换成「什么都不做」。`special` 是 Intent 里那个只写一行日志的种类，所以这里不需要
+    // 给引擎加一个新的意图类型——而 `intentFor` 会照常把改写后的意图显示在它头顶，界面不说谎。
+    idle: enemy => {
+      if (!enemy || enemy.dead) return;
+      enemy.intent = [{ kind: 'special', note: `${nameOf(enemy)} 愣在原地。` }];
+    },
+    strike: (enemy, amount) => {
+      if (!enemy || enemy.dead || amount <= 0) return;
+      dealToEnemy(s, enemy, amount, '道具');
+      settle(s);
+    },
+    discardHand: () => {
+      const dropped = s.hand.length;
+      for (const card of s.hand.splice(0)) s.discard.push(card);
+      return dropped;
+    },
+    discardWhere: keep => {
+      let dropped = 0;
+      for (let index = s.hand.length - 1; index >= 0; index--) {
+        if (CARD_BY_ID.get(s.hand[index].cardId)?.type === keep) continue;
+        const [card] = s.hand.splice(index, 1);
+        s.discard.push(card);
+        dropped++;
+      }
+      return dropped;
+    },
+    upgradeHand: uids => {
+      const wanted = new Set(uids);
+      for (const card of s.hand) if (wanted.has(card.uid)) card.upgraded = true;
+    },
+    peekDraw: count => s.draw.slice(0, Math.max(0, count))
+      .map(card => ({ uid: card.uid, name: cardName(card.cardId), cost: cardCostNow(s, card.cardId, card.uid) })),
+    takeFromDraw: (uid, drop) => {
+      const index = s.draw.findIndex(card => card.uid === uid);
+      if (index < 0) return;
+      if (s.hand.length >= HAND_LIMIT) { log(s, `手牌已满（${HAND_LIMIT} 张），那一张放不下。`, 'neutral'); return; }
+      const [card] = s.draw.splice(index, 1);
+      s.hand.push(card);
+      // 「其余弃掉」：剩下的那几张从抽牌堆顶直接进弃牌堆，玩家看不见它们是什么。
+      for (let i = 0; i < drop && s.draw.length; i++) s.discard.push(s.draw.shift()!);
+    },
+    deathWard: () => {
+      s.marks = s.marks ?? {};
+      s.marks['prop:deathWard'] = 1;
+    },
+    replaceWith: id => {
+      const def = PROP_BY_ID.get(id);
+      if (!def || !s.props) return;
+      s.props[slot] = { id, uses: def.charges };
+    },
   };
 }
 
@@ -630,7 +781,7 @@ function discardRandom(s: BattleState, count: number, label = '遗物') {
  * 断齿梳 / 借物 — makes cards in hand cheaper for the rest of the battle. The discount is stored per
  * card instance, not per card id, so two copies of 割线 can cost different amounts.
  */
-function cheapenHand(s: BattleState, count: number, by: number, floor: number) {
+function cheapenHand(s: BattleState, count: number, by: number, floor: number, label = '遗物') {
   const picks = shuffled(s, s.hand.map((_, index) => index)).slice(0, Math.max(0, Math.floor(count)));
   for (const index of picks) {
     const card = s.hand[index];
@@ -640,18 +791,18 @@ function cheapenHand(s: BattleState, count: number, by: number, floor: number) {
     const next = Math.max(lowest, (s.costMarks[card.uid] ?? 0) - by);
     if (next === s.costMarks[card.uid]) continue;
     s.costMarks[card.uid] = next;
-    log(s, `遗物 · 「${cardName(card.cardId)}」本场战斗费用 ${by > 0 ? '降低' : '提高'} ${Math.abs(by)} 点。`, 'good');
+    log(s, `${label} · 「${cardName(card.cardId)}」本场战斗费用 ${by > 0 ? '降低' : '提高'} ${Math.abs(by)} 点。`, 'good');
   }
 }
 
 /** 铜钥匙 — digs the topmost card of a kind out of the draw pile and puts it in your hand. */
-function tutor(s: BattleState, kind: 'attack' | 'skill' | 'power') {
+function tutor(s: BattleState, kind: 'attack' | 'skill' | 'power', label = '遗物') {
   if (s.hand.length >= HAND_LIMIT) { log(s, `手牌已满（${HAND_LIMIT} 张），找出来的牌放不下。`, 'neutral'); return; }
   const index = s.draw.findIndex(card => CARD_BY_ID.get(card.cardId)?.type === kind);
   if (index < 0) return;
   const [card] = s.draw.splice(index, 1);
   s.hand.push(card);
-  log(s, `遗物 · 从抽牌堆找出了「${cardName(card.cardId)}」。`, 'good');
+  log(s, `${label} · 从抽牌堆找出了「${cardName(card.cardId)}」。`, 'good');
 }
 
 /**
@@ -659,7 +810,7 @@ function tutor(s: BattleState, kind: 'attack' | 'skill' | 'power') {
  * card and not a second reference to the same one; a relic that pushed the same object twice would
  * have both copies move together the first time either was played.
  */
-function copyHand(s: BattleState, count: number, extra: number) {
+function copyHand(s: BattleState, count: number, extra: number, label = '遗物') {
   const picks = shuffled(s, s.hand.map((_, index) => index)).slice(0, Math.max(0, Math.floor(count)));
   for (const index of picks) {
     if (s.hand.length >= HAND_LIMIT) { log(s, `手牌已满（${HAND_LIMIT} 张），复制品放不下了。`, 'neutral'); return; }
@@ -667,7 +818,7 @@ function copyHand(s: BattleState, count: number, extra: number) {
     const copy: BattleCard = { uid: `r${s.uidSeq++}`, cardId: source.cardId };
     if (extra) s.costMarks = { ...s.costMarks, [copy.uid]: extra };
     s.hand.push(copy);
-    log(s, `遗物 · 复制了「${cardName(source.cardId)}」${extra ? `（复制品费用 +${extra}）` : ''}。`, 'good');
+    log(s, `${label} · 复制了「${cardName(source.cardId)}」${extra ? `（复制品费用 +${extra}）` : ''}。`, 'good');
   }
 }
 
@@ -846,6 +997,14 @@ function damagePlayer(s: BattleState, amount: number, label: string): number {
     hurt = Math.max(0, s.player.hp - 1);
     // The lesser slot saves you, but charges for it.
     if (saveSlot === 'sub') gainStatus(s, s.player.statuses, 'drained', 1, '铁面具');
+  }
+  // 残烛 — 道具版的铁面具。排在遗物**后面**：遗物是玩家带了更久的那件东西，先让它挡。
+  // 两道都只挡一次，所以顺序只在「两件同时在身上」时才有区别。
+  const ward = !mistSlot && !saveSlot && doomed && s.marks?.['prop:deathWard'];
+  if (ward) {
+    s.marks = { ...s.marks, 'prop:deathWard': 0 };
+    log(s, '残烛 · 烧到底的那一截替你挡了一下，然后灭了。', 'special');
+    hurt = Math.max(0, s.player.hp - 1);
   }
   s.player.hp = Math.max(0, s.player.hp - hurt);
   log(s, `${label} → 你：${Math.max(0, amount)} 点伤害（格挡 ${blocked}，生命 −${hurt}）。`, 'bad');
@@ -1329,6 +1488,20 @@ function enemyPhase(s: BattleState) {
     if (enemy.dead || enemy.hp <= 0) continue;
     startEnemyTurn(s, enemy);
     if (enemy.dead || s.phase !== 'enemy') continue;
+    // 冻结（霜钉）：这一回合整个跳过。
+    // ⚠️ 放在 `startEnemyTurn` **之后**是有意的：格挡该散还是散、身上的灼烧该烧还是烧、
+    // 「赠予」类的被动该发作还是发作——冻住的是**它要做的那件事**，不是它身上的时间。
+    // 层数在跳过之后才减，所以「1 层冻结」正好等于「少挨一下」，而不是白白消散。
+    const frozen = statusOf(enemy.statuses, 'frozen');
+    if (frozen > 0) {
+      setStatus(enemy.statuses, 'frozen', frozen - 1);
+      log(s, `冻结 · ${nameOf(enemy)} 一动不动，这一手作废。`, 'good');
+      // 轮转照常推进并重新预告：界面上那一行意图必须**始终是真的**，
+      // 否则玩家会照着一条不会发生的攻击去规划。
+      enemy.turn += 1;
+      enemy.intent = publishIntent(s, enemy);
+      continue;
+    }
     for (const intent of enemy.intent) {
       if (enemy.dead || s.phase !== 'enemy') break;
       runIntent(s, enemy, intent);
@@ -1443,6 +1616,15 @@ export interface StartOptions {
   /** Which of them have been 淬炼, and how far. See `BattleState.refined`. */
   refined?: Record<string, RefineTier>;
   /**
+   * The three props the run is carrying. See `BattleState.props`.
+   *
+   * ⚠️ **`startBattle` copies this, unlike `relics`.** A fight decrements `uses` in place, and this
+   * array is part of the live `run` object the UI is holding — aliasing it would spend the charge on
+   * the run *and* have `finishBattle` settle it again, so the victory panel would report that
+   * nothing was used. `relics` can be aliased only because a fight never writes to them.
+   */
+  props?: PropSlotState[];
+  /**
    * The run's own deck, if it has been edited. Absent means "deal the chapter's starting pile for
    * `deck`", which is what every caller did before a run could add, burn or polish a card.
    *
@@ -1450,6 +1632,16 @@ export interface StartOptions {
    * stamped as the pile is dealt.
    */
   cards?: { cardId: string; upgraded?: boolean }[];
+  /**
+   * 带进这一场的记号。
+   *
+   * ⚠️ 存在的唯一理由是**商店买的那条命**（`run.warded`）：免死的判定在 `damagePlayer` 里读
+   * `marks['prop:deathWard']`，而那条判定是**残烛（道具）写的**——商店卖的必须是同一条命，
+   * 不是第三套判定。`run.ts` 的 `wardMark()` 造出这个记号，`settleWard` 在战后把它清掉。
+   *
+   * 加这一项之前，买了免死的表现是：货架上那格卖掉了、`run.warded` 亮着，而战斗里什么都不发生。
+   */
+  marks?: Record<string, number>;
 }
 
 export function startBattle(encounterId: string, deck: DeckId, seed = 7, opts: StartOptions = {}): BattleState {
@@ -1493,7 +1685,12 @@ export function startBattle(encounterId: string, deck: DeckId, seed = 7, opts: S
     phase: 'player',
     relics: opts.relics,
     refined: opts.refined,
-    marks: {},
+    // ⚠️ 逐槽复制，**不能像 relics 那样直接别名**——战斗会就地扣次数，而传进来的是 React 里那个
+    // 活着的 run 对象的一部分。别名等于先改 run、再让 `finishBattle` 结算一次。
+    props: opts.props ? opts.props.map(entry => (entry ? { ...entry } : null)) : emptyProps(),
+    // ⚠️ 复制一份，不是直接别名：`marks` 会在战斗里被就地改写（免死用完置 0、遗物的
+    // 「每场只生效三次」全在里面），而传进来的是 run 那一侧的对象。
+    marks: opts.marks ? { ...opts.marks } : {},
     hits: 0,
     costMarks: {},
     player: {
@@ -1624,6 +1821,94 @@ export function playCard(source: BattleState, cardUid: string, targetUid?: strin
   return s;
 }
 
+/**
+ * What the player decided when they used a prop.
+ *
+ * Two optional fields rather than positional arguments, because a prop can need either, both, or
+ * neither — and `playCard(source, uid, targetUid)` already shows how unreadable a third positional
+ * argument gets.
+ */
+export interface PropChoice {
+  /** 需要目标的道具：打谁。省缺时落到 `state.targetUid`，和出牌同一条回退。 */
+  targetUid?: string;
+  /** `pick` 道具：挑中的手牌 uid，**按手牌顺序**。引擎只校验，不做交互。 */
+  handUids?: string[];
+}
+
+/** 挑了哪几张。不合法一律抛同一句——玩家看到的是「选中的牌不对」，不是一条内部断言。 */
+function pickFromHand(s: BattleState, count: number | undefined, uids: string[] | undefined): string[] {
+  if (!count) return [];
+  const wanted = uids ?? [];
+  if (wanted.length !== count || new Set(wanted).size !== wanted.length) throw new Error('选中的牌不对。');
+  const hand = new Set(s.hand.map(card => card.uid));
+  if (!wanted.every(uid => hand.has(uid))) throw new Error('选中的牌不对。');
+  return wanted;
+}
+
+/** 界面上置灰用。真正的判定在 `useProp` 里重做一遍，和 `canPlay` / `playCard` 同一套。 */
+export function canUseProp(state: BattleState, slot: number): boolean {
+  if (state.phase !== 'player') return false;
+  const entry = state.props?.[slot];
+  if (!entry || entry.uses <= 0) return false;
+  const def = PROP_BY_ID.get(entry.id);
+  return !!def && def.use !== 'camp' && !!propEffectFor(def.id);
+}
+
+/**
+ * Use the prop in `slot`. A player action, so it lives beside `playCard` and follows the same rules.
+ *
+ * Three things it deliberately does **not** do, each for a reason that is easy to undo by accident:
+ *
+ *   - **It does not cost energy and does not touch `playedThisTurn`.** 引火 reads `playedThisTurn === 0`
+ *     and 连缀 counts it; a prop that moved either number would silently turn every 0-cost first card
+ *     into a discount, which is a balance change nobody asked for.
+ *   - **It does not go through `commit`'s tour gate.** The log line starts 「使用「」, not 「打出「」 —
+ *     `BattleDemo` watches for the latter to decide the player has played a card, and a prop must not
+ *     advance the tutorial.
+ *   - **It does not touch the relic log prefix.** Everything it prints goes through `propContext`,
+ *     which is built on `wishlist(s, '道具')`.
+ */
+export function useProp(source: BattleState, slot: number, choice: PropChoice = {}): BattleState {
+  if (source.phase !== 'player') {
+    throw new Error(source.phase === 'enemy' ? '敌人正在行动，现在不能使用道具。' : '战斗已经结束。');
+  }
+  const entry = Number.isInteger(slot) ? source.props?.[slot] : undefined;
+  if (!entry) throw new Error('那个格子里没有东西。');
+  const def = PROP_BY_ID.get(entry.id);
+  if (!def) throw new Error('没有这种道具。');
+  if (entry.uses <= 0) throw new Error(`「${def.name}」已经用完了。`);
+  // ⚠️ 界面置灰只是提示，这里必须再拒一次——`claimRelic` 的 `mainOnly` 就是同一条教训。
+  if (def.use === 'camp') throw new Error(`「${def.name}」要在战斗外使用。`);
+  const handler = propEffectFor(def.id);
+  // 改 run 的那几件（金烬、夜祷书…）不走这里——它们由 `run.ts` 的 `useRunProp` 执行，
+  // 界面按「有没有战斗效果」分流。抛一句说得清的话，而不是「还没有实装」。
+  if (!handler) throw new Error(`「${def.name}」改的是这一局，不走战斗引擎。`);
+
+  const picked = pickFromHand(source, def.pick?.count, choice.handUids);
+
+  const s = clone(source);
+  // ⚠️ **目标必须对着克隆体解析，不能对着 `source`。** 效果作用在 `s` 上，所以一个来自 `source`
+  // 的 `EnemyState` 是**另一个对象**——霜钉会把冻结挂在原状态那个敌人身上，而这一场里什么都没发生。
+  // 它不会抛错，也不会红构建：只是「用了道具，敌人还是动了」。
+  //
+  // 没给目标时走 `currentTarget`，和出牌**同一条回退**（上一个瞄过的，否则第一个活着的）；
+  // 显式给了一个不存在或已死的，才是「目标无效」。
+  const target = def.target !== 'enemy' ? undefined
+    : choice.targetUid
+      ? livingEnemies(s).find(enemy => enemy.uid === choice.targetUid)
+      : currentTarget(s);
+  if (def.target === 'enemy' && !target) throw new Error('目标无效。');
+  // 先把 context 建出来：它要读槽里的 id 来定位 `marks` 的键空间，而下面马上就要把槽改写掉。
+  const ctx = propContext(s, slot, target, picked);
+  const uses = entry.uses - 1;
+  s.props![slot] = uses > 0 ? { ...entry, uses } : null;
+  log(s, `使用「${def.name}」${uses > 0 ? `（还剩 ${uses} 次）` : ''}。`, 'special');
+  handler(ctx);
+  // 必须有：道具打死最后一只敌人时，相位要当场翻成 `won`。
+  settle(s);
+  return s;
+}
+
 export function endTurn(source: BattleState): BattleState {
   if (source.phase !== 'player') {
     throw new Error(source.phase === 'enemy' ? '敌人正在行动。' : '战斗已经结束。');
@@ -1659,6 +1944,33 @@ function validEnemy(enemy: unknown): boolean {
 /** A save is valid if it is structurally sound: right shape, in-bounds numbers, a conserved deck and
  *  line-per-line log. It says nothing about whether the position is *winnable*, only that nothing in
  *  it can make the engine misbehave. */
+/**
+ * 三个道具槽的校验。`isValidBattle` 与 `isValidRun` 共用同一份——两边的形状**逐字段相同**
+ * （都来自 `src/props/props.ts`），而两次实现必然会漂。
+ *
+ * 每一条防的是一种静默的坏：
+ *
+ *   长度不对      下标契约。界面按三个下标画，多一格少一格会让三列轨错位。
+ *   id 不存在     `PROP_EFFECTS[id]` 查空 → **一件点了没反应的道具**（「抽到白板」的同型 bug）。
+ *   `uses < 1`    「已用完」的槽位本该是 `null`。放它进来，界面会画出一件看着能用、一点就抛错的道具。
+ *   `uses > charges`  手改存档把一次性道具刷成 99 次。
+ *
+ * ⚠️ **故意不查 id 去重**：两格同为「放血针」必须合法。遗物那边拒绝 `main === sub`，拒的是同一件
+ * 东西占两个**语义不同**的槽；而两个消耗品是玩家正当的选择。
+ */
+export function validProps(props: unknown): props is PropSlotState[] {
+  if (!Array.isArray(props) || props.length !== PROP_SLOTS) return false;
+  for (const entry of props) {
+    if (entry === null) continue;
+    if (!entry || typeof entry !== 'object') return false;
+    if (typeof entry.id !== 'string') return false;
+    const def = PROP_BY_ID.get(entry.id);
+    if (!def) return false;
+    if (!Number.isInteger(entry.uses) || entry.uses < 1 || entry.uses > def.charges) return false;
+  }
+  return true;
+}
+
 export function isValidBattle(value: unknown): value is BattleState {
   if (!value || typeof value !== 'object') return false;
   const s = value as BattleState;
@@ -1673,6 +1985,7 @@ export function isValidBattle(value: unknown): value is BattleState {
       if (id !== undefined && !RELIC_BY_ID.has(id)) return false;
     }
   }
+  if (s.props !== undefined && !validProps(s.props)) return false;
   if (s.marks !== undefined && (!s.marks || typeof s.marks !== 'object')) return false;
   if (s.hits !== undefined && (!Number.isInteger(s.hits) || s.hits < 0)) return false;
   if (s.costMarks !== undefined) {

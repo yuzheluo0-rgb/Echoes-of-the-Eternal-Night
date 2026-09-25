@@ -43,6 +43,13 @@ export type RewardEffect =
   | { kind: 'cards'; count: number; pick: boolean }
   /** A relic draw, the same one the graded fights pay. */
   | { kind: 'relic' }
+  /**
+   * 一件道具，等着玩家决定放进哪一格。
+   *
+   * 和 `relic` 是同一个形状：捡到的**东西**，先归你、再让你摆。不掷点、不带参数——「哪一件」由
+   * `run.ts` 从池子里掷（`claimReward` 里那一步），而不是在这里写死。
+   */
+  | { kind: 'prop' }
   /** Burn a card of the player's choosing. */
   | { kind: 'remove' }
   /** 打磨 a card of the player's choosing. */
@@ -95,6 +102,10 @@ export const REWARDS: RewardSpec[] = [
 
   { id: 'windfall-relic', name: '捡到的东西', blurb: '它落在灰里，不像本来属于这里。', rarity: 'uncommon', effect: { kind: 'relic' } },
   { id: 'dig', name: '往下挖了挖', blurb: '土很松，说明最近有人动过。', rarity: 'rare', effect: { kind: 'relic' } },
+
+  // 道具。⚠️ 这张表是**宝箱与普通战斗奖励共用的**：加这一行之后，一场普通胜仗也会开出道具来。
+  // 那是有意的——道具是消耗品，多一个来源只会让它更像「随手捡到的」，而它并不比一张牌更值钱。
+  { id: 'satchel', name: '一只行囊', blurb: '背带断了一根，里面的东西还在。', rarity: 'uncommon', effect: { kind: 'prop' } },
 ];
 
 export const REWARD_BY_ID = new Map(REWARDS.map(reward => [reward.id, reward]));

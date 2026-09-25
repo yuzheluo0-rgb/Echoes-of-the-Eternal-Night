@@ -1,0 +1,168 @@
+/* 道具总览页. Prefixed `pg-` so it cannot collide with `cards.css` (`cq-` / `cg-`) or the relic
+   pair (`rl-` / `rg-`), all of which live on the same bundle. Its own world: nothing here reaches
+   into the map or the battle stylesheets. */
+
+.pg {
+  --ink: #d9d3c0;
+  --dim: #8b9a94;
+  --gold: #d4bd87;
+  --line: rgba(180, 170, 130, .16);
+  min-height: 100dvh;
+  /* 展开面板挂在方格外面（246 宽，格子只有 176），最边上一列的那几块在窄屏上会探出视口。
+     它们平时是 `visibility: hidden`，但**照样占布局**，于是整页多出一条横向滚动条。
+     `clip` 不是 `hidden`：它不建滚动容器，而且 `overflow-x: clip` 配 `overflow-y: visible`
+     是合法的（`visible` 只在对方是 `auto/hidden/scroll` 时才被强制成 `auto`）。 */
+  overflow-x: clip;
+  padding: 40px 28px 72px;
+  background: radial-gradient(ellipse at 50% -10%, #1d2a30 0%, #121a1e 46%, #0a0f12 100%);
+  color: var(--ink);
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+}
+.pg h1, .pg h2, .pg h3 { font-family: 'Noto Serif SC', 'Songti SC', 'STZhongsong', serif; font-weight: 400; margin: 0; }
+.pg p { margin: 0; }
+.pg button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+/* ------------------------------------------------------------------- header */
+
+.pg-top {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 34px; align-items: start;
+  max-width: 1500px; margin: 0 auto 30px; padding-bottom: 22px; border-bottom: 1px solid var(--line);
+}
+.pg-kicker { font-size: 9px; letter-spacing: 4px; color: #b8a678; margin-bottom: 10px; }
+.pg-top h1 { font-size: 34px; letter-spacing: 8px; color: #ece1c4; }
+.pg-top h1 small { font-size: 12px; letter-spacing: 2px; color: var(--dim); margin-left: 14px; }
+.pg-sub { font-size: 13px; line-height: 2.05; color: #93a49c; margin-top: 14px; max-width: 82ch; }
+.pg-sub b { color: #e8cf94; font-weight: 400; }
+.pg-facts { display: flex; gap: 30px; margin: 0; }
+.pg-facts div { display: flex; flex-direction: column; gap: 6px; }
+.pg-facts dt { font-size: 9px; letter-spacing: 2.4px; color: #7f9189; }
+.pg-facts dd { margin: 0; font-size: 27px; font-family: Georgia, 'Songti SC', serif; color: #ece1c4; }
+
+/* -------------------------------------------------------------- the argument
+   三条：道具是第三条轴 / 为什么只有三个槽 / 为什么没有稀有度。这一段是这一页唯一**必须**被读到
+   的东西——一面方格墙本身不解释自己为什么长成这样。 */
+
+.pg-intro { max-width: 1500px; margin: 0 auto 30px; }
+.pg-intro-title { font-size: 20px; letter-spacing: 4px; color: #ece1c4; display: flex; align-items: baseline; gap: 12px; }
+.pg-intro-title small { font-size: 9px; letter-spacing: 3px; color: #7f9189; font-family: 'Segoe UI', sans-serif; }
+.pg-axis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
+.pg-axis-card {
+  position: relative; padding: 18px 20px 18px 22px;
+  border: 1px solid var(--line); border-left: 2px solid rgba(212, 189, 135, .5); border-radius: 4px;
+  background: linear-gradient(140deg, rgba(26, 39, 44, .78), rgba(14, 21, 26, .82));
+}
+.pg-axis-num {
+  position: absolute; right: 16px; top: 12px;
+  font-family: Georgia, 'Songti SC', serif; font-size: 26px; line-height: 1;
+  color: rgba(212, 189, 135, .22);
+}
+.pg-axis-card h3 { font-size: 16px; letter-spacing: 2px; color: #ece3c9; padding-right: 34px; }
+.pg-axis-card p { font-size: 12.5px; line-height: 1.95; color: #93a49c; margin-top: 11px; }
+.pg-axis-card p b { color: #e8cf94; font-weight: 400; }
+
+/* -------------------------------------------------------------- 战斗里那一排
+   验收用的示意：外面这一页看不到「用掉一个」和「灰掉」两个状态，而那正是图标上最容易写错的
+   两件事。它不是战斗界面——真打起来时那一排归战斗层管。 */
+
+.pg-strip { max-width: 1500px; margin: 0 auto 30px; }
+.pg-strip-title { font-size: 20px; letter-spacing: 4px; color: #ece1c4; display: flex; align-items: baseline; gap: 12px; }
+.pg-strip-title small { font-size: 9px; letter-spacing: 3px; color: #7f9189; font-family: 'Segoe UI', sans-serif; }
+.pg-strip-note { font-size: 12.5px; line-height: 2; color: #93a49c; margin: 12px 0 18px; max-width: 92ch; }
+.pg-strip-note b { color: #e8cf94; font-weight: 400; }
+.pg-strip-row { display: flex; flex-wrap: wrap; gap: 26px; align-items: flex-start; }
+.pg-strip-cell { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+/* 说明**一行**放得下：折成两行会让四个格子高矮不齐，而这四个格子是一组对照。 */
+.pg-strip-cell figcaption { font-size: 11px; letter-spacing: .2px; color: #7f9189; max-width: 116px; line-height: 1.7; }
+.pg-strip-fired { margin-top: 16px; font-size: 12.5px; color: #b8a678; min-height: 1.6em; }
+
+/* ------------------------------------------------------------------ filters */
+
+.pg-kinds { display: flex; flex-wrap: wrap; gap: 7px; max-width: 1500px; margin: 0 auto 10px; }
+.pg-kinds button {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 15px; font-size: 12px; letter-spacing: 1.6px; color: #a9b6ae;
+  border: 1px solid var(--line); border-radius: 3px;
+  transition: color .2s, border-color .2s, background .2s;
+}
+.pg-kinds button i { width: 8px; height: 8px; border-radius: 2px; background: var(--kind, #d4bd87); flex: none; }
+.pg-kinds button:hover { color: #f4e8ca; border-color: color-mix(in srgb, var(--kind, #d4bd87) 55%, transparent); }
+.pg-kinds button.on {
+  color: color-mix(in srgb, var(--kind, #d4bd87) 72%, white);
+  border-color: color-mix(in srgb, var(--kind, #d4bd87) 60%, transparent);
+  background: color-mix(in srgb, var(--kind, #d4bd87) 13%, transparent);
+}
+/* 一类的说明（`gloss`）。放在 `title` 里等于没写——选中之后必须看得见。 */
+.pg-kind-note { max-width: 1500px; margin: 0 auto 22px; font-size: 12px; letter-spacing: 1.2px; color: #8b9a94; min-height: 1.7em; }
+.pg-kind-note b { font-weight: 400; margin-right: 8px; }
+
+/* --------------------------------------------------------------------- grid */
+
+.pg-grid { display: flex; flex-wrap: wrap; gap: 18px; max-width: 1500px; margin: 0 auto; }
+.pg-item { padding: 0; display: block; border-radius: 3px; }
+.pg-item:focus-visible { outline: 2px solid rgba(212, 189, 135, .8); outline-offset: 4px; }
+/* ⚠️ 键盘走到方格上时，展开面板必须**照样**出来——用户的要求是「悬停或键盘 focus」。
+   而 `props.css` 里的 `.pp:focus-within` **看不到这一格**：焦点在**外面的**按钮上，`focus-within`
+   只认后代，不认祖先。所以这里补一条。只补 opacity / visibility 两项，不碰 `transform`——
+   那是 `.pp-pop` 自己的事，抄过来就会变成两份会各自漂移的真相。 */
+.pg-item:focus-visible .pp-pop { opacity: 1; visibility: visible; }
+.pg-empty { color: var(--dim); padding: 40px 0; }
+
+/* -------------------------------------------------------------------- modal */
+
+.pg-modal {
+  position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 24px;
+  background: rgba(5, 9, 12, .82); backdrop-filter: blur(7px);
+  animation: pg-fade .3s ease-out both;
+}
+@keyframes pg-fade { from { opacity: 0; } to { opacity: 1; } }
+.pg-modal-inner {
+  position: relative; display: flex; gap: 28px; align-items: flex-start;
+  max-width: 800px; width: 100%; padding: 26px;
+  border: 1px solid rgba(190, 175, 130, .3); border-radius: 5px;
+  background: linear-gradient(140deg, #1b2a30, #101a20);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .7);
+}
+/* 方格是这扇窗的主角，描述是配文。方格固定 176，放大 1.3 倍，**按放大后的尺寸占位**
+   （transform 不改布局，229 = 176 × 1.3），再给描述封一个上限。 */
+.pg-modal-icon { flex: none; width: 229px; height: 229px; }
+.pg-modal-scale { transform: scale(1.3); transform-origin: top left; }
+.pg-modal-copy { min-width: 0; max-width: 440px; padding-right: 22px; }
+.pg-modal-copy h3 { font-size: 26px; letter-spacing: 5px; color: #ece1c4; display: flex; align-items: baseline; gap: 12px; }
+.pg-modal-copy h3 small { font-size: 11px; letter-spacing: 3px; color: #b8a678; font-family: 'Segoe UI', sans-serif; }
+/* 效果文案是这一页唯一要看的那句话，所以它比来历亮、比来历大。 */
+.pg-modal-text { font-size: 14px; line-height: 1.95; color: #f0e6c8; margin: 16px 0 0; }
+.pg-modal-lore { font-size: 12.5px; line-height: 2; color: #93a49c; margin: 11px 0 20px; }
+.pg-modal-stats { display: flex; flex-direction: column; gap: 12px; margin: 0; }
+.pg-modal-stats div { display: flex; gap: 12px; align-items: baseline; }
+.pg-modal-stats dt { flex: none; width: 58px; font-size: 9.5px; letter-spacing: 1.8px; color: #7f9189; }
+.pg-modal-stats dd { margin: 0; font-size: 12.5px; line-height: 1.9; color: #d5ddd6; }
+.pg-modal-close {
+  position: absolute; right: 12px; top: 12px; width: 30px; height: 30px;
+  font-size: 15px; color: #93a49c; border-radius: 50%;
+}
+.pg-modal-close:hover { color: #f0e4c4; background: rgba(255, 255, 255, .07); }
+
+/* ---------------------------------------------------------- small screens */
+
+@media (max-width: 1200px) {
+  .pg-axis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .pg { padding: 24px 14px 52px; }
+  .pg-top { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .pg-top h1 { font-size: 24px; letter-spacing: 5px; }
+  .pg-axis { grid-template-columns: minmax(0, 1fr); }
+  .pg-grid { gap: 12px; justify-content: center; }
+  .pg-modal-inner { flex-direction: column; align-items: center; padding: 20px 16px; }
+  .pg-modal-copy { padding-right: 0; max-width: none; }
+  /* 竖排时不放大：这一列本来就按内容居中排，外层固定 229 会在下面留一大块空白，
+     而且 `transform-origin: top left` 会把方格推到偏左。 */
+  .pg-modal-icon { width: auto; height: auto; }
+  .pg-modal-scale { transform: none; }
+  .pg-facts { gap: 22px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pg, .pg * { animation: none !important; transition: none !important; }
+}

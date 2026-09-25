@@ -23,8 +23,13 @@
  * independent: replaying a run from its seed reproduces both the heals and every shuffle.
  */
 
-import { CARD_BY_ID, DECK_IDS, type DeckId } from '../cards/index.ts';
+import { CARD_BY_ID, DECK_IDS, TIER_BY_ID, type DeckId } from '../cards/index.ts';
 import { CHAPTER_1, chapterDeck, isDeckUnlocked } from './chapter.ts';
+import {
+  PROPS, PROP_BY_ID, PROP_SLOTS, afterUse, clearSlot, emptyProps, placeIn, propsUsableIn,
+  type PropDefinition, type PropSlotState,
+} from '../props/props.ts';
+import { runPropEffectFor, type RunPropEffect } from './props.ts';
 import { RELIC_BY_ID, type RelicDefinition } from '../relics/relics.ts';
 import type { RefineTier } from './relics.ts';
 import { generateMap, reachableFrom, type MapNode, type TowerMap } from './map.ts';
@@ -34,7 +39,21 @@ import {
 } from './rewards.ts';
 import type { EventEffect, EventOption } from './events.ts';
 import { SUB_SLOT_CHANCE, offerRelics } from './relicDraw.ts';
-import { PLAYER_MAX_HP, isJunkId, relicModifier, type BattleCard, type BattleState } from './engine.ts';
+import {
+  STAT_GOODS, SHOP_SLOTS, canPayWith, isValidShop, relicValueOf, removePrice, shopRerollCost,
+  rollShopSlots, type PayWith, type ShopSlot, type ShopState,
+} from './shop.ts';
+
+/**
+ * 商店那一套的再出口。
+ *
+ * `rollShop` / `buyShopSlot` 这一组本来就写在这个文件里，而 `canPayWith`、`PayWith`、`ShopSlot`
+ * 住在 `shop.ts`（那里是纯数据，不 import 这个文件）。**两边都能导入**，免得界面为了一个谓词记住
+ * 它到底住在哪一层——多写一行 `export`，少一次「为什么导不到」。
+ */
+export { canPayWith, shopRerollCost, SHOP_SLOTS };
+export type { PayWith, ShopSlot, ShopState };
+import { PLAYER_MAX_HP, isJunkId, relicModifier, validProps, type BattleCard, type BattleState } from './engine.ts';
 import { ALL_ENCOUNTERS, ENCOUNTERS, POOLS, type Encounter } from './enemies.ts';
 
 /** One card in the run's deck. `upgraded` is per copy, so a run can hold a polished 割线 and a plain
@@ -69,7 +88,12 @@ export interface ChapterRun {
   sub: DeckId;
   /** Carried into the next fight. Reset to full only by starting a new run. */
   hp: number;
-  /** The ceiling. Starts at `PLAYER_MAX_HP`; only a reward raises it, and it never falls. */
+  /**
+   * The ceiling. Starts at `PLAYER_MAX_HP`; rewards and 奇遇 raise it, **and 道具 may lower it**
+   * （夜祷书 生命上限 −10）. It never falls below 1 — see `useRunProp` and `isValidRun`. The battle
+   * layer still refuses a ceiling under `PLAYER_MAX_HP` (`isValidBattle`), so a fight opens at the
+   * baseline and comes back to whatever the run is carrying.
+   */
   maxHp: number;
   /** Spent at shops, and what 铜板 / 商队账本 act on. */
   gold: number;
@@ -93,6 +117,17 @@ export interface ChapterRun {
    * same one again, and if they did, the refinement was paid for.
    */
   refined?: Record<string, RefineTier>;
+  /**
+   * 三个道具槽。定长三个，`null` 是空槽——形状与 `BattleState.props` 逐字段相同
+   * （都来自 `src/props/props.ts`），进战斗时逐槽复制、出来时采纳回来，见 `finishBattle`。
+   */
+  props?: PropSlotState[];
+  /** 一件已拾得、还没放下的道具。和 `relicTask` 同一个理由：这是玩家还没答完的决定，而要落盘。 */
+  propTask?: { id: string; from: string };
+  /** 下一场胜利的掉落概率（百分点）。基础 35，没掉 +12，掉了 −15，钳在 [5,75]。存**数**而不是每次重算。 */
+  propLuck?: number;
+  /** 本局是否已经吃过兜底掉落。⚠️ 判据是它，**不是「props 是否为空」**——否则把三件不喜欢的丢掉就能再刷一轮。 */
+  propGranted?: boolean;
   /** A relic draw the player has not answered yet. Persisted, so a reload lands back on it. */
   pendingDraw?: PendingDraw;
   /** The encounter whose victory owes a draw that has not been offered yet. */
@@ -133,6 +168,23 @@ export interface ChapterRun {
   resolved?: string;
   /** The reward a victory rolled, waiting to be claimed. See `rewards.ts`. */
   pendingReward?: string;
+  /**
+   * 这一家商店的货架。**只在「站在一家还没结算的商店上」时有意义**——踏进任何一个节点都会把它丢掉
+   * （见 `enterNode`），然后在踏进商店时重掷一次（`rollShop`）。
+   *
+   * 它落盘，所以刷新一次店里还是那批货、还是那个刷新次数。它**不**存在地图上：`MapNode` 只说自己
+   * 是什么类型，具体卖什么要等玩家站上去才掷——和「节点上没有 `encounterId`」是同一条规矩。
+   */
+  shop?: ShopState;
+  /**
+   * 商店买来的那条命：本局下一次致命伤害为你留下 1 点生命。
+   *
+   * ⚠️ **它不是一条新规则，是同一件事的第三个来源。** 项目里已经有两个实现了「下一次致死伤害留
+   * 1 点」——道具「残烛」写下的 `marks['prop:deathWard']`，和遗物的 `lethalSave`（铁面具）。商店
+   * 卖的就是**第一个**（残烛那一个）：进战斗时由 `wardMark()` 把同一个记号带上，用完由
+   * `finishBattle` 把它清掉。见 `wardMark` 上面那段「引擎要改哪一行」。
+   */
+  warded?: boolean;
   /**
    * A card-picking step the player still owes, and what it is for. One field rather than three,
    * because only ever one of them can be outstanding.
@@ -215,6 +267,7 @@ export function newRun(main: DeckId, sub: DeckId, seed = 7): ChapterRun {
     gold: 0,
     deck: chapterDeck(main, sub).map(cardId => ({ cardId })),
     relics: {},
+    props: emptyProps(),
     // Laid down here rather than by a separate call, so a run is *never* without its tower. An
     // earlier version left this to `startClimb`, and a save written before the tower existed loaded
     // clean — `isValidRun` did not look for a map — and then white-screened the page on
@@ -274,7 +327,10 @@ export function claimReward(run: ChapterRun): ChapterRun {
   const effect = reward.effect;
   switch (effect.kind) {
     case 'gold': return { ...paid, gold: paid.gold + effect.amount };
-    case 'heal': return { ...paid, hp: Math.min(PLAYER_MAX_HP, paid.hp + effect.amount) };
+    // ⚠️ 封顶跟 `maxHp` 走，**不是 `PLAYER_MAX_HP`**（`finishBattle` 那条注释说的是同一件事）。
+    // 上限一旦能被道具压低（夜祷书 −10），写死 60 就会把生命回到上限之上——而 `isValidRun` 拒绝
+    // `hp > maxHp`，于是玩家刷新一下整局就没了。
+    case 'heal': return { ...paid, hp: Math.min(paid.maxHp, paid.hp + effect.amount) };
     // Raising the ceiling heals by the same amount: a bigger bar the player cannot feel is not a
     // reward, it is a number.
     case 'maxHp': return { ...paid, maxHp: paid.maxHp + effect.amount, hp: paid.hp + effect.amount };
@@ -285,6 +341,9 @@ export function claimReward(run: ChapterRun): ChapterRun {
     case 'remove': return { ...paid, cardTask: 'remove' };
     case 'polish': return { ...paid, cardTask: 'polish' };
     case 'duplicate': return { ...paid, cardTask: 'duplicate' };
+    // 道具：掷一件出来，挂成「还没放下」的 `propTask`。**这里不是 `BattleOutcome.propDrop` 那条路**
+    // ——那个是战后掉落的，由战果面板当场放进格子；宝箱是在塔上开的，走的是 `propTask` + 放道具屏。
+    case 'prop': return stageProp(paid, '战利品', TOWER_PROP_POOL);
   }
 }
 
@@ -438,6 +497,10 @@ function applyEventEffect(afterCost: ChapterRun, effect: EventEffect): ChapterRu
         hp: afterCost.hp + Math.max(0, effect.amount),
       };
     case 'relic': return { ...afterCost, drawDue: 'event', nextSlot: 'main' };
+    // 一件道具，和 `relic` 一样是「捡到的东西」——所以同样停在「还没放下」上等玩家回答。
+    // ⚠️ **不做概率**：`refine` 是全表唯一的概率效果，而它的成算是**印在结果行上**的；
+    // 给一件道具加上概率，`outcomeLine` 就会开始说谎（「得到一件道具」而可能什么都得不到）。
+    case 'prop': return stageProp(afterCost, '奇遇', TOWER_PROP_POOL);
     case 'remove': return { ...afterCost, cardTask: 'remove' };
     case 'polish': return { ...afterCost, cardTask: 'polish' };
     case 'duplicate': return { ...afterCost, cardTask: 'duplicate' };
@@ -500,13 +563,27 @@ export function canEnterNode(run: ChapterRun, nodeId: string): boolean {
 export function enterNode(run: ChapterRun, nodeId: string): ChapterRun {
   if (!canEnterNode(run, nodeId)) return run;
   const node = run.map.byId.get(nodeId)!;
-  const next: ChapterRun = { ...run, at: nodeId, path: [...run.path, nodeId], resolved: undefined };
+  /**
+   * ⚠️ 上一层的货架留在上一层。
+   *
+   * 用解构**把 `shop` 整个摘掉**，而不是写 `shop: undefined`——`isValidRun` 不要求 `shop` 存在，
+   * 而一份「键在、值是 undefined」的 run 过一个来回会变样（JSON 会把它丢掉），于是
+   * `deepEqual(round, wire)` 这种存档往返测试会莫名其妙地红。`resolved: undefined` 是先例，
+   * 不是可以照抄的样板。
+   */
+  const { shop: _left, ...rest } = run;
+  void _left;
+  const next: ChapterRun = { ...rest, at: nodeId, path: [...run.path, nodeId], resolved: undefined };
   // The fight is decided here, at the threshold, and kept on the run so the preparation screen, the
   // battle and a reload all agree about what is standing on this floor.
   if (node.kind === 'combat' || node.kind === 'elite' || node.kind === 'boss') {
     const stamped = { ...next };
     return { ...next, currentFight: encounterFor(node, () => nextRandom(stamped), next.cleared) };
   }
+  // 商店的货架也是在这里掷的，和战斗一样是「踏进来才知道」。放这里而不是只留给界面调一次，
+  // 是因为界面那条路（照宝箱的 `enterFloor`）忘了调的表现是「一家空店」，而 `rollShop` 是幂等的，
+  // 两边都调也不会换一批货。
+  if (node.kind === 'shop') return rollShop(next);
   return next;
 }
 
@@ -754,6 +831,265 @@ function withoutRefinement(
   return Object.keys(next).length ? next : undefined;
 }
 
+// ------------------------------------------------------------------ 道具
+
+/**
+ * 三个槽里现在有什么。
+ *
+ * `props` 是后加的字段，老存档里没有它（`isValidRun` 也不强制要求），所以每个读它的地方都先过这一层。
+ * ⚠️ 有槽时返回的是 run 里**那个数组本身**——调用方要么只读，要么用 `placeIn` / `clearSlot` 那类
+ * 会复制一份的入口去改。
+ */
+export function propSlots(run: ChapterRun): PropSlotState[] {
+  return run.props ?? emptyProps();
+}
+
+/**
+ * 战斗掉落的池子：**营火专用的那几件不进战斗掉落**。
+ *
+ * 判据是 `use` 而不是别的：净灯 / 灰誓 / 袖炉要开 run 的选牌器，而选牌器在战斗页的分派顺序里
+ * 排在战斗本体**之前**，战斗里一置上它整张战斗页会被顶掉（见 `PropDefinition.deck`）。
+ */
+const BATTLE_PROP_POOL = propsUsableIn('battle');
+
+/**
+ * 塔上拾取（宝箱 / 奇遇）的池子：**全部**道具。
+ *
+ * ⚠️ 这里和战斗掉落**故意不同**。净灯 / 灰誓 / 袖炉是 `camp`，而它们唯一的来源就是塔上拾取：
+ * 把这里也写成 `propsUsableIn('battle')` 的话，那三件一辈子也拿不到，`PROPS` 里就多了三行
+ * **玩家永远见不到**的数据（`run.test.ts` 有一条盯着这件事）。拿到之后走到下一个营火就能用
+ * ——`camp` 说的本来就是「战斗外」，而塔上到处都是营火。
+ */
+const TOWER_PROP_POOL = PROPS;
+
+/** 加权的掉落抽取。和 `rollReward` / `drawRelics` 同一条规矩：权重在数据层，掷点由调用方给。 */
+function rollProp(pool: PropDefinition[], roll: () => number): PropDefinition | undefined {
+  const total = pool.reduce((sum, prop) => sum + prop.weight, 0);
+  if (total <= 0) return undefined;
+  let ticket = roll() * total;
+  for (const prop of pool) {
+    ticket -= prop.weight;
+    if (ticket <= 0) return prop;
+  }
+  return pool[pool.length - 1];
+}
+
+/** 掷一件出来、挂成「还没放下」。塔上的拾取走这条；战果面板那条不经过 `propTask`。 */
+function stageProp(run: ChapterRun, from: string, pool: PropDefinition[]): ChapterRun {
+  const next = { ...run };
+  const picked = rollProp(pool, () => nextRandom(next));
+  if (!picked) return next;
+  return { ...next, propTask: { id: picked.id, from } };
+}
+
+/**
+ * 把手上那一件放进**玩家指定的**槽，替换掉原本在那儿的。
+ *
+ * 和 `claimRelic` 同一个语义：**从不问「槽满了吗」**——三格都占着的时候，玩家点哪一格就是拿哪一格
+ * 去换，那三个按钮存在的意义正是这个。
+ *
+ * `id` 省缺时用 `propTask` 上那一件（塔上的拾取、宝箱、奇遇）。战果面板把它那件**直接传进来**，
+ * 因为掉落面板全程不经过 `propTask`：`finishBattle` 一挂上 `propTask`，塔上的分派器就会把战果
+ * 面板顶掉，玩家连「这仗打赢了」都看不到。见 `BattleOutcome.propDrop`。
+ */
+export function placeProp(run: ChapterRun, slot: number, id?: string): ChapterRun {
+  const wanted = id ?? run.propTask?.id;
+  if (!wanted || !PROP_BY_ID.has(wanted)) return run;
+  if (!Number.isInteger(slot) || slot < 0 || slot >= PROP_SLOTS) return run;
+  return {
+    ...run,
+    props: placeIn(propSlots(run), slot, wanted),
+    propTask: undefined,
+    propGranted: true,
+  };
+}
+
+/**
+ * 「不要」。三格都称手时这是真答案，所以它**只**清掉那件待放的道具。
+ *
+ * 它不动 `propGranted`：**拒收**一件不是**收下**一件。塔上捡到又被拒收的那一件因此不留标记，
+ * 于是这一局如果身上还是空的，兜底的那件还会再来一次——那正是兜底该有的样子。
+ * （战后的掉落是另一回事：那一件**已经掉出来了**，所以 `finishBattle` 当场就把标记立上，
+ * 玩家后来把身上三件都丢掉也不会再刷一轮。）
+ */
+export function dismissProp(run: ChapterRun): ChapterRun {
+  if (!run.propTask) return run;
+  return { ...run, propTask: undefined };
+}
+
+/** 丢掉一格（照 `discardRelic`）。 */
+export function discardProp(run: ChapterRun, slot: number): ChapterRun {
+  const slots = propSlots(run);
+  if (!Number.isInteger(slot) || !slots[slot]) return run;
+  return { ...run, props: clearSlot(slots, slot) };
+}
+
+/** 掉落的基础概率（百分点）。 */
+export const PROP_LUCK_BASE = 35;
+/** 没掉的时候下一次加多少。 */
+export const PROP_LUCK_MISS = 12;
+/** 掉了之后下一次减多少——比加的多，所以运气会自己回到中间，而不是一路爬到必掉。 */
+export const PROP_LUCK_HIT = -15;
+export const PROP_LUCK_MIN = 5;
+export const PROP_LUCK_MAX = 75;
+
+/** 遭遇池再加一档。**首领比精英还高一档**：越难的仗越该给点东西，而道具是消耗品，不破坏曲线。 */
+export const PROP_DROP_BONUS: Record<string, number> = { weak: 0, strong: 8, elite: 25, boss: 40 };
+
+/**
+ * 第几层还没有道具的，赢一场就补一件。**比遗物的 3 早一行**——道具是消耗品，早给一件不破坏曲线，
+ * 而第 1 行本来就是教学战（一个只有一场仗打过的新玩家还不需要决定带什么）。
+ */
+export const FIRST_PROP_ROW = 2;
+
+function clampLuck(value: number): number {
+  return Math.max(PROP_LUCK_MIN, Math.min(PROP_LUCK_MAX, Math.round(value)));
+}
+
+/**
+ * 这一次要用描述符里的哪一半。
+ *
+ * 描述符上的每一格**默认全部照做**——灰誓是 `{ task: 'remove', maxHp: 6 }`，两半都要落
+ * （「摧毁牌库里的一张牌，生命上限 +6」），`half` 对它毫无意义。
+ *
+ * ⚠️ **袖炉是唯一的例外**：描述符里两半都写着（`{ task: 'polish', heal: 15 }`），而它印出来的文案
+ * 是「**二选一**：回复 15 点生命，或打磨牌库里的一张牌」。所以它必须由界面指定用哪一半；省缺按
+ * `'effect'`（回血）走——一个会自己开屏的默认值比一个安静回血的默认值危险得多。
+ */
+export type PropHalf = 'task' | 'effect';
+
+/**
+ * 两半都写在描述符里、而文案说的是「或」的那几件。见 `PropHalf`。
+ *
+ * 导出是为了让测试能拿它和文案对一遍：**印出来的「二选一」三个字就是这份名单的判据**。
+ * 名单和文案一旦分家，两边都会说谎——多写一件等于那件少做一半，少写一件等于袖炉多做一半。
+ */
+export const EITHER_OR_PROPS = new Set(['pocket-forge']);
+
+/** 这件道具这一次要不要用「改牌库」那半（挂 `cardTask`）。 */
+function wantsTask(id: string, effect: RunPropEffect, half: PropHalf): boolean {
+  if (!effect.task) return false;
+  return !EITHER_OR_PROPS.has(id) || half === 'task';
+}
+
+/** 这件道具这一次要不要用数值那半。 */
+function wantsValue(id: string, half: PropHalf): boolean {
+  return !EITHER_OR_PROPS.has(id) || half === 'effect';
+}
+
+/**
+ * 界面上置灰用。真正的判定在 `useRunProp` 里重做一遍——和 `canPlay` / `canAfford` / `canUseProp`
+ * 同一套：置灰是提示，不是规则。
+ */
+export function canUseRunProp(run: ChapterRun, slot: number, half: PropHalf = 'effect'): boolean {
+  const entry = propSlots(run)[slot];
+  if (!entry || entry.uses <= 0) return false;
+  const def = PROP_BY_ID.get(entry.id);
+  const effect = def ? runPropEffectFor(def.id) : undefined;
+  if (!def || !effect) return false;
+  return canPay(run, effect, wantsValue(def.id, half));
+}
+
+/** 描述符里的代价付不付得起。付不起的一律**整体拒绝**，连次数都不扣。 */
+function canPay(run: ChapterRun, effect: RunPropEffect, valueWanted: boolean): boolean {
+  if (!valueWanted) return true;
+  if (effect.gold && effect.gold < 0 && run.gold + effect.gold < 0) return false;
+  // 圣物匣：没有主遗物就没有可烧的东西。静默地什么都不做会让这一格看起来是坏的。
+  if (effect.eatRelic && !run.relics.main) return false;
+  return true;
+}
+
+/**
+ * 用掉一格道具。**改 run 的那九件走这里**（战斗那二十八件走引擎的 `useProp`）。
+ *
+ * 和 `useProp` 的两条不同，都是「这是 run 层」的直接后果：
+ *
+ *   - **不抛错，拒绝就原样退回**（和 `spendGold` / `campfire` / `discardRelic` 同一个形状）。
+ *     付不起的 80 金币、不在身上的主遗物，都只是「这一次点不动」，界面用 `canUseRunProp` 置灰。
+ *   - **不结束这一层。** 在营火边用道具是在回答营火**之前**做的事：`resolved` 只能由
+ *     `campfire` / `resolveEvent` 那种「这一层的答案」去设（`campfireQuench` 上记着这条教训）。
+ *
+ * 数值那一半当场应用，改牌库的那一半挂 `cardTask`——**复用现成的选牌器，一行新界面都不用写**。
+ */
+export function useRunProp(run: ChapterRun, slot: number, half: PropHalf = 'effect'): ChapterRun {
+  const entry = propSlots(run)[slot];
+  if (!entry || entry.uses <= 0) return run;
+  const def = PROP_BY_ID.get(entry.id);
+  const effect = def ? runPropEffectFor(def.id) : undefined;
+  if (!def || !effect) return run;
+  const valueWanted = wantsValue(def.id, half);
+  if (!canPay(run, effect, valueWanted)) return run;
+
+  let next: ChapterRun = { ...run };
+
+  if (valueWanted) {
+    /**
+     * 生命上限先定下来，当前生命才好跟着钳。
+     *
+     * ⚠️ **run 的生命上限可以被压低**（夜祷书 −10），而「只许抬高不许降低」是**战斗**的不变量
+     * （`isValidBattle` 钉着它，`startBattle` 进战斗时会把上限抬回基准值）。所以这里只守一条底线：
+     * 不低于 1——上限 0 的 run 是一个永远回不了血的 run。
+     */
+    if (effect.maxHp) {
+      const ceiling = Math.max(1, next.maxHp + effect.maxHp);
+      next = { ...next, maxHp: ceiling, hp: Math.min(next.hp, ceiling) };
+    }
+    // 空心齿：当前生命减半，减掉的那一半加到上限上。取整向上——留下的那半至少有一口。
+    if (effect.halveIntoMaxHp) {
+      const before = next.hp;
+      const kept = Math.ceil(before / 2);
+      next = { ...next, hp: kept, maxHp: next.maxHp + (before - kept) };
+    }
+    // ⚠️ 回血封顶跟 `maxHp` 走（`finishBattle` 那条注释说的是同一件事）。
+    if (effect.heal) next = { ...next, hp: Math.min(next.maxHp, next.hp + effect.heal) };
+    // ⚠️ **道具不会杀死你**：这是 run 层，扣到 0 就钳在 1。奇遇那条「事件不能是杀死玩家的东西」
+    // 是同一个理由——一件道具用出一次死亡，是 bug 不是难度。
+    if (effect.loseHp) next = { ...next, hp: Math.max(1, next.hp - effect.loseHp) };
+    if (effect.gold) next = { ...next, gold: Math.max(0, next.gold + effect.gold) };
+    if (effect.eatRelic) next = discardRelic(next, 'main');
+    // 陪葬钱：照 `finishBattle` 发遗物的那条路走（`drawDue` + `nextSlot`，由塔上的分派器
+    // 去掷那一手）。`drawDue` 在这一层只是个「哪来的」的字符串。
+    if (effect.gainRelic) next = { ...next, drawDue: def.id, nextSlot: 'main' };
+    if (effect.gainCard) next = gainTypedCard(next, effect.gainCard, def.name);
+  }
+  if (wantsTask(def.id, effect, half)) next = { ...next, cardTask: effect.task };
+
+  // 次数最后扣，而且**扣在返回的那一份上**：中途任何一处 `return run` 都不会白花一次。
+  const left = afterUse(entry.uses);
+  const slots = propSlots(next).map(slotValue => (slotValue ? { ...slotValue } : null));
+  slots[slot] = left > 0 ? { ...entry, uses: left } : null;
+  return { ...next, props: slots };
+}
+
+/**
+ * 从本牌组随机加一张，**并且摆出来**。
+ *
+ * 摆出来是关键：不摆的话玩家读到的只有一句「获得一张本牌组的稀有牌」，而那一张是什么永远看不到
+ * ——和「一捆牌」当初一模一样的问题，见 `gainCards` 上的说明。
+ *
+ * `rare` 取的是**本牌组现有池子里最高的那一档**（`TIERS` 的 `rank`），不是写死 `starfall`：
+ * 第一章解锁的牌里根本没有星陨，写死它等于这件道具什么都不给。
+ */
+function gainTypedCard(run: ChapterRun, want: 'rare' | 'any', from: string): ChapterRun {
+  const pool = rewardCardPool(run.main, run.sub);
+  if (!pool.length) return run;
+  const chosen = want === 'rare' ? topTier(pool) : pool;
+  const next = { ...run };
+  const cardId = chosen[Math.floor(nextRandom(next) * chosen.length)];
+  if (!cardId) return run;
+  return { ...next, deck: [...next.deck, { cardId }], cardReveal: { gained: [{ cardId }], from } };
+}
+
+/** 池子里稀有度最高的那一档。牌表里的每一张都有档位，查不到的一律按最低算。 */
+function topTier(pool: string[]): string[] {
+  const rank = (id: string) => {
+    const tier = CARD_BY_ID.get(id)?.tier;
+    return (tier && TIER_BY_ID.get(tier)?.rank) ?? 0;
+  };
+  const best = Math.max(...pool.map(rank));
+  return pool.filter(id => rank(id) === best);
+}
+
 /** The fight the run is on, or `undefined` once the chapter is done. */
 export function currentEncounter(run: ChapterRun): Encounter | undefined {
   return RUN_ENCOUNTERS.find(entry => !run.cleared.includes(entry.id));
@@ -863,6 +1199,24 @@ export interface BattleOutcome {
    * the log line that announced it is two screens back by then.
    */
   brokenRelics: string[];
+  /**
+   * 这一场用掉了什么，一格一条。
+   *
+   * ⚠️ **方向和 `brokenRelics` 正好相反。** 那个是战斗在 `marks` 上留记号、run 照它摘遗物；道具反过来
+   * ——**战斗里的 `props` 是真相**（`useProp` 就地扣次数），run 只是把它抄回货架，这里是两者的差额。
+   * 一个「用了两次窥管」的结果面板，理由和 `brokenRelics` 一样：用完的东西要当场说出来，
+   * 而战斗日志到那时已经翻过去两屏了。
+   */
+  spentProps: { id: string; used: number; left: number }[];
+  /**
+   * 这一场胜利掉了一件道具——**id 在这里定，放进哪一格是玩家的动作**（`placeProp`）。
+   *
+   * ⚠️ **不能写成 `run.propTask`。** 战果面板在塔上的分派顺序里排在 `propTask` 那些屏**之后**，
+   * 所以 `finishBattle` 一挂上 `propTask`，塔上的分派器就会先渲染放道具屏——玩家连「这仗打赢了」
+   * 都看不到。掉落面板因此把 id 带在结果里，由结果面板自己渲染那三个格子。
+   * `propTask` 只服务塔上的拾取（宝箱 / 奇遇）。
+   */
+  propDrop?: string;
   /** True when this victory beat the chapter's last encounter. */
   chapterCleared: boolean;
 }
@@ -895,13 +1249,17 @@ function goldFor(run: ChapterRun, state: BattleState, encounterId: string): { ru
  * rest of this module is built on.
  */
 export function finishBattle(run: ChapterRun, state: BattleState): BattleOutcome {
-  // A defeat hands the run back untouched — including its relics, so nothing was broken by it.
-  const nothing = { heal: 0, healed: 0, gold: 0, chapterCleared: false, brokenRelics: [] };
+  // A defeat hands the run back untouched — including its relics and its props, so nothing was broken
+  // and nothing was spent by it. ⚠️ `spentProps` has to be here as well as on a victory: the panel
+  // reads it on both paths, and a missing field is a crash rather than a zero.
+  const nothing = { heal: 0, healed: 0, gold: 0, chapterCleared: false, brokenRelics: [], spentProps: [] };
   if (state.phase !== 'won') return { run, won: false, ...nothing };
   // No linear guard any more: which fights are legal is the *map's* business now, and the map
   // already refused the step before the battle started. `cleared` is de-duplicated instead, so a
   // fight reached from two different routes cannot be counted twice.
-  if (run.cleared.includes(state.encounterId)) return { run, won: true, ...nothing };
+  // 重复的胜仗不改 run，但**免死这一件例外**：这一场里如果那条命被用掉了，它就在这一场用掉了，
+  // 和「这场仗给不给奖励」无关。见 `settleWard`。
+  if (run.cleared.includes(state.encounterId)) return { run: settleWard(run, state), won: true, ...nothing };
 
   const { run: rolled, heal } = healRoll(run);
   const paid = goldFor(rolled, state, state.encounterId);
@@ -928,8 +1286,57 @@ export function finishBattle(run: ChapterRun, state: BattleState): BattleOutcome
   const graded = earnsRelic(state.encounterId) || guaranteed;
   const sub = graded ? rollSubSlot(paid.run) : { run: paid.run, opens: false };
 
+  /**
+   * 道具掉落。
+   *
+   * ⚠️ **掷点追加在既有的三个之后**（`healRoll` → `goldFor` → `rollSubSlot`）。插在中间会把每一个
+   * 既有种子的回血、金币和「开副槽」全部推移一格——`run.test.ts` 那条「同一条 run 重放两次完全
+   * 相同」当场变红，而真正的代价是**所有玩家存档里那条流都对不上了**。
+   *
+   * 概率模型见 `ChapterRun.propLuck`：存的是数（基础 35，没掉 +12、掉了 −15，钳在 [5,75]），
+   * 遭遇池再叠一档（弱 0 / 强 8 / 精英 25 / 首领 40），合成出来的这一次也钳一次。
+   *
+   * 保底和遗物那条同构，只是一行更早（`FIRST_PROP_ROW`）：判据是 run 自己的标记，**不是
+   * 「props 是否为空」**——用后者的话，把三件不喜欢的丢掉就能再刷一轮。
+   */
+  const dropRoll = (() => {
+    const next = { ...sub.run };
+    const roll = nextRandom(next);
+    const pool = ALL_ENCOUNTERS.find(entry => entry.id === state.encounterId)?.pool ?? 'weak';
+    const luck = clampLuck(sub.run.propLuck ?? PROP_LUCK_BASE);
+    const chance = clampLuck(luck + (PROP_DROP_BONUS[pool] ?? 0));
+    const owed = !run.propGranted && (nodeAt(run)?.row ?? 0) >= FIRST_PROP_ROW;
+    const picked = roll * 100 < chance || owed
+      ? rollProp(BATTLE_PROP_POOL, () => nextRandom(next)) : undefined;
+    // 概率跟着**实际掉没掉**走，不是跟着掷点走：保底补上的那一件也是一次掉落。
+    return { run: next, drop: picked, luck: clampLuck(luck + (picked ? PROP_LUCK_HIT : PROP_LUCK_MISS)) };
+  })();
+
+  /**
+   * 道具的结算：**采纳，不是撤销**。
+   *
+   * ⚠️ 方向和 `brokenRelics` 正好相反。遗物那边是战斗在 `marks` 上留一串 `broken:<id>` 记号、run
+   * 照着把遗物摘掉；道具反过来——`useProp` 已经把次数**就地扣在 `state.props` 上了**，所以战斗里那
+   * 一份才是真相，run 只是把它抄回自己的货架。`spentProps` 是两者的差额，给结果面板读。
+   *
+   * ⚠️ **`state.props` 缺失时回退成 `run.props`**，绝不能写成 `undefined`：`props` 是后加的字段，
+   * 一份早先写下的战斗存档里没有它，而一次「误采纳」会让玩家整包道具凭空消失。
+   */
+  const carried = (state.props && validProps(state.props) ? state.props : propSlots(run))
+    .map(entry => (entry ? { ...entry } : null));
+  const spentProps = propSlots(run).flatMap((before, slot) => {
+    if (!before) return [];
+    const after = carried[slot];
+    // 同一格换了另一件（未拆的信把这一格换成了别的东西）：那一件是**用掉**了，而新来的那件不算
+    // 「用掉」。`after` 为 `null` 是「用完最后一次」，走的是下面同一条路。
+    const same = after?.id === before.id;
+    const left = same ? after!.uses : 0;
+    const used = before.uses - left;
+    return used > 0 ? [{ id: before.id, used, left }] : [];
+  });
+
   const next: ChapterRun = {
-    ...sub.run,
+    ...dropRoll.run,
     hp,
     gold: sub.run.gold + paid.gold,
     // Appended once, ever. A pool can deal a fight the run has already won — `encounterFor` makes
@@ -947,6 +1354,13 @@ export function finishBattle(run: ChapterRun, state: BattleState): BattleOutcome
     // Every victory offers a card, graded or not — that is the whole way a deck grows. The relic is
     // what the graded fights add on top.
     rewardDue: state.encounterId,
+    // 战斗里的那一包是真相，这里把它抄回货架。见上面 `spentProps` 的说明。
+    props: carried,
+    // 掉出来的那一件**不写进 `props`**：放进哪一格是玩家的动作（`placeProp`），掉落面板拿着
+    // `propDrop` 去渲染那三个格子。这里只把概率的账记下。
+    propLuck: dropRoll.luck,
+    // 记一次就够，而且是**真的拿到过**才记：兜底读它，所以记早了会把托底吃掉。
+    propGranted: (!!dropRoll.drop) || run.propGranted || undefined,
   };
   /**
    * 血云雾霭之卷 在战斗里烧掉了自己。
@@ -973,14 +1387,273 @@ export function finishBattle(run: ChapterRun, state: BattleState): BattleOutcome
   const survivingRefined = broken.length
     ? Object.fromEntries(Object.entries(next.refined ?? {}).filter(([id]) => !broken.includes(id)))
     : next.refined;
-  const settled: ChapterRun = { ...next, relics: survivingRelics, refined: survivingRefined };
+  // 商店买的那条命：战斗把它用掉之后在这里结账。见 `settleWard`。
+  const settled: ChapterRun = settleWard(
+    { ...next, relics: survivingRelics, refined: survivingRefined }, state,
+  );
 
   return {
     run: settled, won: true, heal,
     healed: hp - state.player.hp, gold: paid.gold,
     brokenRelics: broken,
+    spentProps,
+    propDrop: dropRoll.drop?.id,
     chapterCleared: isChapterCleared(settled),
   };
+}
+
+// ------------------------------------------------------------------ 商店
+
+/**
+ * 这一家店的掷点流。
+ *
+ * ⚠️ **和 `nextRandom(run)` 那条流完全分开，这一点是架构不是洁癖。** `run.rng` 是 run 唯一的掷点
+ * 序列：回血、金币、「开副槽」、道具掉落、淬炼的成算全排在它上面。往里面插一次商店掷点，会把
+ * **每一个既有种子的回血和金币整体推移一格**——`run.test.ts` 那条「同一条 run 重放两次完全相同」
+ * 当场变红，而真正的代价是所有玩家存档里那条流都对不上了。见 `finishBattle` 里 `dropRoll` 上同一
+ * 段说明。商店的掷点因此**只**是 `run.seed` 与节点 id 的函数，`run.rng` 一格都不动。
+ */
+function shopStream(run: ChapterRun, salt: number) {
+  let state = (Math.imul(run.seed >>> 0, 0x9e3779b1)
+    ^ hashText(run.at ?? '')
+    ^ Math.imul(salt + 1, 0x85ebca6b)) >>> 0;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+/** FNV-1a——和 `events.ts` 的 `eventForNode` 同一个哈希。用节点 id 把两家店分开。 */
+function hashText(text: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * 掷这一家店的货架。**进入商店节点时调一次。**
+ *
+ * `enterNode` 已经替调用方调过了，所以界面那条路（照宝箱的 `enterFloor`）再调一次是**空操作**——
+ * 这正是想要的：重绘、重载、或者界面多调一次，摆出来的都还是那五格。`rerolls` 归零，因为「刷新了
+ * 几次」是这一家店的事。
+ *
+ * 不在 `MapNode` 上预掷：地图不进存档、由种子重建，把货架挂在节点上等于让「卖什么」跟着地图走，
+ * 而地图会被下一次生成器改动换掉。和「节点上没有 `encounterId`」是同一条规矩。
+ */
+export function rollShop(run: ChapterRun): ChapterRun {
+  const node = nodeAt(run);
+  if (!node || node.kind !== 'shop') return run;
+  if (run.shop) return run;
+  return { ...run, shop: { slots: rollShopSlots(run, shopStream(run, 0)), rerolls: 0 } };
+}
+
+/**
+ * 换一批货。钱不够、或者五格全卖光了，**原样返回同一个对象**——界面靠 `next === run` 判断要不要
+ * 播刷新音效，所以这里不能返回一个「内容一样的新对象」。
+ *
+ * 卖掉的那几格**不重掷**（它们本来就是空的），而「保底一格道具」和「一格五折」只在还摆着货的格子
+ * 里挑——否则刷完一次可能看不出任何变化。
+ */
+export function rerollShop(run: ChapterRun): ChapterRun {
+  const shop = run.shop;
+  if (!shop || !shop.slots.some(slot => !slot.sold)) return run;
+  const paid = spendGold(run, shopRerollCost(run));
+  if (!paid) return run;
+  const sold = shop.slots.flatMap((slot, index) => (slot.sold ? [index] : []));
+  const fresh = rollShopSlots(run, shopStream(run, shop.rerolls + 1), sold);
+  const slots = fresh.map((slot, index) => (shop.slots[index]?.sold ? shop.slots[index] : slot));
+  return { ...paid, shop: { ...shop, slots, rerolls: shop.rerolls + 1 } };
+}
+
+/**
+ * 买下来的东西**放得下吗**。
+ *
+ * 三样东西都要一个「玩家还没答完的决定」才能落地，而那个决定同时只能有一个：道具走 `propTask`
+ * （放进哪一格），卡牌走 `cardReveal`（买下来的牌得看得见），遗物走 `pendingDraw`（放进哪个槽）。
+ * 上一件还没答完就再买一件，第二件会把第一件**顶掉**——玩家付了两次钱，只拿到一件。
+ *
+ * ⚠️ 判据放在**收钱之前**。这不是「界面该把按钮置灰」的礼貌，是规则本身：`buyShopSlot` 是可以被
+ * 直接调的，而「收钱不发货」是一种比「买不起」更坏的失败。
+ */
+function canDeliver(run: ChapterRun, slot: ShopSlot): boolean {
+  if (slot.kind === 'prop') return !run.propTask;
+  if (slot.kind === 'card') return !run.cardReveal && !run.cardTask;
+  if (slot.kind === 'relic') return !run.pendingDraw;
+  return true;   // 属性与免死当场落到 run 上，不需要第二个决定
+}
+
+/** 把买到的那件东西落到 run 上。钱已经付过了，所以这里不允许失败。 */
+function deliver(run: ChapterRun, slot: ShopSlot): ChapterRun {
+  switch (slot.kind) {
+    // 和宝箱、奇遇同一条路：停在「还没放下」上等玩家回答（`placeProp`）。
+    case 'prop': return { ...run, propTask: { id: slot.id!, from: '商店' } };
+    // ⚠️ **一定要摆出来。** 项目里有一条规矩：一张悄悄进牌库的牌，玩家从来看不见它——「一捆牌」
+    // 和「换一张」都是为这件事才加了 `cardReveal`。买来的牌更该看得见，因为它是花钱买的。
+    case 'card':
+      return { ...addCard(run, slot.id!), cardReveal: { gained: [{ cardId: slot.id! }], from: '商店' } };
+    // 和一次遗物抽取共用同一个状态、同一个入口（`claimRelic`），所以「放进哪个槽」这个决定不需要
+    // 另写一套。`options` 只有一件——它不是三选一，是「你买的那一件，放哪」。
+    case 'relic': return { ...run, pendingDraw: { options: [slot.id!], slot: 'main', from: '商店' } };
+    case 'stat': {
+      const good = STAT_GOODS.find(entry => entry.id === slot.id) ?? STAT_GOODS[0];
+      if (good.effect.maxHp) {
+        // 抬高上限时按同样的数额补血——`claimReward` 的 `maxHp` 分支是同一条算法，理由也一样：
+        // 一条玩家感觉不到的血条不是奖励，是一个数。
+        const amount = good.effect.maxHp;
+        return { ...run, maxHp: run.maxHp + amount, hp: run.hp + amount };
+      }
+      // ⚠️ 回血封顶跟 `maxHp` 走，**不是 `PLAYER_MAX_HP`**（`claimReward` 那条注释说的是同一件事）。
+      return { ...run, hp: Math.min(run.maxHp, run.hp + (good.effect.heal ?? 0)) };
+    }
+    case 'life': return { ...run, warded: true };
+  }
+}
+
+/**
+ * 买一格。
+ *
+ * 三种付款方式走同一条路：**先判交付、再收钱、最后落货**。买不起、已经卖掉、下标越界、遗物不够值、
+ * 交付不出去——五种失败一律 `return run`（**同一个对象引用**），界面据此什么都不做。
+ *
+ * `relicSlot` 是「拿哪一格的遗物去换」，只有 `with === 'relic'` 时才有意义。换走的那件**连带清掉它的
+ * 淬炼**（`discardRelic` 就是为这件事写的，`refined` 按 id 键）；而**不把副遗物顶上来**——哪一格是
+ * 空的，是玩家看得见的状态。
+ */
+export function buyShopSlot(
+  run: ChapterRun, index: number, payWith: PayWith, relicSlot?: 'main' | 'sub',
+): ChapterRun {
+  const shop = run.shop;
+  const slot = shop?.slots[index];
+  if (!shop || !slot || slot.sold) return run;
+  if (!canPayWith(run, index, payWith)) return run;
+  if (!canDeliver(run, slot)) return run;
+
+  let paid: ChapterRun;
+  if (payWith === 'gold') {
+    const spent = spendGold(run, slot.price);
+    if (!spent) return run;
+    paid = spent;
+  } else if (payWith === 'hp') {
+    // `canPayWith` 已经保证付完剩 ≥1 点（判的是 `>`，照 `events.ts` 的 `canAfford`）。
+    paid = { ...run, hp: run.hp - slot.hpPrice };
+  } else {
+    if (relicSlot !== 'main' && relicSlot !== 'sub') return run;
+    const id = run.relics[relicSlot];
+    if (!id || relicValueOf(id) < slot.relicPrice) return run;
+    const dropped = discardRelic(run, relicSlot);
+    if (dropped === run) return run;
+    paid = dropped;
+  }
+
+  const delivered = deliver(paid, slot);
+  return {
+    ...delivered,
+    shop: {
+      ...shop,
+      slots: shop.slots.map((entry, at) => (at === index ? { ...entry, sold: true } : entry)),
+      // 免死买下来时在货架上也留个印子：界面拿它说「这家已经卖给你一条命了」。
+      ...(slot.kind === 'life' ? { warded: true } : {}),
+    },
+  };
+}
+
+/**
+ * 结束这一层。
+ *
+ * ⚠️ **买了一件道具还没放下时不放人。** 放道具屏是 `propTask` 唯一的出口（`BattleDemo` 的分派顺序
+ * 里没有它——塔上的宝箱与奇遇也停在同一个状态上），走了这一件就永远留在 `propTask` 里了。界面可以
+ * 用 `shopPending` 先把「离开」置灰，但规则在这里：`leaveShop` 不是可以被绕过的一层皮。
+ *
+ * 遗物那件**不拦**：`pendingDraw` 在塔上有自己的屏（`BattleDemo` 的遗物抽取浮层），离开商店之后它
+ * 会照常弹出来。
+ */
+export function leaveShop(run: ChapterRun): ChapterRun {
+  if (run.propTask) return run;
+  return { ...run, resolved: run.at };
+}
+
+/** 买了东西还没落地（`leaveShop` 会因此拒绝）。界面用它把「离开」置灰。 */
+export function shopPending(run: ChapterRun): boolean {
+  return !!run.propTask;
+}
+
+/** 路上已经走过几家店（不含脚下这一家）。删牌价按它递增。 */
+function shopsVisited(run: ChapterRun): number {
+  return run.path.filter(id => id !== run.at && run.map.byId.get(id)?.kind === 'shop').length;
+}
+
+/** 删牌服务现在要多少钱：75 / 100 / 125…（跨商店递增，照杀戮尖塔）。 */
+export function shopRemoveCost(run: ChapterRun): number {
+  return removePrice(shopsVisited(run));
+}
+
+/**
+ * 买这一次删牌。
+ *
+ * 走 `cardTask: 'remove'`——**复用现成的选牌器**，一行新界面都不用写。选牌器在战斗页的分派顺序里
+ * 排在楼层屏**之前**，所以选完牌回来，脚下还是这家店（`resolved` 还没设）。
+ */
+export function buyRemoveService(run: ChapterRun): ChapterRun {
+  const shop = run.shop;
+  if (!shop || shop.removed) return run;
+  if (run.cardTask) return run;
+  const paid = spendGold(run, shopRemoveCost(run));
+  if (!paid) return run;
+  return { ...paid, cardTask: 'remove', shop: { ...shop, removed: true } };
+}
+
+/**
+ * 商店买的那条命，进战斗时要带的记号。
+ *
+ * ⚠️ **我没有改 `engine.ts`，这条接缝留给 `BattleDemo` 的作者。** 已经确认过：`StartOptions` 上
+ * **没有**任何通道能把一个记号带进战斗（它的字段只有 `hp` / `maxHp` / `sub` / `relics` / `refined`
+ * / `props` / `cards`），而 `startBattle` 里 `marks` 是写死的 `{}`。项目里另外**两个**「下一次致死
+ * 伤害留 1 点」——道具「残烛」（`PropContext.deathWard` 写下 `marks['prop:deathWard'] = 1`）和遗物
+ * `lethalSave`（铁面具）——都是**战斗内部**获得的，所以这条通道从来不需要存在。
+ *
+ * 要接上，`engine.ts` 动两行：
+ *
+ * ```ts
+ * // 1) `StartOptions` 加一项
+ * export interface StartOptions {
+ *   ...
+ *   // 战斗开始时就带在身上的记号。见 `BattleState.marks`。
+ *   marks?: Record<string, number>;
+ * }
+ *
+ * // 2) `startBattle` 里把 `marks: {},` 换成
+ * marks: opts.marks ? { ...opts.marks } : {},
+ * ```
+ *
+ * 然后 `BattleDemo` 里 `beginFight` 递给 `startBattle` 的 `opts` 多一项：
+ * `marks: run.warded ? wardMark() : undefined`。
+ *
+ * **引擎一行判定都不用新写**：`damagePlayer` 里那段 `s.marks?.['prop:deathWard']` 会自己认它
+ * （顺序上排在铁面具之后、和残烛同一档——商店买的和道具买的本来就是同一条命），用完把它置 0，
+ * 而 `finishBattle` 照着把 `run.warded` 清掉（见 `settleWard`）。
+ *
+ * 在这两行接上之前，买了免死的表现是：货架上那格卖掉了、`run.warded` 亮着，而战斗里什么都不发生。
+ */
+export function wardMark(): Record<string, number> {
+  return { 'prop:deathWard': 1 };
+}
+
+/**
+ * 那条命这一场用掉了吗。
+ *
+ * 判据是战斗把记号**置成了 0**（`damagePlayer` 里那一行）。没带记号进战斗时 `marks` 里根本没有
+ * 这个键，读出来是 `undefined`，于是这里不会误清——所以免死接上引擎之前，这段是空转的，而不是把
+ * 玩家花钱买的东西悄悄吃掉。
+ *
+ * 顺带说明「和残烛共用一格」的后果：一场里既带了残烛又买了命，用完的是**同一条**，两件都算用掉。
+ * 这是刻意的——商店卖的本来就不是第二条命，是同一件事的第三个来源。
+ */
+function settleWard(run: ChapterRun, state: BattleState): ChapterRun {
+  if (!run.warded || state.marks?.['prop:deathWard'] !== 0) return run;
+  return { ...run, warded: undefined };
 }
 
 // ------------------------------------------------------------------ validation
@@ -1005,7 +1678,15 @@ export function isValidRun(value: unknown): value is ChapterRun {
   if (run.chapterId !== CHAPTER_1.id) return false;
   if (!DECK_IDS.includes(run.main) || !DECK_IDS.includes(run.sub)) return false;
   if (!isDeckUnlocked(run.main) || !isDeckUnlocked(run.sub)) return false;
-  if (!Number.isInteger(run.maxHp) || run.maxHp < PLAYER_MAX_HP) return false;
+  /**
+   * 生命上限：**只要求是正整数**。
+   *
+   * 它原来钉着 `>= PLAYER_MAX_HP`（「60 是所有常数调过的基准」），那条现在是**战斗**的不变量
+   * （`isValidBattle` 还钉着，`startBattle` 进战斗时也会把上限抬回基准值）。**run 的上限可以被压低**
+   * ——夜祷书印着「生命上限 −10」，拒绝一份压低了上限的存档，等于玩家用一次道具、刷新一下整局没了。
+   * 底线只有一条：不低于 1（上限 0 的 run 永远回不了血）。
+   */
+  if (!Number.isInteger(run.maxHp) || run.maxHp < 1) return false;
   if (!Number.isInteger(run.hp) || run.hp < 0 || run.hp > run.maxHp) return false;
   if (!Number.isInteger(run.gold) || run.gold < 0) return false;
 
@@ -1048,6 +1729,45 @@ export function isValidRun(value: unknown): value is ChapterRun {
       if (run.relics.main !== id && run.relics.sub !== id) return false;
     }
   }
+  /**
+   * 道具. 三个槽的形状**直接复用引擎导出的 `validProps`**——两边逐字段相同（都来自
+   * `src/props/props.ts`），抄第二遍必然会漂。它管的是：长度是不是三格、id 在不在表上、
+   * `uses` 是不是 1..charges（`uses: 0` 的槽位本该是 `null`）。
+   *
+   * ⚠️ **这里故意没有「道具不能重复」那一条**：两格带同一件是合法的（消耗品就该能带两个）。
+   * 遗物那条 `main === sub` 拒的是同一件东西占两个**语义不同**的槽，不能照抄过来。
+   */
+  if (run.props !== undefined && !validProps(run.props)) return false;
+  /**
+   * 一件捡到还没放下的道具。
+   *
+   * ⚠️ **id 必须真的存在**：它下一步就被写进槽位（`placeProp`），而一个不存在的 id 会让下一次
+   * 加载把整局丢掉——`validProps` 拒它，`loadRun` 丢 run。
+   */
+  if (run.propTask !== undefined) {
+    const task = run.propTask;
+    if (!task || typeof task !== 'object') return false;
+    if (typeof task.id !== 'string' || !PROP_BY_ID.has(task.id)) return false;
+    if (typeof task.from !== 'string') return false;
+  }
+  /**
+   * 掉落概率。**必须是 [0,100] 的整数**：不是整数的时候 `roll * 100 < luck` 恒为假，
+   * 于是掉落静默地再也不发生——一份手改过的存档会让这个玩家永远抽不到道具，而没有任何报错。
+   */
+  if (run.propLuck !== undefined
+    && (!Number.isInteger(run.propLuck) || run.propLuck < 0 || run.propLuck > 100)) return false;
+  if (run.propGranted !== undefined && typeof run.propGranted !== 'boolean') return false;
+  /**
+   * 商店的货架。**optional + 只在存在时校验**，和 `props` / `propTask` / `propLuck` 同一个先例：
+   * 老存档里没有这个字段，而 `loadRun` 对不合格的存档是**整局丢掉**而不是修复。
+   *
+   * `isValidShop` 管形状：五格、三种价钱都是非负整数、每一格的 `id` 在它那一类的表里真的存在。
+   * 最后那条是重点——`id` 下一步就被写进牌库 / 道具槽 / 遗物槽，一个不存在的 id 会让**下一次加载
+   * 把整局丢掉**。
+   */
+  if (run.shop !== undefined && !isValidShop(run.shop)) return false;
+  /** 商店买来的那条命。见 `ChapterRun.warded` 与 `settleWard`。 */
+  if (run.warded !== undefined && typeof run.warded !== 'boolean') return false;
   if (run.pendingDraw !== undefined) {
     const draw = run.pendingDraw;
     if (!draw || !Array.isArray(draw.options) || !draw.options.length) return false;
