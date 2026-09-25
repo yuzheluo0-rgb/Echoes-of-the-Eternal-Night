@@ -39,8 +39,9 @@ import { chapterDeck, isDeckUnlocked } from './chapter.ts';
 import { RELIC_BY_ID } from '../relics/relics.ts';
 import { EMPTY_POWERS, effectFor, type BattlePowers, type EffectContext } from './effects.ts';
 import {
-  effectsFor, readModifier,
-  type RelicContext, type RelicFlag, type RelicModifierKey, type RelicSlot, type RelicTrigger,
+  effectsFor, readModifier, refinedPair, refineSteps,
+  type RefineTier, type RelicContext, type RelicFlag, type RelicModifierKey, type RelicSlot,
+  type RelicTrigger,
 } from './relics.ts';
 import { upgradeFor, type Upgrade } from './upgrades.ts';
 import {
@@ -133,6 +134,14 @@ export interface BattleState {
    * in `./relics.ts` the same way card behaviour is looked up in `./effects.ts`.
    */
   relics?: { main?: string; sub?: string };
+  /**
+   * Which relics have been **淬炼**, and how far. Keyed by relic id rather than by slot.
+   *
+   * Keyed by id because the refinement belongs to the *thing*, not to the shelf it is standing on:
+   * `swapRelics` moves a relic between 主/副 and a slot-keyed map would have to remember to move the
+   * refinement with it, which is one more place to get out of step for no gain.
+   */
+  refined?: Record<string, RefineTier>;
   /** Battle-scoped scratch space for relics: 「每场只生效三次」 and friends. Cleared with the battle. */
   marks?: Record<string, number>;
   /** Attack hits landed this battle, for 铁钉's 「每第 3 次命中」. */
@@ -425,10 +434,21 @@ const RELIC_SLOTS: RelicSlot[] = ['main', 'sub'];
  */
 function relicContext(s: BattleState, slot: RelicSlot, extra: Partial<RelicContext> = {}): RelicContext {
   const relicId = s.relics?.[slot];
+  const refine = relicId ? s.refined?.[relicId] : undefined;
+  const steps = refineSteps(refine);
+  // Pick the slot's number, then bump it. Every relic that writes a `[main, sub]` pair gets 淬炼 for
+  // free through here — see `refinedPair`, which is the same arithmetic and is what the tests assert.
+  const climbed = (main: number, sub: number) => {
+    const [m, u] = refinedPair(main, sub, refine);
+    return slot === 'main' ? m : u;
+  };
   return {
     slot,
-    v: (main, sub) => (slot === 'main' ? main : sub),
+    refine,
+    v: climbed,
     main: slot === 'main',
+    n: base => base + steps,
+    steps,
     turn: s.turn,
     hpFraction: s.player.maxHp ? s.player.hp / s.player.maxHp : 0,
     player: s.player,
@@ -1287,6 +1307,8 @@ export interface StartOptions {
   sub?: DeckId;
   /** The relics the run is carrying. See `BattleState.relics`. */
   relics?: { main?: string; sub?: string };
+  /** Which of them have been 淬炼, and how far. See `BattleState.refined`. */
+  refined?: Record<string, RefineTier>;
   /**
    * The run's own deck, if it has been edited. Absent means "deal the chapter's starting pile for
    * `deck`", which is what every caller did before a run could add, burn or polish a card.
@@ -1337,6 +1359,7 @@ export function startBattle(encounterId: string, deck: DeckId, seed = 7, opts: S
     turn: 0,
     phase: 'player',
     relics: opts.relics,
+    refined: opts.refined,
     marks: {},
     hits: 0,
     costMarks: {},

@@ -17,7 +17,11 @@ import {
   startBattle as startBattleRaw,
   startBattle, type BattleState,
 } from './engine.ts';
-import { IMPLEMENTED_RELICS, RELIC_EFFECTS } from './relics.ts';
+import {
+  IMPLEMENTED_RELICS, RELIC_EFFECTS, refinedPair, refineSteps,
+  type RefineTier, type RelicSlot,
+} from './relics.ts';
+import { STATUS_GOOD, type StatusId } from './types.ts';
 import { DRAW_OPTIONS, RELIC_PRICE, drawRelics, offerRelics, opensSubSlot } from './relicDraw.ts';
 import {
   canEnter, claimRelic, discardRelic, earnsRelic, finishBattle, isValidRun as isValidRunForTest,
@@ -52,13 +56,31 @@ test('凡第一章能抽到的遗物，必有实现', () => {
  * visible, enemies that actually die. Anything a relic does — a status, a block, a number of cards
  * drawn, a shift in a cost, damage that lands differently — ends up somewhere in here.
  */
-function fingerprint(relicId: string | undefined, useSlot: 'main' | 'sub' = 'main') {
+function fingerprint(
+  relicId: string | undefined, useSlot: 'main' | 'sub' = 'main', refine?: RefineTier,
+) {
   const relics = relicId ? { [useSlot]: relicId } : undefined;
+  const refined = relicId && refine ? { [relicId]: refine } : undefined;
   // Started hurt, so 熄芯's 「生命低于一半」 is live from turn one rather than never.
-  let s = startBattle('ch1-2', 'blade', 9, { hp: 26, relics });
+  let s = startBattle('ch1-2', 'blade', 9, { hp: 26, relics, refined });
   const seen: string[] = [];
   const snapshots: unknown[] = [];
+  /**
+   * Total 生命 taken off the enemies, counted after **every card played** rather than at the end.
+   *
+   * Without this the fingerprint only sees outcomes, and an outcome is the wrong unit for the damage
+   * relics: 铁钉's +1 per hit frequently does not change *which turn* 萤火树洞's little enemies die
+   * on, so 未淬炼 and 大强化 produced byte-identical fingerprints and 淬炼 looked broken when it was
+   * not. Damage is the quantity these relics actually change, so damage is what gets recorded.
+   */
+  let dealt = 0;
+  const enemyHp = () => s.enemies.reduce((sum, enemy) => sum + Math.max(0, enemy.hp), 0);
   for (let turn = 0; turn < 6 && s.phase === 'player'; turn++) {
+    // Every card in hand with its cost **as it stands right now**, recorded whether or not the script
+    // goes on to play it. The cost relics are the reason: 引火 already discounts the first card of a
+    // turn, so 断齿梳's extra point lands on a card that is already free and the clamp at zero eats it
+    // — the discount is real and invisible at the same time. Reading the hand reads the discount.
+    seen.push(...s.hand.map(entry => `hand:${entry.cardId}@${cardCostNow(s, entry.cardId, entry.uid)}`));
     // A fixed opening order each turn: cheapest attack, then a skill, then a *2-cost* card. The
     // expensive one matters — 雷击木 deepens 引火, and on a 1-cost card both land on the floor of
     // zero and the relic looks like it does nothing.
@@ -75,18 +97,28 @@ function fingerprint(relicId: string | undefined, useSlot: 'main' | 'sub' = 'mai
       if (!card) continue;
       playedThisTurn += 1;
       seen.push(`${cardId}@${cardCostNow(s, card.cardId, card.uid)}`);
+      const before = enemyHp();
       s = playCard(s, card.uid, livingEnemies(s)[0]?.uid);
+      dealt += Math.max(0, before - enemyHp());
+      // Read the hand again **after** the play, which is the only moment 铁匠锤 and 断齿梳 are legible:
+      // 引火 has expired for the turn by now, so the cost they change is no longer sharing a clamp with
+      // it. Reading only at the top of the turn is how three working relics got reported as broken.
+      seen.push(...s.hand.map(entry => `hand:${entry.cardId}@${cardCostNow(s, entry.cardId, entry.uid)}`));
       if (s.phase !== 'player') break;
     }
     if (s.phase !== 'player') break;
-    seen.push(...s.log.filter(line => line.text.includes('遗物') || line.text.includes('获得')).map(line => line.text));
+    // **Every** line, not only the ones that mention a relic. A damage relic's extra point is usually
+    // *overkill* on this encounter — 萤火树洞's 萤火 has 8 生命 and dies to the first swing at every
+    // tier — so the number never reaches the final state and the only place it survives is the log.
+    // An outcome-only fingerprint called 淬炼 broken on eleven relics that were working perfectly.
+    seen.push(...s.log.map(line => line.text));
     // Turn one is snapshotted on its own: 缺口碗's 反震 is wiped by the *next* turn's `beginTurn`, so
     // by the end of the fight it has left no trace in the final state.
     if (turn === 0) snapshots.push(s.player.statuses, s.player.block, s.powers, s.costMarks, s.hand.length);
     s = endTurn(s);
   }
   return JSON.stringify([
-    seen, snapshots,
+    seen, snapshots, dealt,
     s.player.hp, s.player.block, s.player.statuses, s.powers,
     s.turn, s.phase, s.costMarks,
     s.enemies.map(enemy => [enemy.hp, enemy.maxHp, enemy.statuses]),
@@ -137,6 +169,170 @@ test('副槽也真的有效果，而不是只在主槽里写着', () => {
     .filter(relic => fingerprint(relic.id, 'sub') === baseline && !NOT_VISIBLE_IN_ONE_BATTLE[relic.id])
     .map(relic => `${relic.id}（${relic.name}）`);
   assert.deepEqual(unexplained, [], '这些遗物放进副槽之后什么都不做');
+});
+
+// ------------------------------------------------------------ 淬炼
+
+/**
+ * Everything a relic hands the engine, as one signed total: **positive means it helped the player**.
+ *
+ * This runs the relic's **own handlers** against a recording context at a given 淬炼 tier, so what is
+ * compared below is behaviour rather than two strings of prose. The context mirrors the engine's
+ * arithmetic through the exported `refinedPair` / `refineSteps` instead of re-implementing it, so a
+ * change to how the bump works moves both together.
+ *
+ * Signs, because a relic is not all upside: a cost is a negative, a penalty in the sub slot is a
+ * negative, and an enemy status is a negative exactly when that status is good *for the enemy* — the
+ * same reading `STATUS_GOOD` gives the engine. 抽牌 is weighted double, because a card is worth more
+ * than the discard it costs, which is the only way 「抽 2 弃 2」 reads as the upgrade it is.
+ *
+ * The probe walks turns 1–8 and both a full and an empty hand, because several relics only fire on a
+ * named turn (怀表, 沙漏) or with nothing left in hand (鱼骨) — a single fixed board would report those
+ * as 「淬炼没有让任何东西变大」 and be wrong about it.
+ */
+/**
+ * Does this status help **whoever is holding it**?
+ *
+ * Deliberately not `STATUS_GOOD`, which is the engine's *log tone* table and answers a different
+ * question — it marks 力量 as bad news because the line it usually colours is an enemy gaining it.
+ * For a strength reading, what matters is that handing an enemy `strength: -2` is good for the player,
+ * and only a table about the holder says that.
+ */
+const HELPS_HOLDER: Record<StatusId, boolean> = {
+  ember: true, edge: true, rampart: true, reflection: true, retaliate: true, bank: true, strength: true,
+  scorch: false, mark: false, drained: false, shrouded: false,
+};
+
+function strength(relicId: string, slot: RelicSlot, tier: RefineTier | undefined): number {
+  const steps = refineSteps(tier);
+  const numbers: number[] = [];
+  const push = (n: number) => { if (n) numbers.push(n); };
+  const enemy = { hp: 20, maxHp: 20, block: 0, statuses: {}, dead: false, uid: 'e0' };
+  const probe = (turn: number, handSize: number) => ({
+    slot, refine: tier, steps,
+    v: (main: number, sub: number) => {
+      const [m, u] = refinedPair(main, sub, tier);
+      return slot === 'main' ? m : u;
+    },
+    main: slot === 'main',
+    n: (base: number) => base + steps,
+    turn, hpFraction: .3,
+    // Energy above 2 so 陶灯's 「结束回合时还有能量」 gate is open at every tier.
+    player: { statuses: {}, block: 0, energy: 3, hp: 18, maxHp: 60 },
+    handSize,
+    enemies: [enemy],
+    subject: enemy,
+    fallen: enemy,
+    byScorch: true,
+    hits: 3,
+    count: () => 0, bump: () => {}, roll: () => 0,
+    log: () => {},
+    status: (who: 'player' | 'enemies', st: StatusId, amount: number) => push(
+      who === 'player' ? (HELPS_HOLDER[st] ? amount : -amount) : (HELPS_HOLDER[st] ? -amount : amount)),
+    statusOn: (_e: unknown, st: StatusId, amount: number) => push(HELPS_HOLDER[st] ? -amount : amount),
+    block: (a: number) => push(a),
+    energy: (a: number) => push(a),
+    draw: (a: number) => push(a * 2),
+    heal: (a: number) => push(a),
+    loseHp: (a: number) => push(-a),
+    stripBlock: (a: number) => push(a),
+    reclaim: (a: number) => push(a),
+    tutor: () => {},
+    purgeJunk: () => 0,
+    discardRandom: (a: number) => push(-a),
+    // `by` is positive when the cards get *cheaper*, which is why 观星镜 passes −1 as its penalty.
+    cheapenHand: (count: number, by: number) => push(by * count),
+    copyHand: (count: number, extra = 0) => push(count * 2 - extra),
+    topOfDraw: () => ['一', '二', '三', '四', '五'],
+  }) as never;
+
+  const effects = RELIC_EFFECTS[relicId];
+  for (const trigger of ['battleStart', 'enemyKilled', 'firstAttacked', 'firstAttackedTurn'] as const) {
+    effects.triggers?.[trigger]?.(probe(1, 3));
+  }
+  for (let turn = 1; turn <= 8; turn++) {
+    for (const handSize of [3, 0]) {
+      effects.triggers?.turnStart?.(probe(turn, handSize));
+      effects.triggers?.turnEnd?.(probe(turn, handSize));
+    }
+  }
+  // Costs read the other way round: the engine *adds* this number to a cost, so a negative one is a
+  // discount and helps the player.
+  const COST_KEYS = new Set(['firstCardCost', 'firstSkillCost', 'firstPowerCost']);
+  for (const [key, spec] of Object.entries(effects.modifiers ?? {})) {
+    // A `[main, sub]` pair goes through the same slot pick and the same bump the engine's
+    // `readModifier` applies — reading `spec[0]` directly is how the first run of this test reported
+    // eight perfectly good relics as 「淬炼没有让任何东西变大」.
+    const value = typeof spec === 'function' ? spec(probe(1, 3)) : (() => {
+      const [m, s] = spec as [number, number];
+      const [a, b] = refinedPair(m, s, tier);
+      return slot === 'main' ? a : b;
+    })();
+    push(COST_KEYS.has(key) ? -value : value);
+  }
+  return numbers.reduce((sum, n) => sum + n, 0);
+}
+
+test('淬炼：每一件遗物的数值都真的变大，而且是两档递进', () => {
+  // 用户要的是「小强化 +1、大强化 +2」，而**特殊机制的遗物要专门设计它的刻度**——水囊是百分比、
+  // 铁匠锤是费用、怀表是回合数，对它们来说 +1 要么看不见要么是反的。
+  //
+  // 所以这条测试不检查「+1」这个数，它检查那条**性质**：大强化严格强于小强化，小强化严格强于
+  // 未淬炼，一件都不能例外。谁把某件遗物漏了、或者给某件写错了方向（费用类最容易写反），
+  // 这里会直接红——而**界面上一件淬炼了没变化的遗物是看不出来的**，这正是这一整个文件存在的理由。
+  const pool = availableRelics(creditProgress(emptyProgress(), 'ch1-4'));
+  assert.ok(pool.length > 40, '第一章的池子不该这么小');
+
+  const flat: string[] = [];
+  for (const relic of pool) {
+    for (const slot of ['main', 'sub'] as const) {
+      const base = strength(relic.id, slot, undefined);
+      const small = strength(relic.id, slot, 'small');
+      const large = strength(relic.id, slot, 'large');
+      if (small > base && large > small) continue;
+      flat.push(`${relic.id}（${relic.name}）${slot === 'main' ? '主槽' : '副槽'}：`
+        + `未淬炼 ${base} → 小强化 ${small} → 大强化 ${large}`);
+    }
+  }
+  assert.deepEqual(flat, [], '这些遗物淬炼之后没有变大，或者大强化没有比小强化更大');
+});
+
+test('淬炼：接在引擎上，两档在真战斗里也确实不一样', () => {
+  // 上面那条是探针，这条是实弹：装上去、跑同一场脚本战斗，三个档位必须给出三份不同的指纹。
+  // 分开是因为探针证明了「数字大了」，而这条证明「数字真的走到了引擎里」——中间任何一处没接线，
+  // 探针仍然是绿的。
+  const pool = availableRelics(creditProgress(emptyProgress(), 'ch1-4'));
+  const same: string[] = [];
+  for (const relic of pool) {
+    for (const slot of ['main', 'sub'] as const) {
+      const base = fingerprint(relic.id, slot);
+      const small = fingerprint(relic.id, slot, 'small');
+      const large = fingerprint(relic.id, slot, 'large');
+      // 胜利结算类与要特殊场面的那几件在一场战斗里本来就看不见，和上面两张表同一份名单。
+      if (NOT_VISIBLE_IN_ONE_BATTLE[relic.id]) continue;
+      if (base !== small && small !== large) continue;
+      same.push(`${relic.id}（${relic.name}）${slot === 'main' ? '主槽' : '副槽'}`);
+    }
+  }
+  assert.deepEqual(same, [], '这些遗物淬炼之后，实弹战斗里的结果和没淬炼时一模一样');
+});
+
+test('淬炼：阶梯本身是单调的，写在表里的每一对数都被抬高', () => {
+  // 直接对阶梯本身下手，不经过战斗：`refinedPair` 是 `v` 唯一读的东西，所以它单调等于每一件
+  // 写了 `[main, sub]` 对的遗物都单调。
+  for (const relic of RELICS) {
+    const effects = RELIC_EFFECTS[relic.id];
+    for (const spec of Object.values(effects?.modifiers ?? {})) {
+      if (typeof spec !== 'function') {
+        const [m, s] = spec;
+        const [bm, bs] = refinedPair(m, s, undefined);
+        const [sm, ss] = refinedPair(m, s, 'small');
+        const [lm, ls] = refinedPair(m, s, 'large');
+        assert.ok(sm > bm && ss > bs, `${relic.id}：小强化没有抬高数值`);
+        assert.ok(lm > sm && ls > ss, `${relic.id}：大强化没有比小强化更高`);
+      }
+    }
+  }
 });
 
 test('登记在案的那几件：换个能触发的场景，它们确实有效', () => {

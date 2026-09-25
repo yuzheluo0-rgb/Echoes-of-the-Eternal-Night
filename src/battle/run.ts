@@ -26,6 +26,7 @@
 import { CARD_BY_ID, DECK_IDS, type DeckId } from '../cards/index.ts';
 import { CHAPTER_1, chapterDeck, isDeckUnlocked } from './chapter.ts';
 import { RELIC_BY_ID, type RelicDefinition } from '../relics/relics.ts';
+import type { RefineTier } from './relics.ts';
 import { generateMap, reachableFrom, type MapNode, type TowerMap } from './map.ts';
 import { isUpgradable } from './upgrades.ts';
 import { REWARD_BY_ID, rollReward, rewardCardPool } from './rewards.ts';
@@ -80,6 +81,16 @@ export interface ChapterRun {
   deck: RunCard[];
   /** The two relics carried into every fight. See `BattleState.relics`. */
   relics: { main?: string; sub?: string };
+  /**
+   * Which relics have been **淬炼**, and how far — keyed by relic **id**, not by slot.
+   *
+   * By id because 淬炼 belongs to the thing rather than to the shelf: `swapRelics` moves a relic
+   * between slots, and a slot-keyed map would have to be moved alongside it in every transition that
+   * touches `relics` — one more place to fall out of step, for nothing. The cost is that re-drawing a
+   * relic you once quenched brings it back quenched; nobody has ever discarded a relic and drawn the
+   * same one again, and if they did, the refinement was paid for.
+   */
+  refined?: Record<string, RefineTier>;
   /** A relic draw the player has not answered yet. Persisted, so a reload lands back on it. */
   pendingDraw?: PendingDraw;
   /** The encounter whose victory owes a draw that has not been offered yet. */
@@ -480,8 +491,51 @@ export function swapRelics(run: ChapterRun): ChapterRun {
 export function discardRelic(run: ChapterRun, slot: 'main' | 'sub'): ChapterRun {
   if (!run.relics[slot]) return run;
   const relics = { ...run.relics };
+  const gone = relics[slot]!;
   delete relics[slot];
-  return { ...run, relics };
+  return { ...run, relics: relics, refined: withoutRefinement(run.refined, gone) };
+}
+
+/**
+ * 淬炼 a relic: every number it prints goes up by one (`small`) or two (`large`).
+ *
+ * Pure and additive — calling it twice just overwrites the tier, and the run cannot end up with two
+ * refinements on one relic. Whether it *succeeds* is the event's business (`events.ts` rolls it), and
+ * so is the price; this is only the half that changes the relic.
+ */
+export function refineRelic(run: ChapterRun, relicId: string, tier: RefineTier): ChapterRun {
+  if (!holdsRelic(run, relicId)) return run;
+  return { ...run, refined: { ...run.refined, [relicId]: tier } };
+}
+
+/**
+ * 淬炼 failed — the relic is gone.
+ *
+ * Not `discardRelic`: the player did not choose this and there is nothing to put in the slot
+ * afterward, so it takes the id rather than the slot and removes it wherever it is. This is the
+ * whole price of the gamble, and it is why the event has to be a real decision.
+ */
+export function shatterRelic(run: ChapterRun, relicId: string): ChapterRun {
+  if (!holdsRelic(run, relicId)) return run;
+  const relics = { ...run.relics };
+  for (const slot of ['main', 'sub'] as const) if (relics[slot] === relicId) delete relics[slot];
+  return { ...run, relics, refined: withoutRefinement(run.refined, relicId) };
+}
+
+/** Is this relic one of the two the run is carrying? */
+export function holdsRelic(run: ChapterRun, relicId: string): boolean {
+  return run.relics.main === relicId || run.relics.sub === relicId;
+}
+
+/** Drop a relic's entry from the refinement map. Returns `undefined` when nothing is left, so an
+ *  untouched run keeps carrying `undefined` rather than an empty object that has to be validated. */
+function withoutRefinement(
+  refined: Record<string, RefineTier> | undefined, relicId: string,
+): Record<string, RefineTier> | undefined {
+  if (!refined?.[relicId]) return refined;
+  const next = { ...refined };
+  delete next[relicId];
+  return Object.keys(next).length ? next : undefined;
 }
 
 /** The fight the run is on, or `undefined` once the chapter is done. */
@@ -708,6 +762,17 @@ export function isValidRun(value: unknown): value is ChapterRun {
     if (id !== undefined && !RELIC_BY_ID.has(id)) return false;
   }
   if (run.relics.main !== undefined && run.relics.main === run.relics.sub) return false;
+  // 淬炼. Every entry has to name a relic that exists **and** is being carried: one for a relic the
+  // run no longer holds is a number nobody can see, and it would sit there waiting to become a free
+  // upgrade the moment that relic was drawn again.
+  if (run.refined !== undefined) {
+    if (!run.refined || typeof run.refined !== 'object') return false;
+    for (const [id, tier] of Object.entries(run.refined)) {
+      if (!RELIC_BY_ID.has(id)) return false;
+      if (tier !== 'small' && tier !== 'large') return false;
+      if (run.relics.main !== id && run.relics.sub !== id) return false;
+    }
+  }
   if (run.pendingDraw !== undefined) {
     const draw = run.pendingDraw;
     if (!draw || !Array.isArray(draw.options) || !draw.options.length) return false;
