@@ -527,6 +527,30 @@ export function encounterFor(node: MapNode, roll: () => number, beaten: readonly
   if (node.kind === 'boss') return POOLS.boss[0].id;
   if (node.row === 1) return 'ch1-1';
 
+  /**
+   * **The chapter's five fights come first.**
+   *
+   * ⚠️ They used to come out of the pool with everything else, and the pools do not hold them evenly:
+   * `strong` holds **none** of the five, while `elite` holds **two** of them (ch1-3 and 头狼) among
+   * three fights. A route passes about 1.2 elite nodes, so it cannot win both — measured over 200
+   * seeds, **71% of routes fail to meet all five**, and 头狼 specifically was missed **66.5%** of the
+   * time. The chapter's own win condition was unreachable for most runs.
+   *
+   * So an unbeaten anchor is dealt ahead of the pool, and the elite-grade ones may also stand on an
+   * ordinary 战斗 floor **from `ELITE_ANCHOR_ROW`** — early rows still read 「一场寻常的遭遇」, and the
+   * top of the tower is where this chapter's hard fights live. They keep their own `kind` and their
+   * own relic payout (`earnsRelic` reads the encounter, not the node), so nothing else changes.
+   *
+   * Unbeaten only, and that is what keeps this from being free: a re-won anchor pays nothing, so the
+   * pool still takes over as soon as the chapter is satisfied.
+   */
+  const anchors = ALL_ENCOUNTERS.filter(entry =>
+    ANCHOR_IDS.has(entry.id) && !beaten.includes(entry.id)
+    && (node.kind === 'elite'
+      ? entry.pool === 'elite'
+      : entry.pool !== 'boss' && (entry.pool !== 'elite' || node.row >= ELITE_ANCHOR_ROW)));
+  if (anchors.length) return anchors[Math.floor(roll() * anchors.length)].id;
+
   const pool = node.kind === 'elite' ? POOLS.elite : node.row <= 4 ? POOLS.weak : POOLS.strong;
   /**
    * Fresh fights first, repeats only as a fallback.
@@ -565,6 +589,16 @@ export function restHeal(run: ChapterRun): ChapterRun {
 }
 
 /** Fights that pay a relic draw. Elite, miniboss and boss — the graded ones. */
+/** The chapter's five fights, by id — the spine `encounterFor` deals ahead of the pools. */
+const ANCHOR_IDS = new Set(RUN_ENCOUNTERS.map(entry => entry.id));
+
+/**
+ * From this row up, the two **elite-grade** anchors (失落的商队 and 头狼) may also stand on an ordinary
+ * 战斗 floor. See the note in `encounterFor`: they used to live only in the `elite` pool, which a route
+ * passes about 1.2 times, so the chapter could not be finished.
+ */
+const ELITE_ANCHOR_ROW = 8;
+
 /**
  * The floor by which a run is **guaranteed** to have been offered a relic, if an elite has not already
  * done it. See the note in `finishBattle` — the short version is that 21.8% of routes never meet an

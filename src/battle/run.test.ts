@@ -916,3 +916,35 @@ test('营火淬炼：挂上赌局，而且**由它自己结束这一层**', () =
   assert.equal(after.refined?.['iron-nail'], 'small');
   assert.equal(after.relicTask?.done?.won, true, '成算 72 却不给结果屏');
 });
+
+// -------------------------------------------------- 五场章节战必须凑得齐
+
+test('走一条路线一定遇得到全部五场章节战 —— 通关条件不能靠运气', () => {
+  // ⚠️ 这条钉的是一个**结构性**的问题，不是数值问题。五场锚点原来和别的遭遇战一起从池子里抽，
+  // 而池子分得极不均匀：`strong` 的 6 场里**一场锚点都没有**，`elite` 的 3 场里却挤着两场
+  // （ch1-3 与头狼）。一条路线平均只经过约 1.2 个精英层，所以两场根本凑不齐——实测 200 个种子，
+  // **71% 的路线打不满五场**，头狼单独看更是 **66.5%** 见不到。
+  //
+  // 而 `isChapterCleared` 要求五场**每场**都打赢过：通关条件对大多数局是不可达的。
+  // 现在锚点排在池子之前发放，精英级的两场从 `ELITE_ANCHOR_ROW` 起也能站到普通战斗层上。
+  const anchors = new Set(RUN_ENCOUNTERS.map(entry => entry.id));
+  const short: string[] = [];
+  for (let seed = 1; seed <= 200; seed++) {
+    let run = newRun('blade', 'bone', seed);
+    const roll = lcg(seed * 7919 + 13);          // 挑路线的骰子，和 run 的流分开
+    const met = new Set<string>();
+    for (let step = 0; step < 40; step++) {
+      const choices = nextChoices(run);
+      if (!choices.length) break;
+      run = enterNode(run, choices[Math.floor(roll() * choices.length)]);
+      if (!run.currentFight) continue;
+      met.add(run.currentFight);
+      // 假定玩家都赢——这条测的是「遇不遇得到」，不是「打不打得过」。
+      run = { ...run, cleared: [...new Set([...run.cleared, run.currentFight])], currentFight: undefined };
+    }
+    if ([...anchors].some(id => !met.has(id))) {
+      short.push(`种子 ${seed}：只遇到 ${[...met].filter(id => anchors.has(id)).length}/5`);
+    }
+  }
+  assert.deepEqual(short.slice(0, 5), [], `${short.length}/200 条路线凑不齐五场章节战`);
+});
