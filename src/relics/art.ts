@@ -91,4 +91,13 @@ export const RELIC_QUERY: Record<string, string> = {
   'sand-of-time': 'pouring sand macro dark',
   'watcher-remains': 'ancient bones remains macro dark',
   'final-chapter': 'closed old leather book dark',
+
+  // 无名之物 —— 两件只能装在主槽的（`RelicDefinition.mainOnly`）。
+  // 检索词照旧**字面**：搜「血雾」会得到血溅、血浆、或者一张抽象的红色渐变，而这些东西要的是
+  // **画面中央有一件东西**。所以「血云雾霭之卷」搜的是那卷东西本身，「猎魔人之证」搜的是那块牌子。
+  // 第一轮：`old rolled parchment scroll dark` 答成了一张**卷起来的叶子**（形态像，东西不对），
+  // `antique metal badge medallion dark` 答成了一枚**英特尔奔腾 CPU**。两个词都是「形状对、物件错」，
+  // 所以第二轮把修饰语换掉、只留物件本身。
+  'blood-mist': 'ancient parchment document dark still life',
+  'hunter-mark': 'antique brass emblem pendant dark still life',
 };

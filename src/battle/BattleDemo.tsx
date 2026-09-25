@@ -1408,10 +1408,14 @@ function RelicDraw({ run, options, slot, onClaim, audioOn }: {
         <div className="bd-draw-actions">
           {(['main', 'sub'] as const).map(target => {
             const current = run.relics[target] ? RELIC_BY_ID.get(run.relics[target]!) : undefined;
-            return <button key={target} className="bd-btn bd-fight-btn"
+            // 只能装主槽的那几件：副槽那个按钮**不给**，并且说明为什么。`claimRelic` 在 run 那一层
+            // 也会拒绝，所以这里不是唯一的防线；但一个点了没反应的按钮读起来像坏了。
+            const barred = target === 'sub' && !!chosen.mainOnly;
+            return <button key={target} className="bd-btn bd-fight-btn" disabled={barred}
               onClick={() => { sound('relic-set', audioOn); onClaim(chosen.id, target); }}>
               装入{target === 'main' ? '主' : '副'}遗物槽
-              {current && <i className="bd-draw-replace">替换 {current.name}</i>}
+              {barred && <i className="bd-draw-replace">这件只能装在主槽</i>}
+              {!barred && current && <i className="bd-draw-replace">替换 {current.name}</i>}
             </button>;
           })}
         </div>

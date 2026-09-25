@@ -75,7 +75,20 @@ export type RelicModifierKey =
   /** Flat gold added to a victory. Read by the run. */
   | 'victoryGold'
   /** Percent added to the gold a victory pays out. Read by the run. */
-  | 'goldBonus';
+  | 'goldBonus'
+  /** 血云雾霭之卷 — percent of the 生命 you take off an enemy that comes back to you. */
+  | 'lifesteal'
+  /**
+   * 血云雾霭之卷 — **percent added** to a hit against an enemy above six tenths 生命.
+   *
+   * A percent rather than a flat number, so the relic can be a *multiplier* on whatever the hit
+   * turned out to be — which is what 「额外造成 30% 伤害」 says, and what a flat `attackDamage` could
+   * not express. The relic's own function decides whether the target qualifies (it is handed the
+   * target as `subject`); the engine only multiplies by whatever it returns.
+   */
+  | 'healthyDamage'
+  /** 血云雾霭之卷 — percent of 生命上限 the blood mist restores when it saves you. */
+  | 'bloodSaveHeal';
 
 /** Rules that are true or false rather than a number. */
 export type RelicFlag =
@@ -88,7 +101,16 @@ export type RelicFlag =
   /** The same, but only if that first card was an attack. */
   | 'retainFirstAttack'
   /** The first attack card each battle hits one extra time, at half damage. */
-  | 'extraHitFirstAttack';
+  | 'extraHitFirstAttack'
+  /**
+   * 血云雾霭之卷 — the first lethal blow is absorbed by the mist instead: you come back at a share of
+   * 生命上限 (`bloodSaveHeal`), and **the scroll burns itself out**. Distinct from `lethalSave`
+   * (铁面具) because the two do different things at the same moment: the mask leaves you at 1 and keeps
+   * you, the mist heals you further and is gone.
+   */
+  | 'bloodSave'
+  /** 猎魔人之证 — the first card each turn that deals damage has its damage doubled. */
+  | 'huntFirstCard';
 
 /**
  * What an effect is allowed to do. Deliberately small: if a relic needs something that is not here,
@@ -405,6 +427,30 @@ export const RELIC_EFFECTS: Record<string, RelicEffects> = {
       },
     },
   },
+
+  // ------------------------------------------------------------------ 绝响
+  // 主槽 only —— see `RelicDefinition.mainOnly`. Both are written with a **0 in the sub column**
+  // rather than a lesser number, because a lesser number would be pretending there is a second way to
+  // carry these. Nothing ever reads that column; `relics.test.ts` skips the sub-slot checks for them
+  // and asserts the flag instead.
+  //
+  // 血云雾霭之卷 does three things at three different moments, so it reaches the engine through three
+  // different doors rather than one trigger: `lifesteal` is asked for inside `dealToEnemy` (every point
+  // of damage you deal, wherever it came from), `healthyDamage` inside `strike` (a multiplier on the
+  // hit, not a flat bonus), and `bloodSaveHeal` at the moment the mist saves you. The judgement — 「血
+  // 气旺盛」 — lives here, in the relic's own function; the engine only multiplies by what it returns.
+  'blood-mist': {
+    modifiers: {
+      lifesteal: [20, 0],
+      bloodSaveHeal: [15, 0],
+      healthyDamage: c => (c.subject && c.subject.maxHp > 0 && c.subject.hp / c.subject.maxHp > .6 ? 30 : 0),
+    },
+    flags: ['bloodSave'],
+  },
+  // 猎魔人之证 is one rule with three payoffs at one moment (double, draw, and the refund if it kills),
+  // so it is a **flag**: the engine implements the doubling, the draw and the refund together, because
+  // they are one event and splitting them across three hooks would let them drift apart.
+  'hunter-mark': { flags: ['huntFirstCard'] },
 };
 
 /** Has the player already got at least one stack of this? Used by the four 「若已有」 relics. */

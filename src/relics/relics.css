@@ -210,3 +210,34 @@
   .rl { transform: none; }
   .rl-motes { display: none; }
 }
+
+/* ----------------------------------------------------- 无名之物（只装主槽的）
+   两件绝响要再上一档，而**高雅不是堆料**。它们已经会浮尘（12 颗）和全息层了，所以这里加的三样都是
+   安静的：一道很淡很慢的箔光、一道更细的第三层内框、以及一枚代替「副槽」标签的「主」印。
+   全动效的核心是**大部分时间什么都不发生**——箔光 7.5 秒一趟，其中前 62% 完全静止。 */
+.rl-foil {
+  position: absolute; inset: -34%; pointer-events: none; mix-blend-mode: screen;
+  background: linear-gradient(104deg,
+    transparent 40%,
+    color-mix(in srgb, var(--tier) 60%, white) 50%,
+    transparent 60%);
+  opacity: .16;
+  animation: rl-foil 7.5s cubic-bezier(.45, 0, .55, 1) infinite;
+}
+@keyframes rl-foil {
+  0%, 62% { transform: translateX(-125%); }
+  100% { transform: translateX(125%); }
+}
+/* 第三道内框：外粗内细之外再加一根更细的，是「被携带的东西」里再分出的那一档。 */
+.rl-mainonly .rl-inner::after {
+  content: ''; position: absolute; inset: 7px; pointer-events: none; border-radius: 2px;
+  border: 1px solid color-mix(in srgb, var(--tier) 34%, transparent);
+}
+/* 「主」印 —— 副槽那一行印的是拒绝，不是一个减弱的效果。 */
+.rl-sub-sealed .rl-seal {
+  flex: none; width: 19px; height: 19px; display: grid; place-items: center;
+  font-size: 10px; letter-spacing: 0; border-radius: 2px;
+  color: #1a1408; background: linear-gradient(180deg, color-mix(in srgb, var(--tier) 78%, white), var(--tier));
+}
+.rl-sub-sealed p { color: #b9a887; }
+@media (prefers-reduced-motion: reduce) { .rl-foil { animation: none; opacity: 0; } }

@@ -5,7 +5,7 @@
  * parses neither JSX nor CSS. So this checks the two things that *can* be checked without a browser,
  * and both of them are the kind of mistake that ships silently:
  *
- *   1. **the data is complete** — 71 relics, one of every tier, no duplicate id or name, and every
+ *   1. **the data is complete** — 73 relics, one of every tier, no duplicate id or name, and every
  *      relic has a search phrase AND a lesser-slot effect that actually differs from the main one;
  *   2. **the art request in `art.ts` and the set in `relics.ts` line up in both directions.** A relic
  *      with no phrase is a card with no picture; a phrase with no relic is a photograph nobody asked
@@ -17,9 +17,9 @@ import assert from 'node:assert/strict';
 import { RELIC_QUERY } from './art.ts';
 import { RELICS, RELIC_TIERS, RANK_OF, TIER_BY_ID, relicsForChapter, relicsOfTier, tierCounts } from './relics.ts';
 
-const EXPECTED_TOTAL = 71;
+const EXPECTED_TOTAL = 73;
 
-test('遗物正好 71 件，id 与名称都不重复', () => {
+test('遗物正好 73 件，id 与名称都不重复', () => {
   assert.equal(RELICS.length, EXPECTED_TOTAL, `遗物总数应为 ${EXPECTED_TOTAL}`);
   const ids = RELICS.map(relic => relic.id);
   assert.equal(new Set(ids).size, ids.length, 'id 必须唯一');

@@ -25,7 +25,7 @@ import { STATUS_GOOD, type StatusId } from './types.ts';
 import { DRAW_OPTIONS, RELIC_PRICE, drawRelics, offerRelics, opensSubSlot } from './relicDraw.ts';
 import {
   canEnter, claimRelic, discardRelic, earnsRelic, finishBattle, isValidRun as isValidRunForTest,
-  newRun, offerDraw, rollOffer, swapRelics,
+  newRun, offerDraw, rollOffer, swapRelics, type ChapterRun,
 } from './run.ts';
 import { REFINE_TEXT, RELIC_BY_ID, RELICS, type RelicDefinition } from '../relics/relics.ts';
 import {
@@ -750,4 +750,159 @@ test('普通战不欠抽取，也没有额外金币', () => {
   const outcome = finishBattle(run, { ...battle, phase: 'won' });
   assert.equal(outcome.run.drawDue, undefined);
   assert.ok(outcome.gold >= 8 && outcome.gold <= 14, `普通战金币应在 8–14，实际 ${outcome.gold}`);
+});
+
+// ------------------------------------------------- 无名之物：两件只装主槽的绝响
+
+/**
+ * 一场用来量伤害的战斗。
+ *
+ * ⚠️ **敌人必须是厚血的，而且要抹掉变异。** 上一版直接用 `ch1-1` 的原始影狼，结果量错了两次：
+ * 它只有 12 血，而猎魔人翻倍后的一击是 14 —— `dealToEnemy` 把生命压在 0，所以量到的是**它剩下的
+ * 12**，测试报「第一张没有翻倍」，而日志里明明白白写着 14。变异（那一次抽到的是「披甲的影狼」）
+ * 还会改格挡和减伤，和这条要测的东西无关。
+ */
+function battle(relic: string | undefined, opts: { hp?: number; enemyHp?: number } = {}): BattleState {
+  const s = structuredClone(startBattle('ch1-1', 'blade', 7, {
+    hp: opts.hp ?? 30,
+    relics: relic ? { main: relic } : undefined,
+  }));
+  for (const enemy of s.enemies) {
+    enemy.mutation = undefined;
+    enemy.statuses = {};
+    enemy.block = 0;
+    enemy.maxHp = opts.enemyHp ?? 60;
+    enemy.hp = enemy.maxHp;
+  }
+  return s;
+}
+/** 手牌钉死成这几张，能量给满。 */
+function hand(s: BattleState, cardIds: string[]): BattleState {
+  const out = structuredClone(s);
+  out.hand = cardIds.map((cardId, i) => ({ uid: `rig-${i}`, cardId }));
+  out.player.energy = 3;
+  return out;
+}
+/** 一场打完之后敌人掉了多少血。**目标要够厚**，否则量到的是它剩下的那一点。 */
+const hpLost = (before: BattleState, after: BattleState): number =>
+  before.enemies[0].hp - after.enemies[0].hp;
+test('血云雾霭之卷 · 吸取：按**实际掉掉的血**回，不按牌面数字', () => {
+  // 20% 生命吸取。回的是敌人**真的失去的生命**：被格挡吃掉的那部分不是伤害，为它回血等于给一个
+  // 从来没存在过的数字付账。
+  // 割线印着 7 点，但满血的敌人还吃「血气旺盛」的 +30%，所以这一击实际是 9 —— 吸取要按**结算之后**
+  // 真正掉掉的血算，9 的 20% 取整是 1。
+  const s = hand(battle('blood-mist'), ['blade-01']);
+  const after = playCard(s, 'rig-0', s.enemies[0].uid);
+  const dealt = hpLost(s, after);
+  assert.equal(dealt, 9, '目标不够厚，这条测试量不准');
+  assert.equal(after.player.hp, s.player.hp + 1, `9 点的 20% 取整是 1，实际回了 ${after.player.hp - s.player.hp}`);
+
+  // 没装这件遗物时一滴都不回。
+  const plain = hand(battle(undefined), ['blade-01']);
+  assert.equal(playCard(plain, 'rig-0', plain.enemies[0].uid).player.hp, plain.player.hp, '没装遗物却在回血');
+});
+
+test('血云雾霭之卷 · 血气旺盛：满血的敌人多受 30%，掉过血的没有', () => {
+  const full = hand(battle('blood-mist'), ['blade-01']);
+  assert.equal(hpLost(full, playCard(full, 'rig-0', full.enemies[0].uid)), 9, '满血敌人应当吃 7 × 1.3 = 9');
+
+  // 把它打到六成以下——血池要够厚，否则量到的是它剩下的那一点。
+  const hurt = hand(battle('blood-mist'), ['blade-01']);
+  hurt.enemies[0].hp = Math.floor(hurt.enemies[0].maxHp * .5);
+  assert.equal(hpLost(hurt, playCard(hurt, 'rig-0', hurt.enemies[0].uid)), 7, '掉过血的敌人不该有加成');
+});
+
+test('血云雾霭之卷 · 免死：真的把你放回 15% 上限，而且卷轴自己没了', () => {
+  // ⚠️ 这一条抓出过一个真 bug：第一版只让这一下「等于 0」而没动 `hp`，于是日志印着
+  // 「你从血雾里站起来（生命 9）」、玩家其实还是 5 血，**下一只影狼的一下就要了命**。
+  // 所以这里断言的是两件事：救回来之后**站着**，以及血雾给的是 15% 上限那一档。
+  const s = battle('blood-mist', { hp: 5 });
+  const after = endTurn({ ...s, player: { ...s.player, hp: 5 } });
+
+  assert.notEqual(after.phase, 'lost', '本该要命的一下没有救回来');
+  assert.ok(after.player.hp > 0, '救是救了，人还是倒了');
+  assert.equal(after.relics?.main, undefined, '卷轴救了人却没有烧掉自己');
+  assert.ok(after.log.some(line => line.text.includes(`生命 ${Math.round(60 * .15)}`)),
+    `血雾应当把生命放回 15% 上限（${Math.round(60 * .15)}）`);
+  assert.ok(isValidBattle(after), '救完之后的状态必须合法');
+});
+
+test('血云雾霭之卷 · 烧掉之后这一场不再生效，战后再从 run 里拿走', () => {
+  // 战斗只拿得到一份 state：它把遗物从 state 里摘掉、在 marks 上留记号，真正拥有遗物的是 run。
+  const s = battle('blood-mist', { hp: 5 });
+  const saved = endTurn({ ...s, player: { ...s.player, hp: 5 } });
+  assert.equal(saved.relics?.main, undefined, '战斗内没有摘掉');
+
+  // 摘掉之后再吸血就一滴都不回。
+  const again = hand({ ...saved, phase: 'player' }, ['blade-01']);
+  const hit = playCard(again, 'rig-0', again.enemies[0].uid);
+  assert.equal(hit.player.hp, again.player.hp, '卷轴已经烧了，还在吸血');
+
+  // 而 run 那一侧：打完这一场，它从 run 里也没了，并且如实报给战果面板。
+  const run: ChapterRun = {
+    ...newRun('blade', 'bone', 7), relics: { main: 'blood-mist' }, relicGranted: true,
+    refined: { 'blood-mist': 'small' },
+  };
+  const outcome = finishBattle(run, { ...saved, phase: 'won' });
+  assert.deepEqual(outcome.brokenRelics, ['blood-mist'], '打完了却没说卷轴碎了');
+  assert.equal(outcome.run.relics.main, undefined, '卷轴还留在 run 里');
+  assert.equal(outcome.run.refined?.['blood-mist'], undefined, '烧掉的东西还留着淬炼档位');
+  assert.equal(isValidRunForTest(outcome.run), true, '战斗之后的存档必须合法');
+  // 没碎的时候不许报。
+  const intact = finishBattle({ ...run, relics: { main: 'iron-nail' } }, { ...saved, phase: 'won' });
+  assert.deepEqual(intact.brokenRelics, [], '什么都没碎却报了一串');
+});
+
+test('猎魔人之证 · 每回合第一张造成伤害的牌翻倍并抽 1 张，第二张不翻', () => {
+  const s = hand(battle('hunter-mark'), ['blade-01', 'blade-01']);
+  const first = playCard(s, 'rig-0', s.enemies[0].uid);
+  assert.equal(hpLost(s, first), 14, '第一张没有翻倍');
+  assert.equal(first.hand.length, s.hand.length, '翻倍的那张应当补抽一张（打出一张、抽回一张）');
+
+  const second = playCard(first, 'rig-1', first.enemies[0].uid);
+  assert.equal(hpLost(first, second), 7, '第二张不该翻倍');
+});
+
+test('猎魔人之证 · 每回合重新给一次；不造成伤害的牌不消耗它', () => {
+  const s = hand(battle('hunter-mark'), ['blade-04', 'blade-01']);   // 掩刃 6 格挡，然后割线
+  const shielded = playCard(s, 'rig-0');
+  assert.equal(hpLost(s, shielded), 0, '掩刃不该造成伤害');
+  assert.equal(hpLost(shielded, playCard(shielded, 'rig-1', shielded.enemies[0].uid)), 14,
+    '格挡牌把这一回合的翻倍吃掉了');
+
+  // 新回合：标记清掉，又能翻一次。
+  const fresh = hand(endTurn(shielded), ['blade-01']);
+  assert.equal(hpLost(fresh, playCard(fresh, 'rig-0', fresh.enemies[0].uid)), 14, '换了一回合却没有重新给翻倍');
+});
+
+test('猎魔人之证 · 击杀退还**印着的**费用，引火减掉的那一点也算', () => {
+  // 割线 1 费，而当回合第一张会因引火变成 0 费。退还的必须是印着的 1 —— 「退还那张牌的全部能量」
+  // 如果按实际付的算，这一张付了 0，就什么都没得退，和文案正好相反。
+  const s = hand(battle('hunter-mark', { enemyHp: 6 }), ['blade-01']);
+  const before = s.player.energy;
+  const after = playCard(s, 'rig-0', s.enemies[0].uid);
+  assert.equal(after.enemies[0].dead, true, '没打死，这条测试没验到东西');
+  // 出牌实际花了 0（引火把印着的 1 费减到 0），而退还的是**印着的 1** —— 所以结束在 3 + 1 = 4。
+  // 按实际付的算的话这一栏会是 3，和「退还那张牌的全部能量」正好相反。
+  assert.equal(after.player.energy, before + 1, `该退还印着的 1 点（出 ${before}、收 ${after.player.energy}）`);
+  assert.ok(after.log.some(line => line.text.includes('退还')), '退还了却没有说');
+
+  // 没打死就不退：这张牌实际花了 0，所以打完**能量一点不动**。退了的话会是 +1。
+  const alive = hand(battle('hunter-mark'), ['blade-01']);
+  assert.equal(playCard(alive, 'rig-0', alive.enemies[0].uid).player.energy, alive.player.energy,
+    '没打死却退了能量');
+});
+
+test('只装主槽：run 拒绝副槽，存档校验也拒绝手改过的', () => {
+  for (const id of ['blood-mist', 'hunter-mark']) {
+    const run: ChapterRun = { ...newRun('blade', 'bone', 7), pendingDraw: { options: [id], slot: 'sub', from: 'ch1-1' } };
+    assert.equal(claimRelic(run, id, 'sub'), run, `${id} 被装进了副槽`);
+    const placed = claimRelic(run, id, 'main');
+    assert.equal(placed.relics.main, id, `${id} 连主槽都装不进去`);
+    assert.equal(isValidRunForTest(placed), true, `${id} 装在主槽却不合法`);
+
+    // 手改成副槽的存档必须被挡下——一件装错槽的遗物会安静地按副槽跑，也就是什么都不做。
+    const forged: ChapterRun = { ...newRun('blade', 'bone', 7), relics: { sub: id } };
+    assert.equal(isValidRunForTest(forged), false, `${id} 装在副槽的存档被放行了`);
+  }
 });

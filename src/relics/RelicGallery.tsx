@@ -92,7 +92,13 @@ export default function RelicGallery() {
     {detail && <div className="rg-modal" role="dialog" aria-label={detail.name}
       onClick={event => { if (event.target === event.currentTarget) setDetail(null); }}>
       <div className="rg-modal-inner">
-        <RelicFace relic={detail} />
+        {/* ⚠️ 两层：外层**占位**，内层**放大**。
+            卡面是固定 240×380 的，`transform: scale()` 不改变布局——直接把 scale 加在卡面那一层，
+            外层仍然只按 240 宽排，放大的卡面会盖住右边的文字。也没有别的做法：`.rl` 自己那条
+            `transform` 就是指针倾斜，往同一个元素上再叠一个 scale 会把它顶掉。 */}
+        <div className="rg-modal-face"><div className="rg-modal-scale">
+          <RelicFace relic={detail} />
+        </div></div>
         <div className="rg-modal-copy">
           <h3>{detail.name}<small>{RELIC_TIERS.find(t => t.id === detail.tier)!.name}</small></h3>
           <p className="rg-modal-lore">{detail.lore}</p>

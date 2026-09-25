@@ -548,6 +548,38 @@ function relicFlag(s: BattleState, flag: RelicFlag): boolean {
   return relicFlagSlot(s, flag) !== undefined;
 }
 
+/**
+ * 猎魔人之证 — is this card the turn's doubled one? Asked **once per card**, lazily, on the card's first
+ * point of damage.
+ *
+ * Lazily because 「伤害性手牌」 has to be judged by what the card *did*: a 格挡 card played first must
+ * not spend the turn's doubling on nothing, and nothing outside `strike` can tell whether a card is
+ * going to deal damage. The per-card half lives in the caller's closure (`hunted === undefined`);
+ * this function owns the per-**turn** half.
+ */
+function claimHuntOnce(s: BattleState): boolean {
+  if (relicFlagSlot(s, 'huntFirstCard') === undefined) return false;
+  if (s.marks?.['hunt:used']) return false;
+  s.marks = { ...s.marks, 'hunt:used': 1 };
+  return true;
+}
+
+/**
+ * 猎魔人之证 — give back what the card was **printed** as costing.
+ *
+ * 「退还那张牌的全部能量」 — the printed cost plus any per-card cost marks (a 铜镜 copy costs more), and
+ * deliberately **without** 引火: the discount is part of what the card is said to hand back. Reading
+ * `cardCostNow` here would refund what was actually paid, which is the number that already had the
+ * discount taken off — so a 1-cost card played as the turn's first (free, because of 引火) would
+ * refund nothing, and the printed promise is the opposite of that.
+ */
+function refundEnergy(s: BattleState, cardUid: string, cardId: string) {
+  const printed = cardCost(cardId) + (s.costMarks?.[cardUid] ?? 0);
+  if (printed <= 0) return;
+  s.player.energy += printed;
+  log(s, `猎魔人之证 · 这一击结果了它，退还「${cardName(cardId)}」的 ${printed} 点能量（余 ${s.player.energy}）。`, 'special');
+}
+
 /** Fire a moment. Both slots, main first. */
 function fireRelics(s: BattleState, trigger: RelicTrigger, extra: Partial<RelicContext> = {}) {
   if (!s.relics) return;
@@ -744,8 +776,23 @@ function dealToEnemy(s: BattleState, enemy: EnemyState, amount: number, label: s
   enemy.hp = Math.max(0, enemy.hp - hurt);
   log(s, `${label} → ${nameOf(enemy)}：${Math.max(0, amount)} 点伤害（格挡 ${blocked}，生命 −${hurt}）。`,
     hurt > 0 ? 'good' : 'neutral');
+  // 血云雾霭之卷 — 「你造成的伤害按 20% 回复生命」. Here rather than in `strike`, because this is the one
+  // funnel **every** point of enemy damage passes through — attacks, 灼烧 ticks, 反震, the lot — and
+  // 「你造成的伤害」 is all of it, not just the swings. The 20% is read off **生命 actually taken**,
+  // not off the number printed on the card: a hit that a wall ate is damage the enemy never took, and
+  // paying the player for it would be lifesteal off a number that never existed.
+  const life = relicModifier(s, 'lifesteal');
+  if (life > 0 && hurt > 0) healPlayer(s, Math.max(1, Math.floor(hurt * life / 100)), '血云雾霭之卷');
   // 碎裂 is per *hit*, not per turn: only a single blow that empties a non-empty wall breaks it.
   if (blockBefore > 0 && enemy.block === 0) shatterCheck(s, enemy);
+}
+
+/** Give the player 生命, capped at the ceiling, with a line in the log. */
+function healPlayer(s: BattleState, amount: number, who: string) {
+  const healed = Math.min(amount, s.player.maxHp - s.player.hp);
+  if (healed <= 0) return;
+  s.player.hp += healed;
+  log(s, `${who} · 你回复 ${healed} 点生命（${s.player.hp}／${s.player.maxHp}）。`, 'good');
 }
 
 function lose(s: BattleState) {
@@ -758,11 +805,41 @@ function damagePlayer(s: BattleState, amount: number, label: string): number {
   const blocked = Math.min(s.player.block, Math.max(0, amount));
   s.player.block -= blocked;
   let hurt = Math.max(0, amount) - blocked;
+  const doomed = !s.marks?.['lethal:spent'] && s.player.hp > 0 && hurt >= s.player.hp;
+  /**
+   * 血云雾霭之卷 goes first, and the order is written down because both relics answer the same
+   * moment: the mist saves you **further** (a share of 生命上限) and pays for it with its own life,
+   * the mask leaves you at exactly 1 and keeps itself. With both carried, only one can answer, and
+   * the one that answers should be the rarer and the kinder — the mask is still there for the *next*
+   * battle, which is what makes giving it up here a price rather than a formality.
+   */
+  const mistSlot = doomed ? relicFlagSlot(s, 'bloodSave') : undefined;
+  if (mistSlot) {
+    const mist = s.relics?.[mistSlot];
+    const saved = Math.max(1, Math.round(s.player.maxHp * relicModifier(s, 'bloodSaveHeal') / 100));
+    // ⚠️ **`lethal:spent` is deliberately NOT set.** That mark belongs to 铁面具, whose rule is
+    // 「每场战斗一次」; the mist's rule is 「一次，然后它就没了」 — it pays with the relic itself, not
+    // with the rest of the battle. Setting the mask's mark here would silently spend a mask that was
+    // never used, so a player carrying both would lose the mask's save for nothing.
+    // ⚠️ **真的把人放回那一档，不能只让这一下「等于 0」。** 第一版算成 `hurt = max(0, hp - saved)`
+    // 就算了，`hp` 一点没动——日志印着「你从血雾里站起来（生命 9）」，而玩家其实还是 5 血，下一只
+    // 影狼的一下就要了命。**测试是用两只敌人的场景抓到的**：救回来之后必须真的站着。
+    //
+    // 所以这里直接写 `hp`，并让 `hurt` 归零（外面那一步会减它，再减一次就重复了）。
+    // 救回来之后生命低于上限时**不会**顺便补满——血雾给的是那一档，不是一次治疗。
+    s.player.hp = saved;
+    hurt = 0;
+    // **烧掉的是它自己。** 战斗内先摘掉（这一场它不再生效），并在 marks 上留一个记号，
+    // 由 `finishBattle` 把它从 run 里也拿掉——战斗是纯状态，拥有遗物的是 run。
+    if (mist) {
+      s.relics = { ...s.relics, [mistSlot]: undefined };
+      s.marks = { ...s.marks, [`broken:${mist}`]: 1 };
+    }
+    log(s, `血云雾霭之卷 · 本该要你命的那一下被雾吸走了。你从血雾里站起来（生命 ${saved}），卷轴化成灰。`, 'special');
+  }
   // 铁面具 — survives the first blow that would have finished you, once. Applied before the
   // subtraction rather than after, because "you are at 1" has to be true when 火熄了 would fire.
-  const saveSlot = !s.marks?.['lethal:spent'] && s.player.hp > 0 && hurt >= s.player.hp
-    ? relicFlagSlot(s, 'lethalSave')
-    : undefined;
+  const saveSlot = !mistSlot && doomed ? relicFlagSlot(s, 'lethalSave') : undefined;
   if (saveSlot) {
     s.marks = { ...s.marks, 'lethal:spent': 1 };
     log(s, '铁面具 · 这一下本该要你的命，面具替你留住了最后一点火。', 'special');
@@ -829,6 +906,8 @@ function currentTarget(s: BattleState): EnemyState | undefined {
 
 function makeContext(
   s: BattleState, cardId: string, firstAttackBonus: number, isAttack = false, upgrade?: Upgrade,
+  /** 这张牌的实例 id —— 猎魔人之证退能量时要按它找回那张牌的 `costMarks`。 */
+  cardUid = '',
 ): EffectContext {
   const label = `「${cardName(cardId)}」`;
   /** 打磨 — the deltas are folded in at the four places a card can hand something out, which is what
@@ -839,6 +918,8 @@ function makeContext(
   const bonusSwing = isAttack && !s.marks?.['extraHit:spent']
     ? relicFlagSlot(s, 'extraHitFirstAttack')
     : undefined;
+  /** 猎魔人之证 — `undefined` means 「这张牌还没造成过伤害」, which is not the same as `false`. */
+  let hunted: boolean | undefined;
 
   const strike = (target: EnemyState, amount: number) => {
     // `printed` is what the card says it does, upgrade included — so the 余势 swing halves *that*
@@ -852,7 +933,29 @@ function makeContext(
       + firstAttackBonus
       + relicModifier(s, 'attackDamage');
     s.hits = (s.hits ?? 0) + 1;
-    dealToEnemy(s, target, Math.max(0, printed + extra), label);
+    // 血云雾霭之卷 — 「对血气旺盛的敌人额外造成 30% 伤害」. A **multiplier on the finished hit**, not
+    // another flat bonus, which is what the wording says and what a flat `attackDamage` could not
+    // express. The relic decides who counts as 血气旺盛 (the target is handed to it); the engine only
+    // scales by whatever it answers.
+    const healthy = relicModifier(s, 'healthyDamage', { subject: target });
+    const scaled = healthy
+      ? Math.floor(Math.max(0, printed + extra) * (1 + healthy / 100))
+      : Math.max(0, printed + extra);
+    // 猎魔人之证 — resolved **once per card**, lazily, on this card's first point of damage. Lazily
+    // because 「伤害性手牌」 has to be judged by what the card actually did: a block card that happens
+    // to be played first must not spend the turn's doubling on nothing.
+    if (hunted === undefined) hunted = claimHuntOnce(s);
+    dealToEnemy(s, target, hunted ? scaled * 2 : scaled, label);
+    if (hunted) {
+      log(s, `猎魔人之证 · 「${cardName(cardId)}」这一击翻倍（${scaled} → ${scaled * 2}）。`, 'special');
+      drawCards(s, 1);
+    }
+    // 击杀退还 —— 只在这一击**真的把人打死**时退，而且退的是那张牌**印着的**费用：引火减掉的那一点
+    // 也在内，因为文案说的是「退还那张牌消耗的能量」，而它本来就该消耗印着的那个数。
+    // ⚠️ **`target.hp <= 0`，不是 `target.dead`。** `dead` 是 `settle` 标的，而 `settle` 在整个效果
+    // 跑完之后才跑——所以在 `strike` 里那个标志**永远是 false**，退还从来没触发过。`dealToEnemy`
+    // 已经把生命压在 0 了，那才是这一击有没有打死的直接证据。
+    if (hunted && target.hp <= 0) refundEnergy(s, cardUid, cardId);
     if (bonusSwing && !s.marks?.['extraHit:spent'] && !target.dead) {
       // The sub slot swings at half. Half of the card's own printed damage either way, not half of
       // the buffed total — it is the swing that repeats, not everything 锋锐 and 烙印 did to it.
@@ -1246,8 +1349,9 @@ function beginTurn(s: BattleState) {
   s.attackPlayed = false;
   s.skillPlayedThisTurn = false;
   s.banking = false;
-  // 「每回合第一次被攻击」 is per turn; 「每场战斗第一次」 is not.
-  if (s.marks) s.marks = { ...s.marks, 'attacked:turn': 0 };
+  // 「每回合第一次被攻击」 is per turn; 「每场战斗第一次」 is not. 猎魔人之证's doubling is the same shape
+  // — `hunt:used` is the mark its next 「本回合第一张造成伤害的牌」 is waiting on.
+  if (s.marks) s.marks = { ...s.marks, 'attacked:turn': 0, 'hunt:used': 0 };
   // 反震 and 攒烬 live for one full round: they are set during your turn and must survive the enemy
   // phase they were bought to punish, so they are cleared here rather than on 结束回合.
   setStatus(s.player.statuses, 'retaliate', 0);
@@ -1495,13 +1599,13 @@ export function playCard(source: BattleState, cardUid: string, targetUid?: strin
     // directly, and rewriting all twenty-six of those to go through a setter is a large change for a
     // bonus that only ever lands once.
     const powersBefore = upgrade?.power ? { ...s.powers } : undefined;
-    effect(makeContext(s, card.cardId, firstAttackBonus, attack, upgrade));
+    effect(makeContext(s, card.cardId, firstAttackBonus, attack, upgrade, card.uid));
     if (powersBefore) {
       for (const key of Object.keys(s.powers) as (keyof typeof s.powers)[]) {
         if (s.powers[key] > powersBefore[key]) s.powers[key] += upgrade!.power!;
       }
     }
-  } else if (card.cardId === OATH.id) playOath(s, makeContext(s, card.cardId, 0));
+  } else if (card.cardId === OATH.id) playOath(s, makeContext(s, card.cardId, 0, false, undefined, card.uid));
   else if (card.cardId !== 'ash') log(s, `「${cardName(card.cardId)}」还没有实装效果。`, 'neutral');
 
   // 双生镜 — the first card of the battle comes back to hand instead of going to the discard. The

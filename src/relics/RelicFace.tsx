@@ -39,7 +39,7 @@ function useTilt() {
   };
 }
 
-/** How many motes a relic gets. Only the top two rungs move, so a page of 71 stays calm. */
+/** How many motes a relic gets. Only the top two rungs move, so a page of 73 stays calm. */
 const MOTES: Record<string, number> = { arcanum: 6, echo: 12 };
 
 /**
@@ -64,12 +64,15 @@ export function RelicFace({ relic, compact, showSub = true, refine }: {
   const tilt = useTilt();
   return <article
     ref={tilt.ref} onPointerMove={tilt.onPointerMove} onPointerLeave={tilt.onPointerLeave}
-    className={`rl rl-${relic.tier} ${compact ? 'rl-compact' : ''} ${refine ? 'rl-refined' : ''}`}
+    className={`rl rl-${relic.tier} ${compact ? 'rl-compact' : ''} ${refine ? 'rl-refined' : ''} ${relic.mainOnly ? 'rl-mainonly' : ''}`}
     style={{ '--tier': tier.accent } as CSSProperties}
     data-relic={relic.id} data-rank={RANK_OF[relic.tier]}>
     <div className="rl-inner">
       <div className="rl-art" style={{ backgroundImage: `url(/assets/relics/${relic.id}.webp)` }} />
       <div className="rl-scrim" />
+      {/* 箔光:一道缓慢扫过的暗金窄带。**高雅不是堆料**——所以它很淡、很慢（7.5 秒一趟，其中三分之二
+          的时间什么都不发生），而且只这两件有。绝响已经会浮尘和全息；再叠一层会亮的动效就变成廉价了。 */}
+      {relic.mainOnly && <span className="rl-foil" aria-hidden="true" />}
       <div className="rl-ribbon"><span className="rl-tier">{tier.name}</span><span className="rl-kind">遗物</span></div>
       <div className="rl-body">
         {/* No 已淬炼 mark on the name line. It would fit for 铁钉 and wrap for 守夜人的提灯, and a
@@ -77,10 +80,17 @@ export function RelicFace({ relic, compact, showSub = true, refine }: {
             is arranged to avoid. The mark rides the gold strip at the top instead. */}
         <h3 className="rl-name"><span>{relic.name}</span></h3>
         <p className="rl-text">{relic.text}</p>
-        {showSub && <div className="rl-sub">
-          <span className="rl-sub-tag">副槽</span>
-          <p>{relic.sub}</p>
-        </div>}
+        {/* 只能装主槽的那几件：副槽那一行印的**不是**一个减弱的效果，是一句拒绝。用一枚「主」印
+            代替「副槽」标签，一眼就分得出「这半张是它的另一半」和「这半张它没有」。 */}
+        {showSub && (relic.mainOnly
+          ? <div className="rl-sub rl-sub-sealed">
+            <span className="rl-seal">主</span>
+            <p>{relic.sub}</p>
+          </div>
+          : <div className="rl-sub">
+            <span className="rl-sub-tag">副槽</span>
+            <p>{relic.sub}</p>
+          </div>)}
       </div>
       {/* ⚠️ **At the top, under the ribbon — not in the text block.** `.rl-body` is bottom-anchored
           with a fixed height, which is exactly what keeps a row of cards' names on one line; a

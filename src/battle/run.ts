@@ -634,6 +634,9 @@ export function offerDraw(run: ChapterRun, options: string[], slot: 'main' | 'su
 export function claimRelic(run: ChapterRun, relicId: string, placeIn: 'main' | 'sub'): ChapterRun {
   const draw = run.pendingDraw;
   if (!draw || !draw.options.includes(relicId)) return run;
+  // 只能装在主槽的那几件（见 `RelicDefinition.mainOnly`）：**在 run 这一层拒绝**，不是只把界面上的
+  // 按钮置灰——界面是提示，这里是规则。存档校验（`isValidRun`）另有一道。
+  if (placeIn === 'sub' && RELIC_BY_ID.get(relicId)?.mainOnly) return run;
   const next: ChapterRun = {
     ...run,
     relics: { ...run.relics, [placeIn]: relicId },
@@ -852,6 +855,14 @@ export interface BattleOutcome {
   healed: number;
   /** Gold this victory paid, relics included. */
   gold: number;
+  /**
+   * Relics the fight **destroyed** — 血云雾霭之卷 burning itself out to save you. Empty on every other
+   * victory, and empty on a defeat because a defeat hands the run back untouched.
+   *
+   * The result panel reads it: losing a relic is the kind of thing that has to be said out loud, and
+   * the log line that announced it is two screens back by then.
+   */
+  brokenRelics: string[];
   /** True when this victory beat the chapter's last encounter. */
   chapterCleared: boolean;
 }
@@ -884,7 +895,8 @@ function goldFor(run: ChapterRun, state: BattleState, encounterId: string): { ru
  * rest of this module is built on.
  */
 export function finishBattle(run: ChapterRun, state: BattleState): BattleOutcome {
-  const nothing = { heal: 0, healed: 0, gold: 0, chapterCleared: false };
+  // A defeat hands the run back untouched — including its relics, so nothing was broken by it.
+  const nothing = { heal: 0, healed: 0, gold: 0, chapterCleared: false, brokenRelics: [] };
   if (state.phase !== 'won') return { run, won: false, ...nothing };
   // No linear guard any more: which fights are legal is the *map's* business now, and the map
   // already refused the step before the battle started. `cleared` is de-duplicated instead, so a
@@ -936,10 +948,38 @@ export function finishBattle(run: ChapterRun, state: BattleState): BattleOutcome
     // what the graded fights add on top.
     rewardDue: state.encounterId,
   };
+  /**
+   * 血云雾霭之卷 在战斗里烧掉了自己。
+   *
+   * ⚠️ **战斗不能自己把它从 run 里拿走**，因为它只拿到一份 `state`：它在 `state.relics` 里摘掉那一格、
+   * 在 `marks` 上留一个 `broken:<id>` 记号，真正拥有遗物的是 run，所以由这里结算——和回血、金币、
+   * `cleared` 走同一条路。
+   *
+   * 顺带把它的淬炼档位一起清掉：一件不在身上的遗物留着一个档位，下次抽到同一件会带着上一次的
+   * 淬炼回来，而那是**已经烧掉的那一卷**的档位。
+   */
+  // ⚠️ **只报 run 真的带着的那些。** 记号是战斗留在 `marks` 上的，而 `finishBattle` 只拿到一份 state
+  // ——把状态里的每一个记号都当成「碎了一件」来报，会在战斗与 run 对不上的时候（换过主副、或者
+  // 调用方拿错了 state）给玩家看一条不存在的损失。
+  const broken = Object.keys(state.marks ?? {})
+    .filter(key => key.startsWith('broken:'))
+    .map(key => key.slice('broken:'.length))
+    .filter(id => run.relics.main === id || run.relics.sub === id);
+  const survivingRelics = broken.length ? (() => {
+    const held = { ...next.relics };
+    for (const slot of ['main', 'sub'] as const) if (held[slot] && broken.includes(held[slot]!)) delete held[slot];
+    return held;
+  })() : next.relics;
+  const survivingRefined = broken.length
+    ? Object.fromEntries(Object.entries(next.refined ?? {}).filter(([id]) => !broken.includes(id)))
+    : next.refined;
+  const settled: ChapterRun = { ...next, relics: survivingRelics, refined: survivingRefined };
+
   return {
-    run: next, won: true, heal,
+    run: settled, won: true, heal,
     healed: hp - state.player.hp, gold: paid.gold,
-    chapterCleared: isChapterCleared(next),
+    brokenRelics: broken,
+    chapterCleared: isChapterCleared(settled),
   };
 }
 
@@ -994,6 +1034,9 @@ export function isValidRun(value: unknown): value is ChapterRun {
     if (id !== undefined && !RELIC_BY_ID.has(id)) return false;
   }
   if (run.relics.main !== undefined && run.relics.main === run.relics.sub) return false;
+  // 只能装主槽的那几件。`claimRelic` 已经拒绝过一次，但**存档是可以手改的**，而一件装错槽位的遗物
+  // 会安静地按副槽的效果运行（对这两件来说是「什么都不发生」）——那正是这一整套校验存在的理由。
+  if (run.relics.sub !== undefined && RELIC_BY_ID.get(run.relics.sub)?.mainOnly) return false;
   // 淬炼. Every entry has to name a relic that exists **and** is being carried: one for a relic the
   // run no longer holds is a number nobody can see, and it would sit there waiting to become a free
   // upgrade the moment that relic was drawn again.

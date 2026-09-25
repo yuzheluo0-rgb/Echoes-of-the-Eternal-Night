@@ -54,11 +54,27 @@ export interface RelicDefinition {
   chapter: number;
   /** One line of provenance for the compendium. */
   lore: string;
+  /**
+   * 这件东西**只能装在主槽**。
+   *
+   * Every other relic in the set is one object with two ways to carry it: the 主 slot gives the
+   * printed effect and the 副 slot a lesser version of the same idea. These are not that — they are a
+   * thing that only works when it leads. Writing a fake "lesser version" for a slot they can never
+   * occupy would be the 副槽 lying about a slot it does not have, so `sub` says the true reason
+   * instead and this flag carries the rule everywhere it has to be enforced:
+   * `claimRelic`, `isValidRun`, the draw panel, and the card face.
+   */
+  mainOnly?: boolean;
 }
 
 const R = (
   id: string, name: string, tier: RelicTier, text: string, sub: string, chapter: number, lore: string,
 ): RelicDefinition => ({ id, name, tier, text, sub, chapter, lore });
+
+/** 只能装在主槽的那几件 —— see `RelicDefinition.mainOnly`. */
+const R1 = (
+  id: string, name: string, tier: RelicTier, text: string, chapter: number, lore: string,
+): RelicDefinition => ({ id, name, tier, text, sub: '不可置于副槽。', chapter, lore, mainOnly: true });
 
 /**
  * The set. Grouped by rung so the shape of the ladder stays legible when editing.
@@ -168,6 +184,24 @@ export const RELICS: RelicDefinition[] = [
   R('sand-of-time', '时间之砂', 'echo', '每回合抽 7 张牌。', '每回合抽 6 张牌。', 3, '抓一把，能听见很多年前的风声。'),
   R('watcher-remains', '守夜人遗骨', 'echo', '战斗开始时，抽牌堆中随机一张牌在本回合免费打出。', '战斗开始时，抽牌堆中随机一张牌在本回合费用 -1。', 3, '他到底守到了第几个晚上，没人记得。'),
   R('final-chapter', '长夜终章', 'echo', '每场战斗第 10 回合起，你造成的所有伤害翻倍。', '每场战斗第 12 回合起，你造成的所有伤害翻倍。', 3, '最后一页，字迹和前面完全不同。'),
+
+  // ---------------------------------------------------------- 绝响 · 无名之物
+  // The two below are **主槽 only** (`mainOnly`), and they are the only relics in the set that are.
+  // A relic's two slots exist so the same object can be carried two ways; these two are not two ways
+  // of carrying anything — they are a thing that only does what it does when it is the one you lead
+  // with. The sub line therefore says so instead of pretending to be a lesser version of the same
+  // effect, which is what every other relic's sub line is.
+  // ⚠️ 文案被卡面**截断过一次**：`.rl-text` 是固定三行，第一版写了 66 个字，在卡面上显示成
+  // 「…受到致命伤时改为吸收血雾、」。数字一个都不能少，所以只能把句子收紧——这一整套遗物的
+  // 文案都是这个长度，不是它们特别短。
+  R1('blood-mist', '血云雾霭之卷', 'echo',
+    '你造成的伤害按 20% 回复生命。生命高于六成的敌人多受 30% 伤害。'
+    + '致命伤时改为回复 15% 生命，卷轴焚毁。',
+    3, '它从一个人的身体里升起来，那人死了很久，雾还没有散。'),
+  R1('hunter-mark', '猎魔人之证', 'echo',
+    '每回合第一张造成伤害的牌翻倍，并抽 1 张。'
+    + '若它直接击杀，退还该牌的全部能量。',
+    3, '发证的人一个也没回来过，证件倒是陆续回来了。'),
 ];
 
 export const RELIC_BY_ID = new Map(RELICS.map(relic => [relic.id, relic]));
