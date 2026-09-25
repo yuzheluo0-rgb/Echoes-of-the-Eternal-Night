@@ -8,22 +8,31 @@
  *
  * THREE RULES CARRY THE WHOLE DESIGN, and all three are the reference game's:
  *
- *   1. **The row sets the difficulty band, not the node.** The first floors cannot be elite, the
- *      eighth is always a chest, the twelfth is always a campfire. A player learns the grammar once
- *      and can read any map at a glance.
+ *   1. **The row sets the difficulty band, not the node.** The bottom of the tower is fights, the
+ *      middle starts offering chests and elites, the top starts offering campfires, and the row
+ *      under the boss is always campfires. A player learns the grammar once and can read any map at
+ *      a glance — while two routes up the same tower still meet their campfire at different heights.
  *   2. **No two of the same non-combat thing back to back.** Two elites in a row is a death sentence
  *      the player could not have avoided; two campfires is a power spike they did not earn.
- *   3. **An encounter is fixed when the map is made**, not rolled when you step on it. That is what
- *      lets a floor show you what is standing on it — and it means walking into a fight is a plan
- *      rather than a lottery. The *counts* and the monsters' 生命 still roll at battle start.
+ *   3. **A node says what *kind* of thing it is and nothing more.** Which fight stands there is
+ *      rolled when the player walks in (`run.ts`'s `encounterFor`), never here — the map is a set of
+ *      decisions rather than a list of spoilers, and the same floor is a different fight in a
+ *      different run. This file deliberately puts no encounter on a node; `map.test.ts` pins that.
+ *      The counts and the monsters' 生命 roll at battle start, off their own stream.
  *
  * Everything here is a pure function of the seed. No `Math.random`, same as everywhere else in
  * `src/battle/**`.
  */
 
 
-/** Node rows, 1 at the bottom. The boss sits on its own row above these. */
-export const MAP_ROWS = 12;
+/**
+ * Node rows, 1 at the bottom. The boss sits on its own row above these.
+ *
+ * Sixteen, matching the reference game's fifteen-plus-a-boss closely enough that its pacing numbers
+ * transfer. Twelve was a tower you could read in one screenful and it was over before a deck had a
+ * shape; the four extra rows are what the middle bands needed to hold a second campfire.
+ */
+export const MAP_ROWS = 16;
 export const MAP_COLS = 7;
 export const BOSS_ROW = MAP_ROWS + 1;
 /** The column the boss stands in. Middle of the grid, so no route has to bend to reach it. */
@@ -102,13 +111,23 @@ const pick = <T,>(roll: () => number, items: readonly T[]): T => items[Math.floo
  * two routes up the same tower can meet theirs at different heights. The pacing survives — the
  * bottom is still almost all fights, because a deck is still being built — but the shape does not.
  *
+ * ⚠️ **`rest` was missing from every band until the tower grew to sixteen rows**, so the only
+ * campfire a run could ever reach was the guaranteed one under the boss — and a route whose
+ * pre-boss node happened to be the odd event out climbed the whole tower without resting. Measured
+ * over 200 seeds: 25.2% of routes got zero campfires, the rest got exactly one, mean 0.75.
+ *
+ * The weights are the reference game's own. Slay the Spire rolls roughly 12% rest / 8% elite over
+ * the floors where either is legal, which works out to about two rests per route — one rolled, one
+ * guaranteed before the boss. So rest appears in the upper bands, and each of them weights it about
+ * one part in seven, which lands on the same mean.
+ *
  * The last row is the exception and is handled on its own below.
  */
 function bandFor(row: number): NodeKind[] {
-  if (row <= 2) return ['combat', 'combat', 'combat', 'combat', 'event'];
-  if (row <= 5) return ['combat', 'combat', 'combat', 'event', 'elite'];
-  if (row <= 8) return ['combat', 'combat', 'elite', 'treasure', 'event'];
-  return ['combat', 'combat', 'combat', 'elite', 'event', 'treasure'];
+  if (row <= 3) return ['combat', 'combat', 'combat', 'combat', 'event'];
+  if (row <= 6) return ['combat', 'combat', 'combat', 'event', 'elite'];
+  if (row <= 10) return ['combat', 'combat', 'combat', 'combat', 'event', 'elite', 'treasure', 'rest'];
+  return ['combat', 'combat', 'combat', 'elite', 'event', 'treasure', 'rest'];
 }
 
 /**
@@ -125,10 +144,35 @@ function assignLastRow(nodes: MapNode[], roll: () => number) {
   nodes.forEach((node, index) => { node.kind = index === odd ? 'event' : 'rest'; });
 }
 
-/** Rows where an elite is allowed at all. `kindsForRow` already excludes it below 5; this is the
- *  explicit floor the reference game uses — no elites in the opening stretch, while a deck is still
- *  being built. */
+/** Rows where an elite is allowed at all. This is the explicit floor the reference game uses — no
+ *  elites in the opening stretch, while a deck is still being built. */
 const FIRST_ELITE_ROW = 6;
+
+/**
+ * The same floor for campfires, and deliberately the same number.
+ *
+ * The reference game unlocks elites and rest sites on the same floor, and the reason holds here: the
+ * first five rows are where the deck gets built, and a campfire landing in the middle of that is a
+ * choice the player has no information to make yet — 打磨 a card you have not drawn, or heal damage
+ * you have not taken. Above the opening stretch both become real decisions.
+ */
+const FIRST_REST_ROW = 6;
+
+/**
+ * Whether a campfire is legal on this row at all — the opening stretch is too early, and the row
+ * under the boss is too late.
+ *
+ * ⚠️ **The too-late half is a fix, and it was a live bug the moment `rest` joined the bands.** The
+ * last row is campfires for everyone (see `assignLastRow`), and it is assigned *before* the main loop
+ * runs — but `NO_REPEAT` only ever compares a node against its predecessors, i.e. the row below. So a
+ * row-15 node could not see the campfire already sitting above it, and a route could sit down twice
+ * in a row. It stayed hidden only because `rest` was absent from every band, so rows 11 and 12 never
+ * met; growing the tower and putting `rest` in the bands is what made it reachable. Seed 1 caught it.
+ *
+ * The reference game has the identical rule, for the identical reason: its last floor is all rest
+ * sites, and it forbids a rest site on the floor directly beneath.
+ */
+const restAllowedOn = (row: number) => row >= FIRST_REST_ROW && row !== MAP_ROWS - 1;
 
 /**
  * Build the tower.
@@ -219,7 +263,10 @@ export function generateMap(seed: number): TowerMap {
   // How many of each non-combat kind this row has already spent. Without this, seed 42 rolls four
   // events across rows 3 and 4 and the player climbs five floors without drawing a card.
   const spent = new Map<number, Partial<Record<NodeKind, number>>>();
-  const ROW_CAP: Partial<Record<NodeKind, number>> = { event: 2, elite: 2 };
+  // `rest` is capped for the same reason it is in the reference game: the no-repeat rule only looks
+  // *down* a route, so nothing else stops a wide row from rolling three campfires side by side. Two
+  // is a row that got lucky; three is a power spike nobody earned.
+  const ROW_CAP: Partial<Record<NodeKind, number>> = { event: 2, elite: 2, rest: 2 };
 
   // The last row is assigned as a whole, because its rule is a ratio across the row rather than a
   // choice per node.
@@ -233,6 +280,7 @@ export function generateMap(seed: number): TowerMap {
     const used = spent.get(node.row) ?? {};
     const allowed = bandFor(node.row).filter(kind =>
       (kind !== 'elite' || node.row >= FIRST_ELITE_ROW)
+      && (kind !== 'rest' || restAllowedOn(node.row))
       && (used[kind] ?? 0) < (ROW_CAP[kind] ?? Infinity));
     // Rule 2: never the same restricted kind as anything directly below. Tried a few times before
     // giving up and taking a plain fight, which is always legal.

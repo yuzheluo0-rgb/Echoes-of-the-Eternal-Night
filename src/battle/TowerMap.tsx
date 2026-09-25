@@ -127,7 +127,9 @@ export default function TowerMapView({ run, encounters, onEnter, onLeave }: Towe
       </div>
       <dl className="tw-stats">
         <div><dt>层</dt><dd>{run.at ? map.byId.get(run.at)!.row : 0}<i>/{BOSS_ROW}</i></dd></div>
-        <div><dt>生命</dt><dd>{run.hp}<i>/60</i></dd></div>
+        {/* `run.maxHp`, not the 60 it used to print — a run carrying 生命上限 +N read 「66/60」
+            here, which is the same lie the prep screen's health bar was telling. */}
+        <div><dt>生命</dt><dd>{run.hp}<i>/{run.maxHp}</i></dd></div>
         <div><dt>金币</dt><dd>{run.gold}</dd></div>
         <div><dt>牌组</dt><dd>{run.deck.length}</dd></div>
       </dl>

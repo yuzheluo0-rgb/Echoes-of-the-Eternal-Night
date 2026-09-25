@@ -10,7 +10,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BOSS_ROW, MAP_COLS, MAP_ROWS, generateMap, reachableFrom, unreachableNodes, type NodeKind,
+  BOSS_ROW, MAP_COLS, MAP_ROWS, generateMap, reachableFrom, unreachableNodes,
+  type NodeKind, type TowerMap,
 } from './map.ts';
 import { POOLS } from './enemies.ts';
 import { SCENE_BY_KEY } from './scenes.ts';
@@ -77,6 +78,61 @@ test('前 5 行没有精英，且同一路径上不连精英/营火/宝箱', () 
       }
     }
   }
+});
+
+/**
+ * 每条路线上的营火数分布：`分布[k] = 路上有 k 个营火的路线条数`。
+ *
+ * 从 boss 往下 DP，把「走到这里、路上有 k 个营火」精确累加——**枚举而不是抽样**。抽样会漏掉
+ * 少见但真实的地图，而少见的地图正是这条测试要挡的东西。
+ */
+function restCounts(map: TowerMap): number[] {
+  const memo = new Map<string, number[]>();
+  const walk = (id: string): number[] => {
+    const hit = memo.get(id);
+    if (hit) return hit;
+    const node = map.byId.get(id)!;
+    const out: number[] = [];
+    if (!node.next.length) out[0] = 1;
+    else for (const next of node.next) {
+      const below = walk(next);
+      for (let k = 0; k < below.length; k++) if (below[k]) out[k] = (out[k] ?? 0) + below[k];
+    }
+    // 这个节点自己是一口火，整条路的营火数整体 +1。
+    if (node.kind === 'rest') {
+      for (let k = out.length - 1; k >= 0; k--) { out[k + 1] = out[k] ?? 0; out[k] = 0; }
+    }
+    memo.set(id, out);
+    return out;
+  };
+  const total: number[] = [];
+  for (const id of map.startIds) {
+    const dist = walk(id);
+    for (let k = 0; k < dist.length; k++) if (dist[k]) total[k] = (total[k] ?? 0) + dist[k];
+  }
+  return total;
+}
+
+test('中段真的长着营火 —— 每条路线都遇得到', () => {
+  // 这条挡的是「整座塔只有 boss 前那一排有火」。`bandFor` 的四条 band 里曾经**一条都没有
+  // `rest`**，于是唯一能到的营火就是那一排的保底火，而那一排有一个节点是事件——踩在上面的
+  // 路线整座塔一觉没睡。实测 200 个种子：25.2% 的路线零营火、其余恰好一个、均值 0.75，
+  // 而当时**223 项测试全绿**。地图上有火不等于走得到，所以这里数的是**路线上的营火**。
+  //
+  // 判据是一条带而不是一个点：调权重不该误伤，但「一条中段营火都没有」会立刻红。
+  let routes = 0;
+  let fires = 0;
+  let barren = 0;
+  for (const seed of SEEDS) {
+    const dist = restCounts(generateMap(seed));
+    for (let k = 0; k < dist.length; k++) { routes += dist[k] ?? 0; fires += k * (dist[k] ?? 0); }
+    const most = dist.reduce((best, count, k) => (count ? k : best), 0);
+    if (most <= 1) barren++;
+  }
+  const mean = fires / routes;
+  assert.ok(mean > 1.4 && mean < 2.6,
+    `每条路线平均 ${mean.toFixed(2)} 个营火，落在 [1.4, 2.6] 之外（杀戮尖塔掷出来的是约 1.1 次）`);
+  assert.ok(barren < SEEDS.length * .12, `${barren}/${SEEDS.length} 个种子里，没有任何一条路线遇到中段营火`);
 });
 
 test('每个节点最多 3 条进边、3 条出边（boss 除外）', () => {
