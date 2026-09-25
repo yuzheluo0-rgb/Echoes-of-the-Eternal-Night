@@ -103,6 +103,14 @@ export interface ChapterRun {
   /** Rolled at the victory: whether a *second* draw follows the main one. Cleared once it is spent. */
   subPending?: boolean;
   /**
+   * Has this run ever been owed a relic draw? Set by the first graded win **or** by the row-3
+   * guarantee, and never cleared.
+   *
+   * It cannot be inferred from `relics` being empty: a player may have drawn one and thrown it away,
+   * and the guarantee firing again would hand out a second relic for discarding the first.
+   */
+  relicGranted?: boolean;
+  /**
    * The tower this run is climbing. Always present, and a pure function of `seed` — it is stored
    * rather than recomputed because it is what `at` and `path` refer *into*, and a generator change
    * would otherwise move the player onto a different node mid-run.
@@ -557,6 +565,16 @@ export function restHeal(run: ChapterRun): ChapterRun {
 }
 
 /** Fights that pay a relic draw. Elite, miniboss and boss — the graded ones. */
+/**
+ * The floor by which a run is **guaranteed** to have been offered a relic, if an elite has not already
+ * done it. See the note in `finishBattle` — the short version is that 21.8% of routes never meet an
+ * elite, and a run with no relic can never use a 淬炼 event.
+ *
+ * Row 3 and not row 1: the first two rows are the tutorial stretch, and handing over a relic before
+ * the deck has a shape makes the choice of which slot to put it in a coin flip.
+ */
+export const FIRST_RELIC_ROW = 3;
+
 const GRADED_POOLS = new Set(['elite', 'boss']);
 
 /** Does beating this encounter earn a relic draw? */
@@ -834,7 +852,18 @@ export function finishBattle(run: ChapterRun, state: BattleState): BattleOutcome
   // A graded victory also rolls the sub slot. Rolled here rather than when the sub offer is made so
   // the result is part of the same settled outcome — the player sees "a second slot opened" on the
   // result panel, not as a surprise two screens later.
-  const graded = earnsRelic(state.encounterId);
+  /**
+   * 走到第几层还没有遗物的，这一场补一件。
+   *
+   * **遗物现在只从精英和首领掉，而精英是路线运气**：实测 200 个种子、每条路线走完整座塔，
+   * **21.8% 的路线一个精英都遇不到**——把精英下限从第 6 行提到第 4 行也只压到 16.2%。那些局在打
+   * boss 之前一件遗物都没有，于是「淬火石」这类奇遇对它们是一扇锁着的门，而遗物是这个 run 的成长
+   * 主线，不该由路线决定有没有。
+   *
+   * 只补**一次**，而且是补在**还没拿到**的时候：先遇到精英的人照常从精英那里拿，保证只是托底。
+   */
+  const guaranteed = !run.relicGranted && (nodeAt(run)?.row ?? 0) >= FIRST_RELIC_ROW;
+  const graded = earnsRelic(state.encounterId) || guaranteed;
   const sub = graded ? rollSubSlot(paid.run) : { run: paid.run, opens: false };
 
   const next: ChapterRun = {
@@ -848,6 +877,9 @@ export function finishBattle(run: ChapterRun, state: BattleState): BattleOutcome
     cleared: run.cleared.includes(state.encounterId)
       ? run.cleared : [...run.cleared, state.encounterId],
     subPending: sub.opens || undefined,
+    // Recorded once, ever — the guarantee above reads it, so a run that was topped up on row 3 is not
+    // topped up again on row 4.
+    relicGranted: graded || run.relicGranted || undefined,
     drawDue: graded ? state.encounterId : undefined,
     nextSlot: graded ? 'main' : undefined,
     // Every victory offers a card, graded or not — that is the whole way a deck grows. The relic is
@@ -932,6 +964,7 @@ export function isValidRun(value: unknown): value is ChapterRun {
     if (typeof draw.from !== 'string') return false;
   }
   if (run.subPending !== undefined && typeof run.subPending !== 'boolean') return false;
+  if (run.relicGranted !== undefined && typeof run.relicGranted !== 'boolean') return false;
   if (run.drawDue !== undefined && typeof run.drawDue !== 'string') return false;
   if (run.nextSlot !== undefined && run.nextSlot !== 'main' && run.nextSlot !== 'sub') return false;
   if ((run.drawDue === undefined) !== (run.nextSlot === undefined)) return false;

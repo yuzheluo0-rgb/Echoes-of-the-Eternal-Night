@@ -829,3 +829,67 @@ test('摸到背面那张，必须翻给你看', () => {
   }
   assert.equal(checked, 4, '没抽到背面朝上的牌，这条测试没验到东西');
 });
+
+// ------------------------------------------------------ 第一件遗物的保证
+
+test('走到第 3 层还没有遗物的，赢一场就补一件', () => {
+  // ⚠️ 遗物**只从精英和首领掉**，而精英是路线运气：实测 200 个种子、每条路线走完整座塔，
+  // **21.8% 的路线一个精英都遇不到**（把精英下限从第 6 行提到第 4 行也只压到 16.2%）。那些局在打
+  // boss 之前一件遗物都没有，于是「淬火石」这类奇遇对它们是一扇**锁着的门**——而遗物是这个 run
+  // 的成长主线，不该由路线决定有没有。
+  const map = generateMap(7);
+  const weak = ALL_ENCOUNTERS.find(entry => entry.pool === 'weak')!;
+  const at = (row: number): ChapterRun => {
+    const node = map.nodes.find(n => n.row === row)!;
+    return { ...newRun('blade', 'bone', 7), at: node.id, path: [node.id] };
+  };
+
+  // 第 1、2 行是教学段：赢了也不发。
+  for (const row of [1, 2]) {
+    const before = at(row);
+    const after = finishBattle(before, wonBattle(weak.id, before));
+    assert.equal(after.run.drawDue, undefined, `第 ${row} 层就发遗物太早了`);
+    assert.equal(after.run.relicGranted, undefined);
+  }
+
+  // 第 3 行起，普通战也补。
+  const run = at(3);
+  const after = finishBattle(run, wonBattle(weak.id, run));
+  assert.equal(after.run.drawDue, weak.id, '第 3 层还没有遗物，却没补上');
+  assert.equal(after.run.relicGranted, true, '补了却没记下来——下一场会再补一次');
+  assert.equal(after.run.nextSlot, 'main', '补出来的那一次也要指明进哪个槽');
+  assert.equal(isValidRun(after.run), true, '补出来的存档必须合法');
+});
+
+test('保证只补一次：先遇到精英的人照常从精英拿，不会拿两份', () => {
+  const map = generateMap(7);
+  const weak = ALL_ENCOUNTERS.find(entry => entry.pool === 'weak')!;
+  const elite = ALL_ENCOUNTERS.find(entry => entry.pool === 'elite')!;
+  const node = map.nodes.find(n => n.row === 3)!;
+  const start: ChapterRun = { ...newRun('blade', 'bone', 7), at: node.id, path: [node.id] };
+
+  // 第 3 层先打精英 → 照常发，并记下已经发过。
+  const first = finishBattle(start, wonBattle(elite.id, start)).run;
+  assert.equal(first.drawDue, elite.id);
+  assert.equal(first.relicGranted, true);
+
+  // 之后普通战不再补第二次。
+  const later: ChapterRun = { ...first, at: map.nodes.find(n => n.row === 8)!.id, drawDue: undefined };
+  const second = finishBattle(later, wonBattle(weak.id, later)).run;
+  assert.equal(second.drawDue, undefined, '一场赢了两件遗物——保证和精英的奖励叠上了');
+});
+
+test('保证不认「身上没有遗物」：丢掉之后再赢一场，不会再发一件', () => {
+  // 判据是 run 自己的标记，不是 `relics` 是否为空。用后者的话，玩家把不喜欢的遗物丢掉就能再刷一件。
+  const map = generateMap(7);
+  const weak = ALL_ENCOUNTERS.find(entry => entry.pool === 'weak')!;
+  const node = map.nodes.find(n => n.row === 6)!;
+  const granted: ChapterRun = {
+    ...newRun('blade', 'bone', 7), at: node.id, path: [node.id],
+    relics: { main: 'flint' }, relicGranted: true,
+  };
+  // 两件都丢掉，身上空了——但这一局已经领过。
+  const emptied: ChapterRun = { ...granted, relics: {}, drawDue: undefined };
+  const after = finishBattle(emptied, wonBattle(weak.id, emptied)).run;
+  assert.equal(after.drawDue, undefined, '丢掉遗物就能再领一件');
+});
