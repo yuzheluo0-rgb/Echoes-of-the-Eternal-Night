@@ -67,6 +67,19 @@ export type EventEffect =
    * a real question: the shortcut is real, and so is what you picked up on it.
    */
   | { kind: 'junk'; cardId: string; with?: EventEffect }
+  /**
+   * A trade: **one of your cards leaves the deck and one arrives**, both at random.
+   *
+   * ⚠️ This exists because the prose got ahead of the mechanic. 「和他换一张」 has always read
+   * 「他挑走一张，塞给你一张」, and its effect was `cards(3)` — the player picked one of three and
+   * nothing was ever taken. The card was lying, in the one direction a card must never lie: it said
+   * something had *cost* you and nothing had.
+   *
+   * Random rather than chosen, because the sentence says **他**挑走一张 — he picks. The reveal screen
+   * shows both halves; a swap the player cannot see the losing half of is a swap they will not
+   * believe happened.
+   */
+  | { kind: 'swap' }
   /** Nothing at all, which is sometimes the right answer. */
   | { kind: 'nothing' };
 
@@ -120,6 +133,7 @@ const burn = (): EventEffect => ({ kind: 'remove' });
 const polish = (): EventEffect => ({ kind: 'polish' });
 const copy = (): EventEffect => ({ kind: 'duplicate' });
 const cards = (count: number): EventEffect => ({ kind: 'cards', count });
+const swap = (): EventEffect => ({ kind: 'swap' });
 const nothing = (): EventEffect => ({ kind: 'nothing' });
 const quench = (tier: RefineTier, chance: number): EventEffect => ({ kind: 'refine', tier, chance });
 /**
@@ -339,7 +353,10 @@ export const EVENTS: EventSpec[] = [
     blurb: '一个人坐在路边磨刀。你经过的时候他抬起头，指了指你的牌，又指了指自己的。',
     lean: 'gain',
     options: [
-      { label: '和他换一张', hint: '你不知道他会给你什么。', outcome: '他挑走一张，塞给你一张。那张牌你从来没见过，但握在手里很服帖。', effect: cards(3) },
+      // The hint now warns about **both** halves. It used to say only 「你不知道他会给你什么」, which is
+      // half a warning about a trade that takes as well as gives — and the losing half is the one the
+      // player cannot undo.
+      { label: '和他换一张', hint: '他会抽走一张，然后塞给你一张。两边你都不知道是哪个。', outcome: '他挑走一张，塞给你一张。那张牌你从来没见过，但握在手里很服帖。', effect: swap() },
       { label: '摇头', hint: '不做看不清的交换。', outcome: '他点点头，继续磨刀。你走出去一段路，才想起来没有听见磨刀的声音。', effect: nothing() },
       { label: '坐下来一起磨', hint: '你的刀也该磨了。', outcome: '你们默默磨了半夜。走的时候，你的手比来的时候稳。', effect: polish() },
     ],
@@ -496,6 +513,7 @@ export function describeEffect(effect: EventEffect): string {
     // The odds are printed. A gamble the player cannot price is not a decision, and this is the only
     // option in the table where the stake is not knowable from the label.
     case 'refine': return `${REFINE_LABEL[effect.tier]}一件遗物 · ${effect.chance}% 成功，失败则碎`;
+    case 'swap': return '换走一张牌，换来一张牌';
     case 'junk': {
       const cost = `牌组里多一张「${hazardName(effect.cardId)}」`;
       return effect.with ? `${describeEffect(effect.with)} · ${cost}` : cost;

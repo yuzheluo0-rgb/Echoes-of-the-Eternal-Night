@@ -47,7 +47,7 @@ const GAINING: EventEffect['kind'][] = ['gold', 'hp', 'maxHp', 'relic', 'remove'
  * `hasPrice` below, and that is what stops them reading as free: an option that can only ever cost is
  * still a price, and the label has to say so.
  */
-const COSTLY: EventEffect['kind'][] = ['refine', 'junk'];
+const COSTLY: EventEffect['kind'][] = ['refine', 'junk', 'swap'];
 
 /** Does taking this option leave the player better off, in a way the run can actually count? */
 function isGain(effect: EventEffect): boolean {
@@ -73,6 +73,8 @@ function hasPrice(option: (typeof EVENTS)[number]['options'][number]): boolean {
   // 「淬火石」 fits none of the three labels — the table would have had a floor it could not describe.
   if (effect.kind === 'junk') return true;
   if (effect.kind === 'refine') return true;
+  // 换一张 takes before it gives, and the taking is the half the player cannot take back.
+  if (effect.kind === 'swap') return true;
   return (effect.kind === 'hp' || effect.kind === 'maxHp') && effect.amount < 0;
 }
 
@@ -94,6 +96,7 @@ const SAMPLE: Record<EventEffect['kind'], EventEffect> = {
   duplicate: { kind: 'duplicate' },
   cards: { kind: 'cards', count: 3 },
   refine: { kind: 'refine', tier: 'small', chance: 80 },
+  swap: { kind: 'swap' },
   junk: { kind: 'junk', cardId: 'dross' },
   nothing: { kind: 'nothing' },
 };

@@ -133,6 +133,22 @@ export interface ChapterRun {
   /** The cards a `pick` task is offering. */
   cardOptions?: CardOffer[];
   /**
+   * Cards that have **already** moved in or out of the deck, waiting to be looked at.
+   *
+   * A `pick` shows its cards by definition — the choosing *is* the display. Every other way a card
+   * moves does not: 「一捆牌」 prints 「直接获得 2 张牌」 and the two cards arrive unseen, and 换一张
+   * takes one out without ever saying which. Both are reported here instead, and the reveal screen
+   * holds them until 继续 — same split as 打磨's `repairCard` / `dismissCard`, for the same reason:
+   * the player is owed a look at what just happened to their deck.
+   */
+  cardReveal?: {
+    gained: CardOffer[];
+    /** The card that left the deck, if any. 换一张 loses one and gains one. */
+    lost?: string;
+    /** The headline: where this happened, as the player reads it. */
+    from: string;
+  };
+  /**
    * A 淬炼 the player still owes — **which relic** is the decision, so it waits for a pick like
    * `cardTask` does. The tier and the odds come from the option they chose, so both are carried here
    * rather than re-read from the event: the event's identity is derived from the node, and a save
@@ -257,11 +273,7 @@ export function claimReward(run: ChapterRun): ChapterRun {
     case 'relic': return { ...paid, drawDue: 'reward', nextSlot: 'main' };
     case 'cards': return effect.pick
       ? { ...paid, cardTask: 'pick', cardOptions: rollOffers(paid, effect.count) }
-      : {
-        ...paid,
-        deck: [...paid.deck, ...rollOffers(paid, effect.count).map(offer =>
-          offer.upgraded ? { cardId: offer.cardId, upgraded: true } : { cardId: offer.cardId })],
-      };
+      : gainCards(paid, effect.count, '战利品');
     case 'remove': return { ...paid, cardTask: 'remove' };
     case 'polish': return { ...paid, cardTask: 'polish' };
     case 'duplicate': return { ...paid, cardTask: 'duplicate' };
@@ -269,9 +281,31 @@ export function claimReward(run: ChapterRun): ChapterRun {
 }
 
 /** Roll `count` card ids for the player to choose between, advancing the run's stream. */
-function rollOffers(run: ChapterRun, count: number): CardOffer[] {
+/**
+ * Roll `count` cards off the run's stream.
+ *
+ * `mystery` is 奇遇 only — see `CardOffer.hidden`. A reward is what a fight paid out, so it is always
+ * face up; a hole in the ground is allowed to hide what is in it.
+ */
+function rollOffers(run: ChapterRun, count: number, mystery = false): CardOffer[] {
   return rollCardOffer(rewardCardPool(run.main, run.sub), count, () => nextRandom(run),
-    fullDeckPool([run.main, run.sub]));
+    fullDeckPool([run.main, run.sub]), mystery);
+}
+
+/** A `CardOffer` as the deck stores it. The 已打磨 flag has to travel with the card. */
+const asRunCard = (offer: CardOffer): RunCard =>
+  (offer.upgraded ? { cardId: offer.cardId, upgraded: true } : { cardId: offer.cardId });
+
+/**
+ * Put `count` rolled cards into the deck **and stage them for the reveal**.
+ *
+ * The staging is the point. A card that arrives with no screen is a card the player never reads, and
+ * 「一捆牌」 has been handing over two of them behind a line of text that says only how many.
+ */
+function gainCards(run: ChapterRun, count: number, from: string): ChapterRun {
+  const gained = rollOffers(run, count);
+  if (!gained.length) return run;
+  return { ...run, deck: [...run.deck, ...gained.map(asRunCard)], cardReveal: { gained, from } };
 }
 
 /**
@@ -290,7 +324,12 @@ export function chooseCard(run: ChapterRun, index: number | null): ChapterRun {
     if (!offer) return run;
     // The 已打磨 flag travels with the card into the deck — a polished offer that arrived unpolished
     // would be the offer screen lying about what the player picked.
-    return { ...addCard(run, offer.cardId, offer.upgraded), cardTask: undefined, cardOptions: undefined };
+    const taken = addCard(run, offer.cardId, offer.upgraded);
+    const cleared = { ...taken, cardTask: undefined, cardOptions: undefined };
+    // A card picked **blind** is turned over here. Choosing a deck's back and then never finding out
+    // which card it was would make the mystery a shrug instead of a beat — the same rule 打磨's reveal
+    // follows, applied to the one pick the player could not read on the way in.
+    return offer.hidden ? { ...cleared, cardReveal: { gained: [offer], from: '你摸到的那张' } } : cleared;
   }
   if (index === null) return { ...run, cardTask: undefined, cardOptions: undefined };
   const next = task === 'remove' ? removeCard(run, index)
@@ -325,6 +364,12 @@ export function repairCard(run: ChapterRun, index: number): ChapterRun {
 export function dismissCard(run: ChapterRun): ChapterRun {
   if (!run.cardTask) return run;
   return { ...run, cardTask: undefined, cardOptions: undefined };
+}
+
+/** Close the card reveal. The deck has already moved; this only ends the look at it. */
+export function dismissReveal(run: ChapterRun): ChapterRun {
+  if (!run.cardReveal) return run;
+  return { ...run, cardReveal: undefined };
 }
 
 // --------------------------------------------------------------- the campfire
@@ -391,13 +436,30 @@ function applyEventEffect(afterCost: ChapterRun, effect: EventEffect): ChapterRu
     // The relic is not chosen yet — `relicTask` holds the bet until the player picks which one to put
     // in the fire. See `answerRefine`.
     case 'refine': return { ...afterCost, relicTask: { tier: effect.tier, chance: effect.chance } };
+    // 换一张 — 「他挑走一张，塞给你一张」. **He** picks, hence the random removal, and both halves are
+    // staged for the reveal: a trade whose losing half is invisible reads as a gift that glitched.
+    case 'swap': {
+      const next: ChapterRun = { ...afterCost };
+      const gained = rollOffers(next, 1);
+      if (!gained.length || !next.deck.length) return next;
+      const lostIndex = Math.floor(nextRandom(next) * next.deck.length);
+      const lost = next.deck[lostIndex].cardId;
+      return {
+        ...next,
+        deck: [...next.deck.filter((_, i) => i !== lostIndex), asRunCard(gained[0])],
+        cardReveal: { gained, lost, from: '换来的' },
+      };
+    }
     // A hazard. It goes straight into the deck — no picker, because the whole point is that you did
     // not choose it. Whatever it came attached to lands after it, so the option's own ledger line
     // still reads cost-first.
     case 'junk': return effect.with
       ? applyEventEffect(addCard(afterCost, effect.cardId), effect.with)
       : addCard(afterCost, effect.cardId);
-    case 'cards': return { ...afterCost, cardTask: 'pick', cardOptions: rollOffers(afterCost, effect.count) };
+    // `mystery` — an 奇遇's cards may come face down. See `CardOffer.hidden`.
+    case 'cards': return {
+      ...afterCost, cardTask: 'pick', cardOptions: rollOffers(afterCost, effect.count, true),
+    };
     case 'nothing': return afterCost;
   }
 }
@@ -877,6 +939,15 @@ export function isValidRun(value: unknown): value is ChapterRun {
   if (run.resolved !== undefined && typeof run.resolved !== 'string') return false;
   if (run.pendingReward !== undefined && !REWARD_BY_ID.has(run.pendingReward)) return false;
   if (run.cardTask !== undefined && !['pick', 'remove', 'polish', 'duplicate'].includes(run.cardTask)) return false;
+  if (run.cardReveal !== undefined) {
+    const reveal = run.cardReveal;
+    if (!reveal || typeof reveal !== 'object' || typeof reveal.from !== 'string') return false;
+    if (!Array.isArray(reveal.gained) || !reveal.gained.length) return false;
+    for (const offer of reveal.gained) {
+      if (!offer || typeof offer.cardId !== 'string' || !CARD_BY_ID.has(offer.cardId)) return false;
+    }
+    if (reveal.lost !== undefined && !CARD_BY_ID.has(reveal.lost)) return false;
+  }
   if (run.relicTask !== undefined) {
     const task = run.relicTask;
     if (!task || (task.tier !== 'small' && task.tier !== 'large')) return false;
@@ -911,6 +982,7 @@ export function isValidRun(value: unknown): value is ChapterRun {
       if (typeof offer.cardId !== 'string' || !CARD_BY_ID.has(offer.cardId)) return false;
       if (offer.upgraded !== undefined && typeof offer.upgraded !== 'boolean') return false;
       if (offer.beyond !== undefined && typeof offer.beyond !== 'boolean') return false;
+      if (offer.hidden !== undefined && typeof offer.hidden !== 'boolean') return false;
     }
     if (new Set(run.cardOptions.map(offer => offer.cardId)).size !== run.cardOptions.length) return false;
   }

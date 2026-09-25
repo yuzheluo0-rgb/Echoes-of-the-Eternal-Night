@@ -47,12 +47,15 @@ import {
 import { creditAndSave, earnedCards, unlocksFor } from './cardUnlocks.ts';
 import {
   answerRefine, canEnterNode, campfire, chooseCard, claimRelic, claimReward, deckFor, discardRelic,
-  dismissCard, dismissRefine, enterNode, repairCard,
+  dismissCard, dismissRefine, dismissReveal, enterNode, repairCard,
   nodeAt, offerDraw, resolveEvent, rollOffer, rollPendingReward, swapRelics,
 } from './run.ts';
 import { REWARD_BY_ID } from './rewards.ts';
 import { eventForNode, type EventOption } from './events.ts';
-import { CampfireScreen, CardPicker, EventScreen, RefineScreen, RewardScreen, type CampfirePick } from './NodeScreen.tsx';
+import {
+  CampfireScreen, CardPicker, CardRevealScreen, EventScreen, RefineScreen, RewardScreen,
+  type CampfirePick,
+} from './NodeScreen.tsx';
 import { ALL_ENCOUNTERS, ENCOUNTER_BY_ID } from './enemies.ts';
 import { BOSS_ROW } from './map.ts';
 import TowerMapView from './TowerMap.tsx';
@@ -903,7 +906,13 @@ export default function BattleDemo() {
   // --- the screens that take the whole frame, in the order they can be outstanding ----------------
   // A card choice is the tail of a reward, so it comes first; the reward it came from is already
   // spent by then. Then the reward itself, then the relic draw, then the floor's own question.
-  // 淬炼 comes first: it is the tail of a 奇遇, and the floor's own screen must not come back while the
+  // The card reveal is checked first because it is terminal: whatever moved the cards — a 战利品 or a
+  // 奇遇 — is already settled, and nothing else can be outstanding beside it.
+  if (run.cardReveal) {
+    return <CardRevealScreen run={run} audioOn={audioOn}
+      onDone={() => { const next = dismissReveal(run); saveRun(next); setRun(next); }} />;
+  }
+  // 淬炼 comes next: it is the tail of a 奇遇, and the floor's own screen must not come back while the
   // reveal is still on it.
   if (run.relicTask) {
     return <RefineScreen run={run} onPick={putRelicInFire}

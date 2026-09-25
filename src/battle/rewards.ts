@@ -156,6 +156,15 @@ export interface CardOffer {
   /** True when this card is **not** in the run's pool — a glimpse of what the rest of the library
    *  holds. The picker says so, because a card the player cannot otherwise get should look like one. */
   beyond?: boolean;
+  /**
+   * Offered **face down**: the picker shows the deck's own back instead of the card.
+   *
+   * 奇遇 only — a reward is something a fight paid for, and hiding it would be taking back part of the
+   * payment. An event is a hole in the ground you put your hand into, and the whole fiction of the
+   * floor is that you do not know what is in there. The back still says **which deck** it came from,
+   * so the choice is 「一张断罪之刃的牌」 and not a coin flip.
+   */
+  hidden?: boolean;
 }
 
 /**
@@ -169,6 +178,13 @@ export interface CardOffer {
  */
 export const UPGRADE_OFFER_CHANCE = 17;
 export const BEYOND_OFFER_CHANCE = 11;
+
+/**
+ * How often an 奇遇's offer comes up **face down**. Roughly two cards in five, so most picks offer a
+ * mix rather than a whole hand of mysteries — a pick where nothing is legible is a lottery, and the
+ * point is to make the choice interesting rather than to remove it.
+ */
+export const HIDDEN_OFFER_CHANCE = 38;
 
 /**
  * Every card of a deck that the engine can actually **play**, unlocked or not — the pool the 未解锁
@@ -192,7 +208,9 @@ export function fullDeckPool(decks: string[]): string[] {
  * run still replays identically, and so adding a tease later cannot silently reshuffle which cards
  * come up.
  */
-export function rollCardOffer(pool: string[], count: number, roll: () => number, beyond: string[]): CardOffer[] {
+export function rollCardOffer(
+  pool: string[], count: number, roll: () => number, beyond: string[], mystery = false,
+): CardOffer[] {
   const left = [...pool];
   const wide = beyond.filter(id => !pool.includes(id));
   const offers: CardOffer[] = [];
@@ -206,7 +224,15 @@ export function rollCardOffer(pool: string[], count: number, roll: () => number,
       if (dup >= 0) left.splice(dup, 1);
     }
     const upgraded = roll() * 100 < UPGRADE_OFFER_CHANCE;
-    offers.push({ cardId: id, ...(upgraded ? { upgraded: true } : {}), ...(goWide ? { beyond: true } : {}) });
+    // 已打磨 is never hidden: the mark is the one thing a face-down card cannot tell you, and
+    // 「一张你看不见的、但已经打磨过的牌」 is strictly worse than either half on its own.
+    const hidden = mystery && !upgraded && roll() * 100 < HIDDEN_OFFER_CHANCE;
+    offers.push({
+      cardId: id,
+      ...(upgraded ? { upgraded: true } : {}),
+      ...(goWide ? { beyond: true } : {}),
+      ...(hidden ? { hidden: true } : {}),
+    });
   }
   return offers;
 }

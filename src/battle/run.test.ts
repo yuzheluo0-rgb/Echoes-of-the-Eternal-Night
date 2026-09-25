@@ -23,11 +23,13 @@ import {
 } from './engine.ts';
 import { ALL_ENCOUNTERS, POOLS } from './enemies.ts';
 import { effectFor } from './effects.ts';
+import { EVENTS } from './events.ts';
+import { REWARD_BY_ID } from './rewards.ts';
 import { fullDeckPool, rewardCardPool, rollCardOffer } from './rewards.ts';
 import { generateMap } from './map.ts';
 import {
   HEAL_MAX, HEAL_MIN, RUN_ENCOUNTERS, addCard, answerRefine, battleSeed, canEnter, canEnterNode,
-  chooseCard, currentEncounter, deckFor, dismissRefine, encounterFor, enterNode, finishBattle, healRoll, holdsRelic,
+  chooseCard, claimReward, currentEncounter, deckFor, dismissRefine, dismissReveal, resolveEvent, encounterFor, enterNode, finishBattle, healRoll, holdsRelic,
   isValidRun, newRun, nextChoices, removeCard, restHeal, spendGold, swapDecks, upgradeCard,
   isChapterCleared, type ChapterRun,
 } from './run.ts';
@@ -733,4 +735,97 @@ test('已打磨的彩头进牌组时真的带着打磨标记', () => {
     assert.equal(added.upgraded, true, '选牌屏说已打磨，进牌组却是原版');
   }
   assert.equal(checked, 5, '三次里都没抽到已打磨的牌，这条测试没验到东西');
+});
+
+// -------------------------------------------------- 牌组的变动必须看得见
+
+test('换一张真的换：走一张、来一张，两张都交给展示屏', () => {
+  // ⚠️ 这条钉的是一个**说谎的文案**。「和他换一张」从写下起就写着「他挑走一张，塞给你一张」，
+  // 而它的效果是 `cards(3)`——玩家自己挑三张里的一张，**什么都没被拿走**。一张牌说某样东西让你
+  // 付出了代价、而实际上没有，是这类 bug 里最不该有的那个方向。
+  const option = EVENTS.find(event => event.id === 'quiet-pilgrim')!.options[0];
+  const run = newRun('blade', 'bone', 4);
+  const after = resolveEvent(run, option);
+  assert.equal(after.deck.length, run.deck.length, '换一张之后牌组张数应当不变');
+  assert.ok(after.cardReveal, '换完没有展示屏——玩家看不到换走了什么');
+  assert.equal(after.cardReveal.gained.length, 1, '换来的不止一张');
+  assert.ok(after.cardReveal.lost, '没记下换走的是哪一张');
+  assert.ok(!after.deck.some(card => card.cardId === after.cardReveal!.lost) === false
+    || after.deck.length === run.deck.length, '换走的牌不该还在牌组里（张数对不上）');
+  // 换走的那一张**必须真的不在牌组里**了。上面那句只是张数检查，这一句点名。
+  const lostCountBefore = run.deck.filter(c => c.cardId === after.cardReveal!.lost).length;
+  const lostCountAfter = after.deck.filter(c => c.cardId === after.cardReveal!.lost).length;
+  assert.equal(lostCountAfter, lostCountBefore - 1, '说换走了，牌组里却一张没少');
+  assert.equal(isValidRun(after), true, '展示屏上的存档过不了校验');
+});
+
+test('直接给牌的奖励，牌必须摆出来 —— 不能只印一句「直接获得 2 张」', () => {
+  // 「一捆牌」给 1 张、「夹在书里的两页」给 2 张，两者都是 `pick: false`：直接进牌组，
+  // 而奖励屏只印一句张数。**卡面一张都不显示**，玩家永远不知道进牌组的是什么。
+  for (const id of ['bundle', 'loose-leaf']) {
+    const reward = REWARD_BY_ID.get(id)!;
+    const run = { ...newRun('blade', 'bone', 6), pendingReward: id };
+    const after = claimReward(run);
+    const count = reward.effect.kind === 'cards' ? reward.effect.count : 0;
+    assert.equal(after.deck.length, run.deck.length + count, `${id}：牌数不对`);
+    assert.ok(after.cardReveal, `${id}：给了牌却没有展示屏`);
+    assert.equal(after.cardReveal!.gained.length, count, `${id}：展示的牌数对不上`);
+    // 展示的就是**真的进了牌组的那几张**，按 id 一一对上。
+    const added = after.deck.slice(run.deck.length).map(card => card.cardId).sort();
+    assert.deepEqual(after.cardReveal!.gained.map(offer => offer.cardId).sort(), added,
+      `${id}：展示的牌和实际进牌组的牌对不上`);
+    assert.equal(isValidRun(after), true, `${id}：展示屏上的存档过不了校验`);
+    assert.equal(dismissReveal(after).cardReveal, undefined, `${id}：继续之后展示屏还没关`);
+  }
+});
+
+test('展示屏能关，且关掉之后张数不变', () => {
+  const run = { ...newRun('blade', 'bone', 8), pendingReward: 'loose-leaf' };
+  const shown = claimReward(run);
+  const closed = dismissReveal(shown);
+  assert.equal(closed.cardReveal, undefined);
+  assert.deepEqual(closed.deck, shown.deck, '关屏不该动牌组');
+});
+
+// ------------------------------------------------------ 选牌的背面朝上
+
+test('奇遇的选牌会出背面朝上的牌，奖励的不会', () => {
+  // 奇遇是「把手伸进洞里」，藏起来是这一层的虚构本身；奖励是打赢挣来的，藏起来等于把报酬收回去一半。
+  const pool = rewardCardPool('blade', 'bone');
+  const wide = fullDeckPool(['blade', 'bone']);
+  const roll = lcg(21);
+  let hidden = 0;
+  for (let i = 0; i < 400; i++) {
+    for (const offer of rollCardOffer(pool, 3, roll, wide, true)) {
+      if (offer.hidden) hidden++;
+      // 已打磨的牌**永远不背过去**：「一张你看不见、但已经打磨过的牌」比两者单独出现都更差。
+      assert.ok(!(offer.hidden && offer.upgraded), '打磨过的牌不该背面朝上');
+    }
+    for (const offer of rollCardOffer(pool, 3, roll, wide, false)) {
+      assert.ok(!offer.hidden, '奖励的牌被背过去了');
+    }
+  }
+  assert.ok(hidden > 0, '掷了 1200 张奇遇牌，一张背面朝上的都没有');
+  // 也不该全都背过去：全是盲选就不是选择，是抽奖。
+  assert.ok(hidden < 1200, '所有奇遇牌都背面朝上，那不是选择');
+});
+
+test('摸到背面那张，必须翻给你看', () => {
+  // 挑了一张牌组的背面、然后永远不知道是哪张——那这个谜就只是个白眼。和打磨的展示屏同一条规矩。
+  const pool = rewardCardPool('blade', 'bone');
+  const wide = fullDeckPool(['blade', 'bone']);
+  const roll = lcg(5);
+  let checked = 0;
+  for (let i = 0; i < 200 && checked < 4; i++) {
+    const offers = rollCardOffer(pool, 3, roll, wide, true);
+    const index = offers.findIndex(offer => offer.hidden);
+    if (index < 0) continue;
+    checked++;
+    const run = { ...newRun('blade', 'bone', i + 1), cardTask: 'pick' as const, cardOptions: offers };
+    const after = chooseCard(run, index);
+    assert.equal(after.cardReveal?.gained[0].cardId, offers[index].cardId, '翻开的那张不是玩家摸到的那张');
+    assert.equal(after.deck[after.deck.length - 1].cardId, offers[index].cardId);
+    assert.equal(isValidRun(after), true);
+  }
+  assert.equal(checked, 4, '没抽到背面朝上的牌，这条测试没验到东西');
 });

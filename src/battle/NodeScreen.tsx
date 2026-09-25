@@ -13,8 +13,8 @@
 
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { sound } from '../audio';
-import { CardFace } from '../cards/CardFace';
-import { CARD_BY_ID } from '../cards/index.ts';
+import { CardBack, CardFace } from '../cards/CardFace';
+import { CARD_BY_ID, DECKS } from '../cards/index.ts';
 import { RARITY_COLOR, RARITY_LABEL, type CardOffer, type RewardSpec } from './rewards.ts';
 import { isUpgradable } from './upgrades.ts';
 import { canAfford, outcomeLine, type EventOption, type EventSpec } from './events.ts';
@@ -134,6 +134,49 @@ export function CampfireScreen({ run, onPick, audioOn }: {
         onHover={() => sound('hover', audioOn)} onClick={() => onPick('burn')} />
       <NodeChoice label="打磨" tone="#d9bc80" hint="把一张牌磨得更好，本局永久生效"
         onHover={() => sound('hover', audioOn)} onClick={() => onPick('polish')} />
+    </div>
+  </NodeShell>;
+}
+
+// -------------------------------------------------------------- the reveal
+
+/**
+ * 这一层对你的牌组做了什么 —— 摆出真的那几张牌。
+ *
+ * A `pick` shows its cards by definition: the choosing *is* the display. **Every other way a card
+ * moves does not.** 「一捆牌」 printed 「直接获得 2 张牌」 and the two cards arrived unseen; 「和他换一张」
+ * read 「他挑走一张」 for a whole round while its effect took nothing at all. The player is owed a look
+ * at both halves — the screen exists for the same reason 打磨's does, and stays until 继续 for the same
+ * reason too (a result that closes itself is a result nobody sees).
+ */
+export function CardRevealScreen({ run, onDone, audioOn }: {
+  run: ChapterRun; onDone: () => void; audioOn: boolean;
+}) {
+  const reveal = run.cardReveal!;
+  const lostCard = reveal.lost ? CARD_BY_ID.get(reveal.lost) : undefined;
+  return <NodeShell kind="treasure" scene={lostCard ? 'rest' : 'event'}
+    kicker={`${reveal.from} · 牌组`}
+    title={lostCard ? '换了一张' : reveal.gained.length > 1 ? `多了 ${reveal.gained.length} 张` : '多了一张'}
+    actions={<button className="nd-primary" onPointerEnter={() => sound('hover', audioOn)}
+      onClick={() => { sound('bell', audioOn); onDone(); }}>继续</button>}
+    footer={`牌组现在 ${run.deck.length} 张。`}>
+    <p className="nd-copy">
+      {lostCard ? '他挑走一张，塞给你一张。两边都在这儿了。' : '已经进牌组了。先看一眼是什么。'}
+    </p>
+    <div className="nd-reveal-row">
+      {reveal.gained.map((offer, index) => {
+        const card = CARD_BY_ID.get(offer.cardId);
+        if (!card) return null;
+        return <div key={`${offer.cardId}-${index}`} className="nd-reveal-card">
+          <CardFace card={card} upgraded={!!offer.upgraded} />
+          {offer.beyond && <span className="nd-card-beyond">未解锁</span>}
+        </div>;
+      })}
+      {/* 换走的那一张摆在同一行、同一个尺寸。缩小或者挪到角落，就是在替玩家决定哪一半不重要。 */}
+      {lostCard && <div className="nd-reveal-card is-lost">
+        <CardFace card={lostCard} />
+        <span className="nd-reveal-lost">换走了</span>
+      </div>}
     </div>
   </NodeShell>;
 }
@@ -330,7 +373,8 @@ export function CardPicker({ task, run, options, onChoose, onDismiss, onPass, au
     // have to reach the face — the whole reason they exist is that the player can see them.
     if (task === 'pick') {
       return options.map((offer, index) => ({
-        cardId: offer.cardId, index, upgraded: !!offer.upgraded, count: 1, beyond: !!offer.beyond,
+        cardId: offer.cardId, index, upgraded: !!offer.upgraded, count: 1,
+        beyond: !!offer.beyond, hidden: !!offer.hidden,
       }));
     }
     return deckCounts(run).map(entry => ({
@@ -339,6 +383,7 @@ export function CardPicker({ task, run, options, onChoose, onDismiss, onPass, au
       upgraded: entry.upgraded,
       count: entry.count,
       beyond: false,
+      hidden: false,
     }));
   }, [task, options, run]);
 
@@ -394,19 +439,27 @@ export function CardPicker({ task, run, options, onChoose, onDismiss, onPass, au
       {offered.map(entry => {
         const card = CARD_BY_ID.get(entry.cardId);
         if (!card) return null;
+        // 背面朝上的一张牌：**牌组自己的背面**，所以玩家知道这是哪一副牌、不知道是哪一张。
+        // 那个「知道一半」正是这个设计的工作——完全看不见是抽奖，完全看得见就没有了随机性。
+        const deck = entry.hidden ? DECKS.find(d => d.id === card.deck) : undefined;
         return <button key={`${entry.cardId}${entry.upgraded ? '+' : ''}`}
-          className={`nd-card ${picked === entry.index ? 'on' : ''}`}
+          className={`nd-card ${picked === entry.index ? 'on' : ''} ${entry.hidden ? 'is-hidden' : ''}`}
+          aria-label={entry.hidden ? `${deck?.name ?? ''}的一张牌，背面朝上` : card.name}
           onPointerEnter={() => sound('hover', audioOn)}
           onClick={() => { sound('select', audioOn); setPicked(entry.index); }}>
           {/* The face carries its own 已打磨 mark, so the wrapper only adds what the face cannot say:
               how many copies this is. Two marks saying the same thing on one card read as two
               different facts. */}
-          <CardFace card={card} selected={picked === entry.index} upgraded={entry.upgraded} />
+          {deck
+            ? <CardBack deck={deck} />
+            : <CardFace card={card} selected={picked === entry.index} upgraded={entry.upgraded} />}
           {entry.count > 1 && <span className="nd-card-count">×{entry.count}</span>}
           {/* 未解锁 has to be *said*. A card the player has never seen, offered with no mark, reads as
               a card they simply do not remember — and the point of the tease is that it is a glimpse
-              of what the rest of the library holds. */}
-          {entry.beyond && <span className="nd-card-beyond">未解锁</span>}
+              of what the rest of the library holds. It is also suppressed on a face-down offer: there
+              is nothing to label. */}
+          {entry.beyond && !entry.hidden && <span className="nd-card-beyond">未解锁</span>}
+          {entry.hidden && <span className="nd-card-facedown">背面朝上</span>}
         </button>;
       })}
       {!offered.length && <p className="nd-empty">

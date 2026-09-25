@@ -238,3 +238,38 @@
   color: #0b1114; background: linear-gradient(180deg, #9fd8e8, #5f9fb4);
   box-shadow: 0 3px 12px rgba(0, 0, 0, .6);
 }
+
+/* ------------------------------------------------------- 牌组的变更展示
+   「一捆牌」给你的两张、换走的那一张，都摆在这儿。等大、等尺寸、排成一行——换走的那张不缩小、
+   不挪到角落，因为把它做小就是在替玩家决定哪一半不重要。 */
+.nd-reveal-row {
+  display: flex; gap: 24px; justify-content: center; align-items: flex-end;
+  margin-top: 22px; flex-wrap: wrap;
+}
+.nd-reveal-card { position: relative; animation: nd-reveal-in .42s cubic-bezier(.2, .9, .3, 1) both; }
+.nd-reveal-card:nth-child(2) { animation-delay: .1s; }
+.nd-reveal-card:nth-child(3) { animation-delay: .2s; }
+.nd-reveal-card.is-lost { animation: nd-reveal-lost .55s cubic-bezier(.2, .9, .3, 1) both; }
+.nd-reveal-card.is-lost .cq { filter: grayscale(.85) brightness(.6); }
+.nd-reveal-lost {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-9deg);
+  padding: 6px 16px; font-size: 15px; letter-spacing: 4px; border-radius: 2px;
+  color: #f0d3cf; background: rgba(120, 40, 36, .82);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .7);
+}
+@keyframes nd-reveal-in { from { opacity: 0; transform: translateY(16px) scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes nd-reveal-lost {
+  0% { opacity: 0; transform: translateY(16px) scale(.94); }
+  45% { opacity: 1; transform: translateX(-7px) rotate(-1.4deg); }
+  70% { transform: translateX(5px) rotate(1deg); }
+  100% { opacity: 1; transform: none; }
+}
+
+/* 背面朝上的选牌。用的是牌组自己的背面，所以「知道是哪副牌、不知道是哪一张」是看得见的，
+   不是靠文案说的。 */
+.nd-card.is-hidden { outline: 1px dashed rgba(159, 216, 232, .35); outline-offset: 5px; }
+.nd-card-facedown {
+  position: absolute; left: 50%; bottom: -10px; transform: translateX(-50%); z-index: 3;
+  padding: 3px 9px; font-size: 10px; letter-spacing: 2px; border-radius: 2px; white-space: nowrap;
+  color: #cfe6ee; background: rgba(12, 24, 30, .92); border: 1px solid rgba(159, 216, 232, .4);
+}
