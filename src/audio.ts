@@ -1,7 +1,7 @@
 /** Layered local sound design with cathedral convolution, no external audio requests. */
 import { WorldSoundscape } from './world/WorldSoundscape';
 import type { Biome } from './world/worldData';
-import { BATTLE_SCORES, parseBattleScore, type BattleScore } from './battle/battleScores';
+import { BATTLE_SCORES, carryTick, parseBattleScore, type BattleScore } from './battle/battleScores';
 export type SoundKind = 'hover' | 'select' | 'draw' | 'shuffle' | 'play' | 'strike' | 'flame' | 'shield' | 'death' | 'bell' | 'combo' | 'win' | 'relic' | 'relic-set' | 'polish';
 
 /** One card sliding off the top of a deck: paper has almost no body, so the whole sound is a short
@@ -183,6 +183,18 @@ export function setAmbience(enabled: boolean) {
  *
  * 交换的代价是**谱面格式必须一致**（同一个 `Score` 类型），这一点由 `battleScores.test.ts` 守着。
  */
+/**
+ * 每首曲子**放到哪儿了**，按曲目 id 记着（单位是「格」）。
+ *
+ * 玩家提的是：一首比一场仗长，而每场仗都从头开始，「下次进战斗能不能接着上次放」。所以这个位置
+ * 必须在**播放器被销毁之后还活着**——离开战斗页会把它停掉（世界地图有自己的音乐），但下次回来
+ * 应当从断开的那一小节继续。所以它是模块级的，不在播放器实例上。
+ *
+ * 它**不属于存档**：换一局新游戏、甚至刷新页面，音乐从头开始是对的——那是一件氛围的事，
+ * 不是一份要跨会话保存的进度。位置在页面生命周期内存活，这正好是玩家要的那一段。
+ */
+const battleTicks = new Map<string, number>();
+
 class BattleMusic {
   private sources = new Set<AudioScheduledSourceNode>();
   private bus: GainNode;
@@ -212,6 +224,8 @@ class BattleMusic {
     delay.connect(reverb);
     this.echo = ctx.createGain(); this.echo.gain.value = this.score.timbre.echo ?? 0;
     this.echo.connect(delay);
+    // **从上次断开的那一格接着走**，而不是从头。
+    this.tick = battleTicks.get(this.score.id) ?? 0;
     this.nextTime = ctx.currentTime + .12;
     this.schedule();
     this.timer = window.setInterval(() => this.schedule(), 100);
@@ -320,13 +334,20 @@ class BattleMusic {
       this.tick++; this.nextTime += step;
     }
   }
-  /** 换曲不停机：旧曲子渐下去、新曲子从下一小节淡进来，中间那一下听不出来是「切」的。 */
+  /**
+   * 换曲不停机：旧曲子渐下去、新曲子淡进来。
+   *
+   * **每一首各记各的位置**，所以「塔上 → 战斗 → 回塔上」回来的是刚才那一座塔，不是从头开始的
+   * 另一座。同一首曲子重复设（塔上 → 塔上）直接返回，连淡入淡出都不做——那在玩家听来才是
+   * 「怎么断了一下」。
+   */
   setTrack(track: string) {
     if (this.stopped) return;
     const next = BATTLE_SCORES.find(entry => entry.id === track);
     if (!next || next === this.score) return;
     const now = this.ctx.currentTime;
-    this.score = next; this.tick = 0;
+    this.tick = carryTick(battleTicks, this.score.id, this.tick, next.id);
+    this.score = next;
     this.echo.gain.setTargetAtTime(next.timbre.echo ?? 0, now, .3);
     this.bus.gain.cancelScheduledValues(now);
     this.bus.gain.setValueAtTime(this.bus.gain.value, now);
@@ -336,6 +357,8 @@ class BattleMusic {
   }
   stop() {
     if (this.stopped) return;
+    // 走的时候把位置留下来——离开战斗页只是把声音停掉，不是把这一首忘掉。
+    battleTicks.set(this.score.id, this.tick);
     this.stopped = true; clearInterval(this.timer);
     const now = this.ctx.currentTime;
     this.bus.gain.cancelScheduledValues(now);

@@ -8,7 +8,9 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BATTLE_SCORES, parseBattleScore, scoreForMood, type BattleMood } from './battleScores.ts';
+import {
+  BATTLE_SCORES, carryTick, loopSeconds, loopTicks, parseBattleScore, scoreForMood, type BattleMood,
+} from './battleScores.ts';
 
 /** 最低与最高音。再低笔记本喇叭上只剩糊，再高八度泛音就从「亮」变成「刺」。 */
 const FLOOR = 24, CEILING = 96;
@@ -130,4 +132,35 @@ test('战斗的曲子有驱动，待机与营火没有', () => {
   assert.equal(driving(scoreForMood('boss')), false, '守望者那一首不该有稳定的驱动——它是留白，不是推进');
   assert.equal(driving(scoreForMood('tower')), false, '塔上待机不该有驱动');
   assert.equal(driving(scoreForMood('rest')), false, '营火不该有驱动');
+});
+
+test('换曲接着上次放，不从头开始', () => {
+  // ⚠️ 用户提的：一首比一场仗长，而每场仗都从头开始。这条钉的是**位置的保留**——
+  // 它是四行 Map 操作，但错了的表现是「听起来又重来了」，而那是耳朵才抓得到的错。
+  const ticks = new Map<string, number>();
+  // 塔上放到第 40 格，切进战斗。
+  assert.equal(carryTick(ticks, 'tower', 40, 'emberline'), 0, '第一次进战斗应当从头放');
+  // 战斗放到第 91 格，回塔上——**接着第 40 格，不是 0**。
+  assert.equal(carryTick(ticks, 'emberline', 91, 'tower'), 40, '回塔上时没有接着上次的位置');
+  // 再进战斗，接着第 91 格。
+  assert.equal(carryTick(ticks, 'tower', 77, 'emberline'), 91, '再进战斗时没有接着上次的位置');
+  // 每一首各记各的：上面那两次切换没有把对方的位置冲掉。
+  assert.equal(ticks.get('tower'), 77);
+  assert.equal(ticks.get('emberline'), 91);
+  // 没放过的曲子从 0 开始。
+  assert.equal(carryTick(ticks, 'tower', 5, 'campfire'), 0);
+});
+
+test('每一首都比一场仗短 —— 所以循环与续放都得靠得住', () => {
+  // 「每首大概多长」是有答案的：小节 × 每小节格数 × 每格秒数。这条把答案钉住，也让**改动速度或小节数
+  // 而没意识到曲子长度变了**的人能在这里看到。
+  const length = (id: string) => loopSeconds(BATTLE_SCORES.find(s => s.id === id)!);
+  const report = BATTLE_SCORES.map(s => `${s.name} ${length(s.id).toFixed(1)}s`).join(' · ');
+  for (const score of BATTLE_SCORES) {
+    const seconds = length(score.id);
+    assert.ok(seconds > 18 && seconds < 60, `${score.id} 一圈 ${seconds.toFixed(1)} 秒，落在 18..60 之外（${report}）`);
+    assert.equal(loopTicks(score), score.chords.length * score.steps);
+  }
+  // 战斗那一首不能太短：一场仗通常三到六分钟，二十秒一圈要听十遍。
+  assert.ok(length(scoreForMood('fight')) >= 22, `战斗曲只有 ${length(scoreForMood('fight')).toFixed(1)} 秒，一场仗要听太多遍`);
 });

@@ -332,3 +332,27 @@ export function scoreForMood(mood: BattleMood): string {
 export function parseBattleScore(id: string | null | undefined): string {
   return BATTLE_SCORES.some(score => score.id === id) ? id! : ON_TOWER.id;
 }
+
+/**
+ * 换曲时的**位置账本**：把「现在放到哪儿」（`at`，单位是格）记在 `from` 名下，再问 `to` 上次放到
+ * 哪儿了——没放过就是 0。
+ *
+ * 玩家提的是：一首比一场仗长，而每场仗都从头开始，「下次进战斗能不能接着上次放」。这正是那件事的
+ * 全部算术，**抽出来只因为它能被测试而播放器不能**：`audio.ts` 拉进了 `WorldSoundscape`，那个类的
+ * 参数属性是 `node --experimental-strip-types` 加载不了的（谱面当初拆出来就是这个理由）。
+ * 位置在播放器被销毁之后还要活着——离开战斗页会停掉它，下次回来接着放。
+ */
+export function carryTick(ticks: Map<string, number>, from: string, at: number, to: string): number {
+  ticks.set(from, at);
+  return ticks.get(to) ?? 0;
+}
+
+/** 一首曲子一整圈有多少格。`tick % loopTicks` 决定现在落在哪一小节。 */
+export function loopTicks(score: BattleScore): number {
+  return score.chords.length * score.steps;
+}
+
+/** 一整圈有多少秒——「这一首大概多长」的答案，界面上迟早要印，测试也要拿它对照。 */
+export function loopSeconds(score: BattleScore): number {
+  return loopTicks(score) * score.step;
+}
