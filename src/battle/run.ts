@@ -714,14 +714,50 @@ export function claimRelic(run: ChapterRun, relicId: string, placeIn: 'main' | '
   // 只能装在主槽的那几件（见 `RelicDefinition.mainOnly`）：**在 run 这一层拒绝**，不是只把界面上的
   // 按钮置灰——界面是提示，这里是规则。存档校验（`isValidRun`）另有一道。
   if (placeIn === 'sub' && RELIC_BY_ID.get(relicId)?.mainOnly) return run;
-  const next: ChapterRun = {
-    ...run,
-    relics: { ...run.relics, [placeIn]: relicId },
-    pendingDraw: undefined,
-  };
+  return concludeDraw({ ...run, relics: { ...run.relics, [placeIn]: relicId } }, draw);
+}
+
+/**
+ * 抽到一件之后的收尾：把 `pendingDraw` 收起来，并决定副槽那一手怎么算。
+ *
+ * **副槽是「抽过一件之后」才开的那一手**（`SUB_SLOT_CHANCE` 的注释就是这么写的），所以在主槽开着的
+ * 时候把它接上——`subPending` 是胜利时另掷的点，收下一件就该轮到它。拒绝走的是另一条路，见
+ * `dismissDraw`。
+ */
+function concludeDraw(run: ChapterRun, draw: PendingDraw): ChapterRun {
+  const next: ChapterRun = { ...run, pendingDraw: undefined };
   // A relic claimed while the sub slot is open owes a second offer; the caller makes it.
   if (run.subPending) return { ...next, drawDue: draw.from, nextSlot: 'sub', subPending: undefined };
   return { ...next, nextSlot: undefined, subPending: undefined };
+}
+
+/**
+ * 「都不要」。**这是真答案，不是放弃。**
+ *
+ * 收下一件的唯一方式是占掉一格，而被换下来的那一件是**直接没了的**——`claimRelic` 只是覆盖
+ * `relics[placeIn]`，没有回收站。所以两格都称手的时候，「哪一格都不值得为它腾出来」是一个玩家真的
+ * 会做的判断；只有「装进主槽 / 装进副槽」两个按钮，等于把这个判断改写成「你必须毁掉一件」——
+ * 那正是玩家报的「很被动」。
+ *
+ * ⚠️ **它连副槽那一手一起结束，和 `claimRelic` 的收尾是两条路——这是有意的，不是漏写。**
+ *
+ * 副槽是「抽过一件之后才开的那一手」（`SUB_SLOT_CHANCE`、`opensSubSlot` 都是这么写的）。拒绝的
+ * 意思是这一件都没抽，那一手自然也没有开的理由。而**照抄 `claimRelic` 的收尾在界面上是坏的**：
+ * 玩家点完「都不要」，浮层原地换成另一个几乎一样的面板（只剩标题从主遗物变成副遗物），
+ * 唯一读得出来的意思是**这个按钮没生效**。实测截图里就是这个样子。
+ *
+ * 代价是一次看不见的 25% —— 玩家不知道它存在，也就没有失去什么。而「一个说不要、却又弹回来的
+ * 按钮」是玩家一定会来报的。**谁负责结束这一层：`dismissDraw` 负责结束整层。**
+ *
+ * ⚠️ **`from` 是花钱买来的（商店买下的那一件、收了代价的奇遇）也照样给这个选项。** 那时候玩家要选
+ * 的是「毁掉一件旧的，还是认了这笔钱」——两个都是损失，但两个都是选择。界面负责把那笔钱说清楚
+ * （`RelicDraw` 的文案按 `from` 走），规则这一层不替玩家拒绝一个还能做的选择。
+ */
+export function dismissDraw(run: ChapterRun): ChapterRun {
+  if (!run.pendingDraw) return run;
+  // `drawDue` 在这里本来就是空的（`offerDraw` 在挂上面板时就清掉了），一起写出来是为了让
+  // `isValidRun` 那条「两个要么都有、要么都没有」的配对检查一眼看得出满足。
+  return { ...run, pendingDraw: undefined, drawDue: undefined, nextSlot: undefined, subPending: undefined };
 }
 
 /** Exchange the two slots. The pair is what matters, not which half leads — same as the decks. */

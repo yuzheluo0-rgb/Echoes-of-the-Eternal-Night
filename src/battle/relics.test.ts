@@ -24,7 +24,7 @@ import {
 import { STATUS_GOOD, type StatusId } from './types.ts';
 import { DRAW_OPTIONS, RELIC_PRICE, drawRelics, offerRelics, opensSubSlot } from './relicDraw.ts';
 import {
-  canEnter, claimRelic, discardRelic, earnsRelic, finishBattle, isValidRun as isValidRunForTest,
+  canEnter, claimRelic, discardRelic, dismissDraw, earnsRelic, finishBattle, isValidRun as isValidRunForTest,
   newRun, offerDraw, rollOffer, swapRelics, type ChapterRun,
 } from './run.ts';
 import { REFINE_TEXT, RELIC_BY_ID, RELICS, type RelicDefinition } from '../relics/relics.ts';
@@ -711,6 +711,45 @@ test('槽位可以调换，也可以把某一件丢掉', () => {
   const after = discardRelic(run, 'main');
   assert.deepEqual(after.relics, { sub: 'whetstone' });
   assert.ok(isValidRunForTest(after));
+});
+
+test('「都不要」是第三个答案：抽取可以整个拒绝，身上的遗物一件不动', () => {
+  const run = newRun('blade', 'bone', 4);
+  const { run: rolled, options } = rollOffer(run, availableRelics(emptyProgress()));
+  const held: ChapterRun = { ...rolled, relics: { main: 'flint', sub: 'whetstone' } };
+  const offered = offerDraw(held, options.map(relic => relic.id), 'main', 'ch1-3');
+
+  const refused = dismissDraw(offered);
+  assert.equal(refused.pendingDraw, undefined, '拒绝了之后那一次抽取还挂着');
+  // ⚠️ **这一条是整件事的意义。** 面板上另外两个按钮都会覆盖一格，而被换下来的那一件直接没了
+  // （`claimRelic` 只是覆盖 `relics[placeIn]`，没有回收站）——玩家拒绝它，要的正是「两个槽都不动」。
+  assert.deepEqual(refused.relics, held.relics, '「都不要」动了身上的遗物');
+  assert.ok(isValidRunForTest(refused));
+
+  // 没东西可拒绝时是空操作，而且是**同一个对象引用**——界面靠 `next === run` 决定要不要播音效、
+  // 要不要重渲染（`run.test.ts` 的「放下 / 不要 / 丢掉」里给道具钉的是同一条）。
+  assert.equal(dismissDraw(run), run);
+
+  // ⚠️ **收下和拒绝在副槽上是分岔的，这是有意的。** 副槽是「抽过一件之后才开的那一手」，
+  // 收下就轮到它，拒绝就整层结束——照抄收尾那一套的话，玩家点完「都不要」会看到**另一个几乎
+  // 一样的面板原地换上来**，那读起来是按钮坏了（实测截图里就是这个样子）。
+  const queued = claimRelic({ ...offered, subPending: true }, options[0].id, 'main');
+  assert.equal(queued.nextSlot, 'sub', '收下一件之后，副槽那一手没接上');
+  assert.equal(queued.drawDue, 'ch1-3');
+
+  const ended = dismissDraw({ ...offered, subPending: true });
+  assert.equal(ended.pendingDraw, undefined);
+  assert.equal(ended.nextSlot, undefined, '「都不要」之后副槽那一手还在排队——面板会原地弹回来');
+  assert.equal(ended.subPending, undefined, '副槽那一手的掷点没收起来');
+  assert.equal(ended.drawDue, undefined);
+  assert.ok(isValidRunForTest(ended));
+
+  // 反过来：这一件**只能**装主槽时，副槽那个按钮不给——但「都不要」照样在。
+  const mainOnly = RELICS.find(relic => relic.mainOnly);
+  assert.ok(mainOnly, '全表没有一件 mainOnly，这条测试在测空气');
+  const picky = offerDraw(held, [mainOnly.id], 'main', 'ch1-3');
+  assert.equal(claimRelic(picky, mainOnly.id, 'sub'), picky, '副槽本该被拒');
+  assert.equal(dismissDraw(picky).pendingDraw, undefined, '只能装主槽的那一件，拒绝不了');
 });
 
 test('遗物跟着 run 进战斗：主副槽都被读到', () => {

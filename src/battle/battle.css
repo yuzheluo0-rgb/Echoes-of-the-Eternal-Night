@@ -804,8 +804,14 @@
 }
 .bd-brief-unit figcaption { font-size: 12px; letter-spacing: 1.4px; color: #d8d2c0; margin-top: 7px; }
 
-/* --- what the run is carrying: 生命 and the locked pair --- */
-.bd-runbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, .95fr); gap: 14px; }
+/* --- what the run is carrying: 生命 and the locked pair ---
+   ⚠️ **中间那列的 `minmax(0, …)` 曾经让牌组卡压进遗物面板。** 三列本身没有重叠——是**内容**溢出了
+   自己的格子：两张 150 宽的牌背 + 一颗「调换」按钮至少要 416，而 `minmax(0, 1.15fr)` 允许这一列
+   被压到 341（格子能小于内容，`min-width` 默认是 auto 的是**项目**不是轨道）。多出来的 75px
+   正好盖在右边的遗物面板上（实测卡右缘 1040 / 面板左缘 1014）。
+   下限改成 `min-content`：这一列永远不会窄到装不下自己的内容，缺的宽度由另外两列按比例让出来。
+   `minmax(0, …)` 仍然留给左右两列——它们的文字该换行，不是该撑宽。 */
+.bd-runbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(min-content, 1.15fr) minmax(0, .95fr); gap: 14px; }
 .bd-run-hp, .bd-run-decks, .bd-run-relics {
   padding: 18px 20px; border: 1px solid var(--line); border-radius: 5px;
   background: linear-gradient(140deg, rgba(26, 39, 44, .78), rgba(14, 21, 26, .82));
@@ -960,9 +966,18 @@
 }
 @keyframes bd-burst { from { opacity: .95; transform: scale(.55); } to { opacity: 0; transform: scale(1.25); } }
 
-.bd-draw-actions { display: flex; gap: 12px; justify-content: center; margin-top: 20px; }
+/* `wrap`：第三个按钮进来之后这一行在窄屏放不下。**这不违反手牌那条禁令**——那条说的是手牌用
+   负 margin 做重叠，只在单行里成立；这里是三个各自独立的按钮，换行不过是排成两行。 */
+.bd-draw-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 20px; }
 .bd-draw-actions .bd-btn { padding: 11px 22px; }
-.bd-draw-hint { text-align: center; font-size: 12.5px; color: #93a49c; margin-top: 16px; }
+/* 「都不要」。⚠️ **它必须比旁边那两个轻。** 同等的三个按钮会让这一屏读成「三选一」，
+   而这不是三选一——是两个「装进去」和一个退路。虚线的边是那个退路的记号：
+   找它的人一眼看得见，不找它的人不会被它喊住。 */
+.bd-draw-skip { color: #8d9a94; border-style: dashed; border-color: rgba(180, 170, 130, .32); }
+.bd-draw-skip:hover { color: #e8dfc6; border-color: rgba(212, 189, 135, .55); }
+/* `text-wrap: balance`：这一行是居中长句，不均衡的话最后一行会剩一个孤字（实测剩的是「你。」）。
+   均衡换行把两行摊平，孤儿自然消失——比手工调字数可靠，改文案时也不用重新数一遍。 */
+.bd-draw-hint { text-align: center; text-wrap: balance; font-size: 12.5px; color: #93a49c; margin-top: 16px; }
 
 /* The two slots, in the preparation panel and again in the fight. */
 .bd-relic-slots { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -1114,6 +1129,21 @@
 
 /* The phone gets a scrolling page with the hand pinned to the floor: the enemies are moved to the
    top so the first screenful is 对手 + 手牌, and everything else is a scroll away. */
+/**
+ * 901–1040：**整页还没到窄屏模式，但这一块排不下三列了。**
+ *
+ * 三列的硬需求是：中间那列 458（两张牌背 + 调换按钮，见 `.bd-runbar` 那条注释）＋ 遗物面板 272
+ * （两个槽）＋ 生命 240，再加两条 14 的间隙 ≈ 1000，也就是视口得 1040 往上。
+ * 挤在下面那一档时，遗物槽的「残片 · 完整效果」会折成三行、丢弃按钮贴边。
+ *
+ * 这三条**原来长在 900 那个块里**，搬出来只为改断点——同一组声明写两份迟早分叉。
+ */
+@media (max-width: 1040px) {
+  .bd-runbar { grid-template-columns: minmax(0, 1fr); }
+  .bd-run-pair { grid-template-columns: minmax(0, 1fr); }
+  .bd-swap { flex-direction: row; justify-content: center; gap: 8px; }
+}
+
 @media (max-width: 900px) {
   .bd { height: auto; min-height: 100dvh; overflow: visible; }
   .bd-top { padding: 10px 12px 9px; gap: 8px; align-items: center; }
@@ -1206,9 +1236,6 @@
   .bd-brief-unit, .bd-brief-unit img { width: 78px; }
   .bd-brief-unit img { height: 78px; }
   .bd-brief-copy h2 { font-size: 22px; letter-spacing: 4px; }
-  .bd-runbar { grid-template-columns: minmax(0, 1fr); }
-  .bd-run-pair { grid-template-columns: minmax(0, 1fr); }
-  .bd-swap { flex-direction: row; justify-content: center; gap: 8px; }
   .bd-fight-btn { width: 100%; padding: 12px 20px; }
   .bd-spoils-stats { gap: 20px; }
   .bd-spoils-stats dd { font-size: 21px; }

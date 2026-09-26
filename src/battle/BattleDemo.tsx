@@ -53,7 +53,7 @@ import {
 import { creditAndSave, earnedCards, newUnlocks, unlocksFor } from './cardUnlocks.ts';
 import {
   answerRefine, campfire, campfireQuench, canEnterNode, chooseCard, claimRelic, claimReward, deckFor, discardRelic,
-  canUseRunProp, dismissCard, dismissProp, dismissRefine, dismissReveal, enterNode, placeProp,
+  canUseRunProp, dismissCard, dismissDraw, dismissProp, dismissRefine, dismissReveal, enterNode, placeProp,
   repairCard, useRunProp, EITHER_OR_PROPS, buyShopSlot, rerollShop, rollShop, leaveShop,
   buyRemoveService, shopRemoveCost, wardMark,
   nodeAt, offerDraw, resolveEvent, rollOffer, rollPendingReward, swapRelics,
@@ -970,6 +970,22 @@ export default function BattleDemo() {
     saveRun(next);
   }
 
+  /**
+   * 一件都不要。**它清的是 `pendingDraw`，不是身上的遗物。**
+   *
+   * 和「丢弃」是两件事，别混：这一件是「这次机会我没要」，`dropRelic` 是「身上这件我不要了」。
+   * 玩家报的被动是前者缺席——面板是一道过不去的门（「开战」按钮就写在那行 `disabled` 里），
+   * 而门后只有「毁掉主槽那件」和「毁掉副槽那件」两个出口。
+   */
+  function declineDraw() {
+    if (!run) return;
+    sound('select', audioOn);
+    const next = dismissDraw(run);
+    if (next === run) return;
+    setRun(next);
+    saveRun(next);
+  }
+
   function swapRelicSlots() {
     if (!run) return;
     sound('select', audioOn);
@@ -1264,7 +1280,7 @@ export default function BattleDemo() {
       {run.pendingDraw && <div className="bd-over">
         <div className="bd-map-draw">
           <RelicDraw run={run} options={run.pendingDraw.options} slot={run.pendingDraw.slot}
-            onClaim={claimDraw} audioOn={audioOn} />
+            onClaim={claimDraw} onDismiss={declineDraw} audioOn={audioOn} />
         </div>
       </div>}
     </div>;
@@ -1273,7 +1289,7 @@ export default function BattleDemo() {
   if (!state) {
     return <BattlePrep run={run} outcome={outcome} audioOn={audioOn} onAudio={audioToggle}
       onSwap={swapFormation} onFight={() => beginFight(run)} onClaimDraw={claimDraw}
-      onSwapRelics={swapRelicSlots} onDropRelic={dropRelic} />;
+      onDeclineDraw={declineDraw} onSwapRelics={swapRelicSlots} onDropRelic={dropRelic} />;
   }
 
   const powers = (Object.keys(POWER_LABEL) as (keyof typeof state.powers)[])
@@ -1656,20 +1672,54 @@ function RelicSlots({ run, onSwap, onDrop, audioOn }: {
 }
 
 /**
- * The draw. Three relics face down; turn one over and it goes into a slot.
+ * 这一次抽取**是从哪儿来的**——面板的文案跟着它走。
+ *
+ * ⚠️ 它原来只跟着 `slot` 走，于是**商店里花几百金币买下的那一件也印着「打赢了这一场，营地给你
+ * 一次翻东西的机会」**。那句话在加「不要」之前只是有点好笑；加上之后它会直接害人——玩家正看着
+ * 一句「白捡的」去点那个丢掉东西的按钮。**一句和事实相反的文案，会把一个真实的代价变成一场误会。**
+ */
+function drawOrigin(from: string): 'shop' | 'traded' | 'treasure' | 'fight' {
+  if (from === '商店') return 'shop';
+  // 拿东西换来的：奇遇的 `relic` 效果（代价在上一屏付过了——生命、金币），
+  // 以及陪葬钱那类**用了才给**的道具（`drawDue: def.id`，所以这里是道具 id）。
+  if (from === 'event' || PROP_BY_ID.has(from)) return 'traded';
+  // 宝箱（`claimReward` 的 `relic`）。它不是打出来的，也不是换来的。
+  if (from === 'reward') return 'treasure';
+  // 其余是遭遇战 id：有等级的那几场赢了才欠一次抽取。
+  return 'fight';
+}
+
+const DRAW_LEAD: Record<ReturnType<typeof drawOrigin>, string> = {
+  fight: '打赢了这一场，营地给你一次翻东西的机会。',
+  treasure: '这一层的东西翻出来了，你伸手进去摸到了几件。',
+  traded: '这是你刚刚换来的。',
+  shop: '你在货架上买下了这一件。钱已经付过了，接下来只是决定它进哪个槽。',
+};
+
+/**
+ * The draw. Three relics face down; turn one over and it goes into a slot — or nowhere at all.
  *
  * The flip is a real half-turn rather than a fade, for the same reason the card draw is — and the
  * burst that goes off on the turn is in the relic's own tier colour, so the *rarity* lands before the
  * name does. The other two stay face down and are never seen: what you did not pick is not
  * information the game owes you.
+ *
+ * ⚠️ **「都不要」是第三个答案，不是撤销。** 收下一件要占掉一格，而被换下来的那一件直接没了
+ * （`claimRelic` 是覆盖，没有回收站），所以「两个槽都不值得为它让位」是一句玩家真会说的话。
+ * 它和翻开一样只在翻开之后才出现——先看清自己在推掉什么，再推掉。
  */
-function RelicDraw({ run, options, slot, onClaim, audioOn }: {
+function RelicDraw({ run, options, slot, onClaim, onDismiss, audioOn }: {
   run: ChapterRun; options: string[]; slot: 'main' | 'sub';
-  onClaim: (relicId: string, placeIn: 'main' | 'sub') => void; audioOn: boolean;
+  onClaim: (relicId: string, placeIn: 'main' | 'sub') => void;
+  onDismiss: () => void; audioOn: boolean;
 }) {
   const [flipped, setFlipped] = useState<string | null>(null);
   const [burst, setBurst] = useState(0);
   const chosen = flipped ? RELIC_BY_ID.get(flipped) : undefined;
+  const origin = drawOrigin(run.pendingDraw?.from ?? '');
+  // 商店那一件是**先收钱、后交付**（`buyShopSlot`），所以「不要」在那里丢的是已经花掉的铜板。
+  // 这一行不是客气话：没有它，那个按钮就是一个陷阱。
+  const paidFor = origin === 'shop';
 
   function turn(id: string) {
     if (flipped) return;
@@ -1683,9 +1733,10 @@ function RelicDraw({ run, options, slot, onClaim, audioOn }: {
       <h2>{slot === 'main' ? '主遗物' : '副遗物'}<small>{slot === 'main' ? 'MAIN RELIC' : 'SUB RELIC'}</small></h2>
     </div>
     <p className="bd-draw-note">
+      {DRAW_LEAD[origin]}
       {slot === 'main'
-        ? '打赢了这一场，营地给你一次翻东西的机会。三件里挑一件，装进主遗物槽，拿它完整的效果。'
-        : '副遗物槽也开了。这里挑到的一件只给折扣效果——但折扣总比空着强。'}
+        ? '装进主遗物槽，拿它完整的效果。'
+        : '副遗物槽也开了——这里挑到的一件只给折扣效果，但折扣总比空着强。'}
     </p>
     <div className="bd-draw-row">
       {options.map(id => {
@@ -1711,7 +1762,9 @@ function RelicDraw({ run, options, slot, onClaim, audioOn }: {
       ? <>
         <p className="bd-draw-hint">
           装进哪个槽由你决定：<b>主槽</b>给卡面上半部分的完整效果，<b>副槽</b>只给下半部分的折扣效果。
-          目标槽已有东西的话，旧的会被换下来。
+          {/* ⚠️ 「旧的会被换下来」听上去像它去了别处。它没有——`claimRelic` 只是覆盖那一格，
+              这就是这一屏为什么必须给出第三个答案：不想要它的时候，玩家是在保护而不是在放弃。 */}
+          目标槽里已经有东西的话，旧的会被<b>顶掉</b>，不会还给你。
         </p>
         <div className="bd-draw-actions">
           {(['main', 'sub'] as const).map(target => {
@@ -1726,6 +1779,15 @@ function RelicDraw({ run, options, slot, onClaim, audioOn }: {
               {!barred && current && <i className="bd-draw-replace">替换 {current.name}</i>}
             </button>;
           })}
+          {/* 第三个答案：**一件都不要**。它清的是这次机会，不是身上的遗物——和准备页那个
+              「丢弃」是两件事，两个按钮也长在两个地方。 */}
+          <button className="bd-btn bd-draw-skip" onPointerEnter={() => sound('hover', audioOn)}
+            onClick={onDismiss}>
+            都不要
+            {/* 两句话说的是同一件事的两面：免费的那次是「空手走开」，付过钱的那次是「但金币不退」。
+                ⚠️ 后者必须写出来——它是**这个按钮唯一的代价**，而玩家不会自己去想商店是先收钱的。 */}
+            <i className="bd-draw-replace">{paidFor ? '金币不退' : '空手走开'}</i>
+          </button>
         </div>
       </>
       : <p className="bd-draw-hint">点一张翻开。</p>}
@@ -1792,10 +1854,11 @@ function ChapterIntro({ audioOn, onAudio, onStart }: {
  * and whether to walk into the next fight at all — so the encounter is shown in full, portraits
  * included, before anything is committed.
  */
-function BattlePrep({ run, outcome, audioOn, onAudio, onSwap, onFight, onClaimDraw, onSwapRelics, onDropRelic }: {
+function BattlePrep({ run, outcome, audioOn, onAudio, onSwap, onFight, onClaimDraw, onDeclineDraw, onSwapRelics, onDropRelic }: {
   run: ChapterRun; outcome: BattleOutcome | null; audioOn: boolean;
   onAudio: () => void; onSwap: () => void; onFight: () => void;
   onClaimDraw: (relicId: string, placeIn: 'main' | 'sub') => void;
+  onDeclineDraw: () => void;
   onSwapRelics: () => void; onDropRelic: (slot: 'main' | 'sub') => void;
 }) {
   // The fight is the one the *floor* is holding, not "the next one in the chapter". This screen used
@@ -1855,7 +1918,7 @@ function BattlePrep({ run, outcome, audioOn, onAudio, onSwap, onFight, onClaimDr
       {/* A draw that is owed takes over the screen. Everything else on the preparation page is
           something to read; this is the one thing on it that is a decision. */}
       {run.pendingDraw && <RelicDraw run={run} options={run.pendingDraw.options}
-        slot={run.pendingDraw.slot} onClaim={onClaimDraw} audioOn={audioOn} />}
+        slot={run.pendingDraw.slot} onClaim={onClaimDraw} onDismiss={onDeclineDraw} audioOn={audioOn} />}
 
       <section className="bd-runbar">
         <div className="bd-run-hp">
@@ -1905,7 +1968,9 @@ function BattlePrep({ run, outcome, audioOn, onAudio, onSwap, onFight, onClaimDr
         <button className="bd-btn bd-fight-btn" onClick={onFight} disabled={cleared || !!run.pendingDraw}
           onPointerEnter={() => sound('hover', audioOn)}>
           <Swords size={16} strokeWidth={1.8} />
-          {cleared ? '章节已完结' : run.pendingDraw ? '先挑一件遗物' : '开战'}
+          {/* 「先挑一件遗物」在「都不要」上线之后就不准了——那一次抽取的答案有三个，其中一个是
+              「不挑」。按钮要的是**先回答**，不是先挑。 */}
+          {cleared ? '章节已完结' : run.pendingDraw ? '先决定这次抽取' : '开战'}
         </button>
       </div>
     </div>

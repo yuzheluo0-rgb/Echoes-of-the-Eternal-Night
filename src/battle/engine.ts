@@ -260,9 +260,12 @@ export function cardCost(cardId: string): number {
  *
  * This exists because 3 energy is the right *base* and 4 is too much: at 4 the 断罪之刃 deck, whose
  * cards average 0.68 energy, simply empties its hand and wastes a quarter of the energy it is given
- * every turn. A flat discount instead lands between the two, and it lands there unevenly on purpose
- * — it is worth a whole extra card to 长明壁垒 (every card of which costs at least 1) and close to
- * nothing to 断罪之刃 (which leads with 0-cost cards anyway). The rule balances itself.
+ * every turn. A flat discount instead lands between the two, and it lands there unevenly on purpose.
+ *
+ * ⚠️ **「不太均」的那半句曾经写死成「长明壁垒每张牌都至少 1 费」——那是 砺石 / 殉道 被挪出第一章
+ * 时候的事实，两张放回来之后就不成立了**（骨现在开 14 种，其中 2 张是 0 费）。这一轮有人照着这句
+ * 注释写进了给玩家的说明书，把「长明壁垒几乎每回合都吃得到这 −1」写成了相反的话。
+ * 准确的说法按**解锁名单**数，别按印象：骨 14 种里 12 种要花能量，刃 12 种里有 3 张 0 费。
  *
  * It needs no new state: `playedThisTurn` already means exactly "is this the opening card".
  */
